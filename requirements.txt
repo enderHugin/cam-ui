@@ -1,0 +1,6 @@
+numpy
+Pillow
+# opcionales
+pystray          # icono en la bandeja (modos normal / compacto / mini)
+pyvirtualcam     # cámara virtual para videollamadas (requiere OBS Studio instalado)
+pygrabber        # plan B para listar cámaras si ffmpeg no las detecta

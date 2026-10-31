@@ -1,0 +1,12 @@
+# solo se versiona lo del proyecto
+*
+!.gitignore
+!camui.py
+!README.md
+!requirements.txt
+!tests/
+!tests/**
+__pycache__/
+*.log
+config.json
+tests/t/
