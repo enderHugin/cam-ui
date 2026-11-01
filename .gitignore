@@ -11,3 +11,14 @@ __pycache__/
 *.log
 config.json
 tests/t/
+!VERSION
+!.github/
+!.github/**
+!installers/
+!installers/**
+!tools/
+!tools/**
+!site/
+!site/**
+!site/fonts/*.woff2
+_site/

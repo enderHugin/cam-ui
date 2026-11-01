@@ -1,0 +1,36 @@
+name: Algo no funciona
+description: Una cámara no abre, el vídeo sale mal, el programa se cierra…
+title: "Fallo: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué ha pasado
+      description: Qué esperabas y qué ha ocurrido en su lugar.
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Cómo repetirlo
+      placeholder: "1. Marco dos cámaras…\n2. Pulso Grabar…"
+  - type: input
+    id: camaras
+    attributes:
+      label: Cámaras y micrófonos implicados
+      placeholder: "USB2.0 PC CAMERA (1908:2311)…"
+  - type: input
+    id: windows
+    attributes:
+      label: Versión de Windows y de Python
+      placeholder: "Windows 11 23H2, Python 3.12"
+  - type: textarea
+    id: log
+    attributes:
+      label: Registro (camui.log)
+      description: >-
+        El archivo camui.log está junto a camui.py (botón «Registro»). Pega las últimas líneas
+        o arrastra el archivo aquí. Si es un problema de resolución o fps, añade también el
+        informe de «Probar modos» (pestaña Encuadre).
+      render: text

@@ -1,0 +1,22 @@
+name: Opinión / mi experiencia
+description: Cuéntame cómo te ha ido con cam-ui, aunque todo haya ido bien.
+title: "Opinión: "
+labels: ["opinión"]
+body:
+  - type: textarea
+    id: experiencia
+    attributes:
+      label: ¿Cómo te ha ido?
+      description: Qué has hecho con cam-ui, qué te ha gustado y qué te ha costado.
+    validations:
+      required: true
+  - type: input
+    id: camaras
+    attributes:
+      label: Cámaras y micrófonos que usas
+      description: Marca y modelo, o el nombre que aparece en la lista de cámaras.
+      placeholder: "USB2.0 PC CAMERA, Logitech C920…"
+  - type: textarea
+    id: mejorar
+    attributes:
+      label: ¿Qué cambiarías?

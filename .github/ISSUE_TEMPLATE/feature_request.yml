@@ -1,0 +1,17 @@
+name: Pedir una función
+description: Una idea que haría cam-ui más útil para ti.
+title: "Idea: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Qué te gustaría poder hacer
+      description: Cuéntalo como una situación (qué intentas conseguir), no como una solución.
+    validations:
+      required: true
+  - type: textarea
+    id: ahora
+    attributes:
+      label: Cómo lo haces ahora
+      description: Si hoy lo resuelves de otra forma, cuéntala.

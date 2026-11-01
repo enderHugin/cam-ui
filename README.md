@@ -1,9 +1,15 @@
-# CamWin32
+# cam-ui
+
+Página del proyecto: <https://enderhugin.github.io/cam-ui/>
 
 Mosaico de varias cámaras USB más audio L/R en un solo vídeo, para Windows.
 Interfaz Tkinter + FFmpeg (DirectShow). Un único archivo: `camui.py`.
 
-## Requisitos
+## Instalación rápida (Windows)
+Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: prepara su propio entorno de Python,
+descarga ffmpeg y crea un acceso en el menú Inicio. Fuente: [`installers/install-windows.cmd`](installers/install-windows.cmd).
+
+## Requisitos (instalación a mano)
 - Windows, Python 3.10+ con Tkinter.
 - `ffmpeg.exe` junto a `camui.py` (o en la variable `CAMWIN32_FFMPEG`).
 - `pip install -r requirements.txt` (los paquetes marcados como opcionales no son obligatorios).
@@ -29,3 +35,14 @@ Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardw
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH).
 Si algo falla, adjuntar `camui.log` (se crea junto al script).
+
+## Opinar, avisar de fallos, pedir funciones
+[Abre un issue](https://github.com/enderHugin/cam-ui/issues/new/choose): hay plantillas para opinión, fallo y petición de función.
+
+## La página
+`site/` es la página (HTML estático, ES/EN). `tools/build_site.sh` la monta en `_site/` junto con los archivos
+descargables, y `.github/workflows/pages.yml` la publica en GitHub Pages en cada push a `main`
+(Settings → Pages → Source: GitHub Actions). La versión sale del archivo `VERSION`.
+
+## Apoyo
+[Ko-fi](https://ko-fi.com/jaimeluisolguinmesina) · Licencia MIT.

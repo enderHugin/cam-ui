@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="es" data-lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cam-ui · varias cámaras en un solo vídeo</title>
+<meta name="description" content="cam-ui junta varias cámaras USB y dos micrófonos en un mosaico sincronizado para grabarlo o usarlo como cámara en videollamadas. Gratis, para Windows.">
+<meta property="og:title" content="cam-ui · varias cámaras en un solo vídeo">
+<meta property="og:description" content="Mosaico de cámaras USB con audio izquierdo y derecho. Grábalo o úsalo en videollamadas. Gratis.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://enderhugin.github.io/cam-ui/img/normal.webp">
+<meta name="theme-color" content="#dde4ea">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1016'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23d4242f'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/barlow-condensed-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+/* Barlow (SIL Open Font License), alojada aquí: no se pide nada a servidores de terceros */
+@font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("fonts/barlow-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url("fonts/barlow-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 600; font-display: swap; src: url("fonts/barlow-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 600; font-display: swap; src: url("fonts/barlow-condensed-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-weight: 700; font-display: swap; src: url("fonts/barlow-condensed-latin-700-normal.woff2") format("woff2"); }
+:root {
+  --chassis: #dde4ea;
+  --panel: #eef2f5;
+  --ink: #101b26;
+  --muted: #4a5b6a;
+  --line: #bcc8d2;
+  --screen: #0b1016;
+  --bezel: #1a222c;
+  --rec: #c81f2b;
+  --rec-dark: #9d1520;
+  --signal: #0a6f82;
+  --level: #35d07f;
+  --amber: #f2b134;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --text: "Barlow", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --gutter: clamp(16px, 4vw, 40px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --chassis: #141b23;
+    --panel: #1b242e;
+    --ink: #e7edf2;
+    --muted: #9fb0be;
+    --line: #2d3946;
+    --signal: #4cc3d6;
+    --rec: #e03a46;
+    --rec-dark: #b32631;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body {
+  margin: 0;
+  background: var(--chassis);
+  color: var(--ink);
+  font: 400 1.0625rem/1.55 var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; display: block; }
+a { color: var(--signal); text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 3px solid var(--signal); outline-offset: 3px; border-radius: 4px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+h1, h2, h3, dt { font-family: var(--display); font-weight: 700; letter-spacing: 0.005em; margin: 0; line-height: 1.02; }
+h1 { font-size: clamp(2.9rem, 7.4vw, 5.6rem); }
+h2 { font-size: clamp(2rem, 4.4vw, 3.1rem); }
+p { margin: 0 0 1em; max-width: 62ch; }
+
+/* ---------- barra superior ---------- */
+.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--chassis) 92%, transparent); backdrop-filter: blur(8px); }
+.top .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 700 1.6rem/1 var(--display); color: var(--ink); text-decoration: none; margin-right: auto; }
+.tally { width: 12px; height: 12px; border-radius: 50%; background: var(--rec); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rec) 25%, transparent); }
+.top nav { display: flex; gap: 22px; }
+.top nav a { color: var(--ink); text-decoration: none; font-weight: 500; }
+.top nav a:hover { text-decoration: underline; }
+.lang { font: 600 0.95rem var(--text); color: var(--ink); background: transparent; border: 1.5px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.lang:hover { border-color: var(--ink); }
+@media (max-width: 760px) { .top nav { display: none; } }
+
+/* ---------- portada ---------- */
+.hero { padding: clamp(28px, 5vw, 64px) 0 clamp(36px, 6vw, 80px); }
+.hero-head { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); gap: clamp(24px, 5vw, 72px); align-items: end; }
+.hero h1 { max-width: 16ch; }
+.hero-lead { font-size: 1.2rem; color: var(--muted); margin-top: 20px; }
+.get { padding-bottom: 6px; }
+.rec-btn {
+  display: inline-flex; align-items: center; gap: 14px;
+  background: var(--rec); color: #fff; text-decoration: none;
+  font: 600 1.25rem/1 var(--text);
+  padding: 14px 26px 14px 16px; border-radius: 999px;
+  box-shadow: 0 4px 0 var(--rec-dark);
+  transition: transform .08s, box-shadow .08s;
+}
+.rec-btn:hover { background: #d92a37; text-decoration: none; }
+.rec-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--rec-dark); }
+.rec-btn .dot { width: 30px; height: 30px; border-radius: 50%; background: #fff; display: grid; place-items: center; }
+.rec-btn .dot::after { content: ""; width: 14px; height: 14px; border-radius: 50%; background: var(--rec); }
+.get small { display: block; margin-top: 16px; color: var(--muted); font-size: 0.95rem; max-width: 36ch; }
+.get .alt { margin-top: 10px; font-size: 0.95rem; }
+
+/* ---------- monitor ---------- */
+.monitor { margin: clamp(28px, 4vw, 48px) 0 0; background: var(--bezel); border-radius: 16px; padding: clamp(8px, 1.4vw, 16px); box-shadow: 0 30px 50px -30px rgba(10, 20, 30, .55); }
+.screen { position: relative; border-radius: 6px; overflow: hidden; background: #000; aspect-ratio: 16 / 9; }
+.screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.osd { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; padding: clamp(8px, 1.6vw, 18px); color: #fff; font: 600 clamp(.8rem, 1.5vw, 1.05rem)/1 var(--text); font-variant-numeric: tabular-nums; pointer-events: none; }
+.osd > span { background: rgba(8, 12, 18, .62); padding: .35em .6em; border-radius: 4px; align-self: flex-start; }
+.osd .rec { display: inline-flex; align-items: center; gap: 8px; }
+.osd .rec i { width: .8em; height: .8em; border-radius: 50%; background: #ff3b47; animation: blink 1.6s steps(1) infinite; }
+@keyframes blink { 50% { opacity: .15; } }
+.deck { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 28px; padding: 14px 6px 4px; color: #c8d3dc; }
+.layouts { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.layouts label { cursor: pointer; }
+.layouts input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.chip { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; border-radius: 6px; background: #26313d; color: #c8d3dc; font: 500 .95rem var(--text); border: 1.5px solid transparent; }
+.chip svg { width: 28px; height: 18px; display: block; }
+.chip svg rect { fill: currentColor; opacity: .8; }
+.layouts input:checked + .chip { border-color: #fff; color: #fff; background: #33414f; }
+.layouts input:focus-visible + .chip { outline: 3px solid #4cc3d6; outline-offset: 2px; }
+.layouts label:hover .chip { background: #2f3c49; }
+.meters { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; width: min(280px, 100%); font: 600 .8rem var(--text); }
+.bar { height: 8px; border-radius: 2px; background: #26313d; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, var(--level) 0 72%, var(--amber) 72% 90%, #ff3b47 90%); transform-origin: left; transform: scaleX(.6); }
+.hint { margin: 10px 0 0; font-size: .95rem; color: var(--muted); max-width: none; }
+
+/* ---------- secciones ---------- */
+section { padding: clamp(44px, 7vw, 96px) 0; }
+.band { background: var(--panel); }
+.sec-head { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: clamp(20px, 5vw, 72px); }
+.sec-head p { color: var(--muted); font-size: 1.1rem; margin-top: 14px; }
+@media (min-width: 861px) { #que .sec-head > div:first-child { position: sticky; top: 84px; align-self: start; } }
+@media (max-width: 860px) { .hero-head, .sec-head { grid-template-columns: minmax(0, 1fr); } .hero h1 { max-width: 16ch; } }
+
+dl.spec { margin: 0; border-top: 1.5px solid var(--ink); }
+dl.spec > div { display: grid; grid-template-columns: minmax(150px, 0.34fr) 1fr; gap: 8px 24px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+dt { font-size: 1.55rem; }
+dd { margin: 0; max-width: 58ch; }
+.tag { display: inline-block; font: 600 .8rem var(--text); padding: 2px 8px; border-radius: 4px; background: var(--amber); color: #2a1d00; vertical-align: .2em; margin-left: 8px; }
+@media (max-width: 620px) { dl.spec > div { grid-template-columns: 1fr; } }
+
+.modes { margin-top: clamp(28px, 4vw, 48px); display: grid; gap: clamp(24px, 4vw, 44px); }
+figure { margin: 0; }
+figcaption { margin-top: 12px; color: var(--muted); font-size: .98rem; max-width: 70ch; }
+figcaption b { color: var(--ink); font-weight: 600; }
+.shot { border-radius: 8px; box-shadow: 0 20px 40px -26px rgba(10, 20, 30, .6); background: var(--screen); }
+.modes-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(24px, 4vw, 44px); align-items: start; }
+.mini-wrap { display: grid; gap: 18px; }
+.mini-wrap .shot { width: 100%; }
+@media (max-width: 760px) { .modes-row { grid-template-columns: 1fr; } }
+
+.install { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(24px, 5vw, 72px); margin-top: clamp(24px, 4vw, 44px); }
+@media (max-width: 860px) { .install { grid-template-columns: minmax(0, 1fr); } }
+ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; display: grid; gap: 22px; }
+ol.steps li { counter-increment: s; position: relative; padding-left: 58px; }
+ol.steps li::before { content: counter(s); position: absolute; left: 0; top: -2px; width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: var(--chassis); display: grid; place-items: center; font: 700 1.3rem var(--display); }
+ol.steps h3 { font-size: 1.5rem; margin-bottom: 4px; }
+ol.steps p { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.manual { background: var(--screen); color: #d6e0e8; border-radius: 10px; padding: 20px 22px; align-self: start; }
+.manual h3 { font-size: 1.5rem; color: #fff; margin-bottom: 10px; }
+.manual p { color: #aebccb; font-size: .98rem; }
+.manual code { display: block; font: 500 .95rem/1.6 ui-monospace, Consolas, monospace; background: #151d26; border-radius: 6px; padding: 12px 14px; color: #bfeaf2; overflow-x: auto; white-space: pre; margin: 0 0 12px; }
+.manual a { color: #7fd5e3; }
+details { border-bottom: 1px solid var(--line); padding: 14px 0; }
+details:first-of-type { border-top: 1.5px solid var(--ink); margin-top: clamp(28px, 4vw, 48px); }
+summary { cursor: pointer; font: 600 1.12rem var(--text); list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; font: 400 1.5rem/1 var(--text); color: var(--muted); }
+details[open] summary::after { content: "–"; }
+details p { margin: 10px 0 0; color: var(--muted); }
+
+.routes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(14px, 2vw, 24px); margin-top: clamp(24px, 4vw, 44px); }
+@media (max-width: 860px) { .routes { grid-template-columns: minmax(0, 1fr); } }
+.route { display: block; background: var(--panel); border-left: 6px solid var(--c); padding: 20px 22px 22px; color: var(--ink); text-decoration: none; border-radius: 4px 10px 10px 4px; }
+.band .route { background: var(--chassis); }
+.route h3 { font-size: 1.7rem; margin-bottom: 6px; }
+.route p { margin: 0; color: var(--muted); }
+.route:hover h3 { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.route.r1 { --c: var(--level); } .route.r2 { --c: var(--rec); } .route.r3 { --c: var(--amber); }
+.note { margin-top: 22px; color: var(--muted); }
+
+.support { background: var(--screen); color: #e7edf2; }
+.support .wrap { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: clamp(20px, 5vw, 72px); align-items: center; }
+@media (max-width: 860px) { .support .wrap { grid-template-columns: minmax(0, 1fr); } }
+.support p { color: #b8c6d2; font-size: 1.12rem; }
+.kofi { display: inline-flex; align-items: center; gap: 12px; background: #fff; color: #101b26; font: 600 1.15rem var(--text); text-decoration: none; padding: 14px 24px; border-radius: 999px; box-shadow: 0 4px 0 #8da0b0; }
+.kofi:hover { background: #f1f6f9; text-decoration: none; }
+.kofi:active { transform: translateY(3px); box-shadow: 0 1px 0 #8da0b0; }
+.kofi svg { width: 26px; height: 26px; }
+
+footer { padding: 28px 0 40px; color: var(--muted); font-size: .95rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+footer a { color: var(--muted); }
+footer span:first-child { margin-right: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .osd .rec i { animation: none; }
+  .rec-btn, .kofi { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="tally" aria-hidden="true"></span>cam-ui</a>
+    <nav aria-label="Secciones">
+      <a href="#que" data-en="What it does">Qué hace</a>
+      <a href="#modos" data-en="Window modes">Modos</a>
+      <a href="#instalar" data-en="Install">Instalar</a>
+      <a href="#opinar" data-en="Feedback">Opinar</a>
+      <a href="#apoya" data-en="Support">Apoya</a>
+    </nav>
+    <button class="lang" id="lang" type="button" aria-label="Cambiar idioma / Switch language">EN</button>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-head">
+      <div>
+        <h1 data-en="All your cameras in a single video.">Todas tus cámaras en un solo vídeo.</h1>
+        <p class="hero-lead" data-en="cam-ui joins several USB cameras and two microphones into one synchronized mosaic. Record it to MP4 or use it as a camera in your video calls.">cam-ui junta varias cámaras USB y dos micrófonos en un mosaico sincronizado. Lo grabas en MP4 o lo usas como cámara en tus videollamadas.</p>
+      </div>
+      <div class="get">
+        <a class="rec-btn" id="download" href="dl/cam-ui-instalar.cmd" download><span class="dot" aria-hidden="true"></span><span data-en="Download for Windows">Descargar para Windows</span></a>
+        <small data-en="Free, no ads. The first run also downloads ffmpeg (about 100 MB). Needs Windows 10 or 11.">Gratis y sin anuncios. La primera vez también descarga ffmpeg (unos 100 MB). Necesita Windows 10 u 11.</small>
+        <small class="alt"><a href="dl/camui.py" download data-en="Only the program file (camui.py)">Solo el archivo del programa (camui.py)</a></small>
+      </div>
+    </div>
+
+    <figure class="monitor">
+      <div class="screen">
+        <canvas id="mosaic" role="img" aria-label="Demostración: cuatro cámaras de prueba combinadas en un mosaico" data-en-label="Demo: four test cameras combined into a mosaic"></canvas>
+        <div class="osd" aria-hidden="true">
+          <span class="rec"><i></i><span id="tc">00:00:00:00</span></span>
+          <span>1280 × 720 · 30 fps</span>
+        </div>
+      </div>
+      <div class="deck">
+        <fieldset class="layouts">
+          <legend class="sr" data-en="Mosaic layout">Disposición del mosaico</legend>
+          <label><input type="radio" name="lay" value="2x2" checked><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="13" height="8" rx="1"/><rect x="15" y="0" width="13" height="8" rx="1"/><rect x="0" y="10" width="13" height="8" rx="1"/><rect x="15" y="10" width="13" height="8" rx="1"/></svg>2 × 2</span></label>
+          <label><input type="radio" name="lay" value="1+2"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="17" height="18" rx="1"/><rect x="19" y="0" width="9" height="8" rx="1"/><rect x="19" y="10" width="9" height="8" rx="1"/></svg>1 + 2</span></label>
+          <label><input type="radio" name="lay" value="3"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="8" height="18" rx="1"/><rect x="10" y="0" width="8" height="18" rx="1"/><rect x="20" y="0" width="8" height="18" rx="1"/></svg><span data-en="3 in a row">3 en fila</span></span></label>
+          <label><input type="radio" name="lay" value="2+1"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="13" height="9" rx="1"/><rect x="15" y="0" width="13" height="9" rx="1"/><rect x="0" y="11" width="28" height="7" rx="1"/></svg>2 + 1</span></label>
+        </fieldset>
+        <div class="meters" aria-hidden="true">
+          <span>L</span><span class="bar"><i id="mL"></i></span>
+          <span>R</span><span class="bar"><i id="mR"></i></span>
+        </div>
+      </div>
+    </figure>
+    <p class="hint" data-en="This demo uses generated images, not real cameras. In the program each tile is one of your cameras, and the layout adapts to their shape.">Esta demostración usa imágenes generadas, no cámaras reales. En el programa cada recuadro es una de tus cámaras y la disposición se adapta a su forma.</p>
+  </div>
+</section>
+
+<section id="que" class="band">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <h2 data-en="Made for cheap USB cameras">Pensado para cámaras USB baratas</h2>
+        <p data-en="They rarely agree on resolution, frame rate or timing. cam-ui checks what each one really delivers and keeps image and sound together.">Casi nunca se ponen de acuerdo en resolución, fps ni tiempos. cam-ui comprueba qué entrega cada una de verdad y mantiene imagen y sonido juntos.</p>
+      </div>
+      <dl class="spec">
+        <div><dt data-en="Sync">Sincronía</dt><dd data-en="Every camera and microphone shares one clock, so picture and sound stay aligned even when each device starts at a different time. Fine delay per camera and per audio channel.">Todas las cámaras y micrófonos comparten un mismo reloj, así que imagen y sonido no se desfasan aunque cada dispositivo arranque en un momento distinto. Retardo ajustable por cámara y por canal de audio.</dd></div>
+        <div><dt data-en="Left and right audio">Audio izquierdo y derecho</dt><dd data-en="Each output channel comes from any microphone, and from its left, right or mixed input, with its own gain. Live level meters.">Cada canal de salida sale del micrófono que elijas, de su lado izquierdo, derecho o mezcla, con ganancia propia. Vúmetros en vivo.</dd></div>
+        <div><dt data-en="Framing and colour">Encuadre y color</dt><dd data-en="Flip, rotate, crop and zoom each camera. Adjust brightness and colour while recording, without stopping.">Voltea, gira, recorta y haz zoom por cámara. Ajusta brillo y color mientras grabas, sin parar.</dd></div>
+        <div><dt data-en="Capture modes">Modos de captura</dt><dd data-en="Reads which sizes and frame rates each camera offers and tests which ones it can keep up with. If a camera rejects a mode, cam-ui tries another by itself.">Lee qué tamaños y fps ofrece cada cámara y prueba cuáles aguanta de verdad. Si una cámara rechaza un modo, cam-ui prueba otro sola.</dd></div>
+        <div><dt data-en="Safe recording">Grabación segura</dt><dd data-en="Records to MKV and converts to MP4 at the end, so a crash does not lose the video. The preview never stops while recording.">Graba en MKV y lo pasa a MP4 al terminar, así un fallo no pierde el vídeo. La vista previa no se corta mientras grabas.</dd></div>
+        <div><dt><span data-en="Virtual camera">Cámara virtual</span><span class="tag" data-en="Experimental">En pruebas</span></dt><dd data-en="Offers the mosaic as a camera in Teams, Zoom or Meet. Needs OBS Studio installed (free; you do not need to open it). Video only, no audio.">Ofrece el mosaico como una cámara en Teams, Zoom o Meet. Necesita tener OBS Studio instalado (gratis; no hace falta abrirlo). Solo vídeo, sin audio.</dd></div>
+        <div><dt data-en="Reset button">Botón de reinicio</dt><dd data-en="If a camera stays locked by a stuck ffmpeg, F12 closes them all and starts again.">Si una cámara se queda retenida por un ffmpeg atascado, F12 los cierra todos y vuelve a empezar.</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section id="modos">
+  <div class="wrap">
+    <h2 data-en="Three window sizes">Tres tamaños de ventana</h2>
+    <div class="modes">
+      <figure>
+        <img class="shot" src="img/normal.webp" width="1400" height="747" alt="Ventana normal de cam-ui con tres cámaras de prueba en el mosaico, lista de cámaras, mapa de disposición y vúmetros" data-en-alt="cam-ui normal window with three test cameras in the mosaic, camera list, layout map and level meters" loading="lazy">
+        <figcaption data-en="<b>Normal.</b> Everything to set up: cameras, layout, framing, colour, audio and output. Screenshot with test cameras.">
+          <b>Normal.</b> Todo para preparar: cámaras, disposición, encuadre, color, audio y salida. Captura con cámaras de prueba.</figcaption>
+      </figure>
+      <div class="modes-row">
+        <figure>
+          <img class="shot" src="img/compact.webp" width="682" height="400" alt="Ventana compacta de cam-ui: barra de botones y vista previa" data-en-alt="cam-ui compact window: button bar and preview" loading="lazy">
+          <figcaption data-en="<b>Compact.</b> Just the preview and the main buttons. It can stay on top of other windows while you work.">
+            <b>Compacto.</b> Solo la vista previa y los botones principales. Puede quedarse encima de otras ventanas mientras trabajas.</figcaption>
+        </figure>
+        <div class="mini-wrap">
+          <figure>
+            <img class="shot" src="img/mini.webp" width="610" height="48" alt="Barra mini de cam-ui con los botones Grabar y Cámara virtual y los controles de ventana" data-en-alt="cam-ui mini bar with Record and Virtual camera buttons and window controls" loading="lazy">
+            <figcaption data-en="<b>Mini.</b> One thin bar with Record and Stop, no preview. Esc goes back to the normal window. All three sizes are also in the tray icon menu.">
+              <b>Mini.</b> Una barra fina con Grabar y Parar, sin vista previa. Con Esc vuelves a la ventana normal. Los tres tamaños también están en el menú del icono de la bandeja.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="instalar" class="band">
+  <div class="wrap">
+    <h2 data-en="Install">Instalar</h2>
+    <div class="install">
+      <ol class="steps">
+        <li><h3 data-en="Download the installer">Descarga el instalador</h3><p data-en="One small file, cam-ui-instalar.cmd. You can read it in the repository before running it.">Un archivo pequeño, cam-ui-instalar.cmd. Puedes leerlo en el repositorio antes de ejecutarlo.</p></li>
+        <li><h3 data-en="Open it">Ábrelo</h3><p data-en="It sets up its own Python environment and downloads ffmpeg. The first time takes a few minutes.">Prepara su propio entorno de Python y descarga ffmpeg. La primera vez tarda unos minutos.</p></li>
+        <li><h3 data-en="Use it from the Start menu">Úsalo desde el menú Inicio</h3><p data-en="cam-ui opens when it finishes. To update, run the installer again: your settings stay.">cam-ui se abre al terminar. Para actualizar, vuelve a ejecutar el instalador: tus ajustes se conservan.</p></li>
+      </ol>
+      <div class="manual">
+        <h3 data-en="By hand">A mano</h3>
+        <p data-en="With Python 3.10 or newer and ffmpeg.exe next to camui.py:">Con Python 3.10 o superior y ffmpeg.exe junto a camui.py:</p>
+        <code>pip install numpy pillow pystray pyvirtualcam
+python camui.py</code>
+        <p data-en="Source code and notes: <a href='https://github.com/enderHugin/cam-ui'>github.com/enderHugin/cam-ui</a>">Código y notas: <a href="https://github.com/enderHugin/cam-ui">github.com/enderHugin/cam-ui</a></p>
+      </div>
+    </div>
+    <details>
+      <summary data-en="What does the installer put on my computer?">¿Qué instala y dónde?</summary>
+      <p data-en="Everything goes into %LOCALAPPDATA%\cam-ui (the program, its own Python environment and ffmpeg) plus one Start menu shortcut. It does not touch your own Python or ask for administrator rights.">Todo va a %LOCALAPPDATA%\cam-ui (el programa, su entorno de Python y ffmpeg) más un acceso en el menú Inicio. No toca tu Python ni pide permisos de administrador.</p>
+    </details>
+    <details>
+      <summary data-en="How do I remove it?">¿Cómo lo quito?</summary>
+      <p data-en="Run the installer with the word “desinstalar” after its name (cam-ui-instalar.cmd desinstalar) from a command window, or delete the cam-ui folder and the Start menu shortcut. Your recordings are never touched.">Ejecuta el instalador con la palabra «desinstalar» detrás de su nombre (cam-ui-instalar.cmd desinstalar) desde una ventana de comandos, o borra la carpeta cam-ui y el acceso del menú Inicio. Tus grabaciones no se tocan.</p>
+    </details>
+    <details>
+      <summary data-en="Why does Windows warn me about the file?">¿Por qué Windows me avisa al abrir el archivo?</summary>
+      <p data-en="The installer is a plain script that is not signed by a company, so Windows shows a warning for any downloaded script. If you want to check it first, open it with a text editor: it is short and only downloads the files listed above.">El instalador es un script sin firmar por una empresa, y Windows avisa con cualquier script descargado. Si quieres comprobarlo antes, ábrelo con un editor de texto: es corto y solo descarga lo que se lista arriba.</p>
+    </details>
+    <details>
+      <summary data-en="Does the virtual camera need something else?">¿La cámara virtual necesita algo más?</summary>
+      <p data-en="Yes: OBS Studio installed (free, obsproject.com). cam-ui uses its virtual camera, so you pick “OBS Virtual Camera” in your video-call app. Only one program can use that camera at a time, so do not start the virtual camera inside OBS at the same time.">Sí: OBS Studio instalado (gratis, obsproject.com). cam-ui usa su cámara virtual, así que en tu app de videollamadas eliges «OBS Virtual Camera». Solo un programa puede usar esa cámara a la vez: no inicies además la cámara virtual dentro de OBS.</p>
+    </details>
+    <details>
+      <summary data-en="My camera shows low quality or fails to open">Mi cámara sale con poca calidad o no abre</summary>
+      <p data-en="In the Framing tab press “Detect” and then “Test modes”. cam-ui measures what each mode really delivers and picks the best one that works. If it still fails, send me the report (see the next section).">En la pestaña Encuadre pulsa «Detectar» y luego «Probar modos». cam-ui mide lo que entrega cada modo y elige el mejor que funcione. Si sigue fallando, mándame el informe (mira la sección siguiente).</p>
+    </details>
+  </div>
+</section>
+
+<section id="opinar">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <h2 data-en="Tell me how it goes">Cuéntame cómo te va</h2>
+        <p data-en="It is worth writing even if everything worked. It tells me which cameras and setups to look after.">Vale la pena escribir aunque todo haya ido bien: me dice qué cámaras y montajes cuidar.</p>
+      </div>
+    </div>
+    <div class="routes">
+      <a class="route r1" href="https://github.com/enderHugin/cam-ui/issues/new?template=opinion.yml">
+        <h3 data-en="Share my experience">Dar mi opinión</h3>
+        <p data-en="What you used it for, which cameras you have, what you liked and what cost you.">Para qué lo usas, qué cámaras tienes, qué te ha gustado y qué te ha costado.</p>
+      </a>
+      <a class="route r2" href="https://github.com/enderHugin/cam-ui/issues/new?template=bug_report.yml">
+        <h3 data-en="Something does not work">Algo no funciona</h3>
+        <p data-en="A camera will not open, the video comes out wrong, the program closes.">Una cámara no abre, el vídeo sale mal, el programa se cierra.</p>
+      </a>
+      <a class="route r3" href="https://github.com/enderHugin/cam-ui/issues/new?template=feature_request.yml">
+        <h3 data-en="Ask for a feature">Pedir una función</h3>
+        <p data-en="Tell me what you are trying to do and I will look at how to make it possible.">Cuéntame qué intentas conseguir y veo cómo hacerlo posible.</p>
+      </a>
+    </div>
+    <p class="note" data-en="You need a free GitHub account. To report a problem, attach the camui.log file (next to camui.py; the “Registro” button opens it) and, if it is about resolution or frame rate, the “Test modes” report. You can also <a href='https://github.com/enderHugin/cam-ui/issues'>read what others have sent</a>.">Hace falta una cuenta gratuita de GitHub. Para avisar de un problema, adjunta el archivo camui.log (junto a camui.py; el botón «Registro» lo abre) y, si es de resolución o fps, el informe de «Probar modos». También puedes <a href="https://github.com/enderHugin/cam-ui/issues">leer lo que han enviado otras personas</a>.</p>
+  </div>
+</section>
+
+<section id="apoya" class="support">
+  <div class="wrap">
+    <div>
+      <h2 data-en="Support cam-ui">Apoya cam-ui</h2>
+      <p style="margin-top:14px" data-en="cam-ui is free and has no ads. If it saves you time, buy me a coffee and help me keep improving it.">cam-ui es gratis y no tiene anuncios. Si te ahorra tiempo, invítame a un café y ayúdame a seguir mejorándolo.</p>
+    </div>
+    <div>
+      <a class="kofi" href="https://ko-fi.com/jaimeluisolguinmesina" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"/><path d="M17 9h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3v2M12 3v2"/></svg>
+        <span data-en="Buy me a coffee">Invítame a un café</span>
+      </a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>cam-ui v__VERSION__</span>
+    <span data-en="Free software, MIT license">Software libre, licencia MIT</span>
+    <a href="https://github.com/enderHugin/cam-ui">GitHub</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- idioma ---------- */
+  var root = document.documentElement;
+  var T = { es: { cam: "Cámara ", title: "cam-ui · varias cámaras en un solo vídeo" },
+            en: { cam: "Camera ", title: "cam-ui · several cameras in one video" } };
+  var lang = "es";
+  function stored() { try { return localStorage.getItem("camui-lang"); } catch (e) { return null; } }
+  function setLang(l) {
+    lang = l;
+    root.lang = l; root.setAttribute("data-lang", l);
+    document.title = T[l].title;
+    document.querySelectorAll("[data-en]").forEach(function (el) {
+      if (el._es === undefined) el._es = el.innerHTML;
+      el.innerHTML = l === "en" ? el.getAttribute("data-en") : el._es;
+    });
+    document.querySelectorAll("[data-en-alt]").forEach(function (el) {
+      if (el._es === undefined) el._es = el.getAttribute("alt");
+      el.setAttribute("alt", l === "en" ? el.getAttribute("data-en-alt") : el._es);
+    });
+    var cv = document.getElementById("mosaic");
+    if (cv._es === undefined) cv._es = cv.getAttribute("aria-label");
+    cv.setAttribute("aria-label", l === "en" ? cv.getAttribute("data-en-label") : cv._es);
+    document.getElementById("lang").textContent = l === "en" ? "ES" : "EN";
+    try { localStorage.setItem("camui-lang", l); } catch (e) {}
+    drawNow();
+  }
+  document.getElementById("lang").addEventListener("click", function () { setLang(lang === "es" ? "en" : "es"); });
+
+  /* ---------- mosaico de demostración ---------- */
+  var cv = document.getElementById("mosaic"), ctx = cv.getContext("2d");
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var LAYOUTS = {
+    "2x2": [[0, 0, .5, .5], [.5, 0, .5, .5], [0, .5, .5, .5], [.5, .5, .5, .5]],
+    "1+2": [[0, 0, .62, 1], [.62, 0, .38, .5], [.62, .5, .38, .5], null],
+    "3":   [[0, 0, 1 / 3, 1], [1 / 3, 0, 1 / 3, 1], [2 / 3, 0, 1 / 3, 1], null],
+    "2+1": [[0, 0, .5, .55], [.5, 0, .5, .55], [0, .55, 1, .45], null]
+  };
+  var target = LAYOUTS["2x2"];
+  var cur = target.map(function () { return { x: .5, y: .5, w: 0, h: 0, a: 0 }; });
+  var W = 0, H = 0, S = 1;
+
+  function resize() {
+    var r = cv.getBoundingClientRect();
+    S = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(2, Math.round(r.width * S)); H = Math.max(2, Math.round(r.height * S));
+    cv.width = W; cv.height = H;
+  }
+
+  var BARS = ["#c0c0c0", "#c0c000", "#00c0c0", "#00c000", "#c000c0", "#c00000", "#0000c0"];
+  var SRC = [
+    function room(c, w, h, t) {                       /* habitación con luces desenfocadas */
+      var g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#33404f"); g.addColorStop(1, "#141a22");
+      c.fillStyle = g; c.fillRect(0, 0, w, h);
+      var m = Math.min(w, h);
+      for (var i = 0; i < 6; i++) {
+        var x = w * (.5 + .38 * Math.sin(t * .31 + i * 1.7)), y = h * (.45 + .3 * Math.cos(t * .23 + i * 2.1)), r = m * (.16 + .05 * (i % 3));
+        var rg = c.createRadialGradient(x, y, 0, x, y, r);
+        var col = i % 2 ? "255,196,120" : "130,200,255";
+        rg.addColorStop(0, "rgba(" + col + ",.55)"); rg.addColorStop(1, "rgba(" + col + ",0)");
+        c.fillStyle = rg; c.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      c.fillStyle = "#0d1218"; c.fillRect(0, h * .82, w, h * .18);
+    },
+    function bars(c, w, h, t) {                       /* barras de color */
+      var bw = w / 7, i;
+      for (i = 0; i < 7; i++) { c.fillStyle = BARS[i]; c.fillRect(i * bw, 0, bw + 1, h * .68); }
+      for (i = 0; i < 7; i++) { c.fillStyle = BARS[6 - i]; c.fillRect(i * bw, h * .68, bw + 1, h * .1); }
+      var g = c.createLinearGradient(0, 0, w, 0); g.addColorStop(0, "#000"); g.addColorStop(1, "#fff");
+      c.fillStyle = g; c.fillRect(0, h * .78, w, h * .22);
+      c.fillStyle = "rgba(255,255,255,.9)"; c.fillRect(((t * .12) % 1) * w, 0, Math.max(2, w * .006), h);
+    },
+    function radar(c, w, h, t) {                      /* radar */
+      c.fillStyle = "#06130d"; c.fillRect(0, 0, w, h);
+      var cx = w / 2, cy = h / 2, R = Math.min(w, h) * .46, a = t * 1.3, i;
+      c.strokeStyle = "rgba(53,208,127,.35)"; c.lineWidth = Math.max(1, R * .012);
+      for (i = 1; i <= 3; i++) { c.beginPath(); c.arc(cx, cy, R * i / 3, 0, 6.283); c.stroke(); }
+      c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke();
+      if (c.createConicGradient) {
+        var g = c.createConicGradient(a - 1.2, cx, cy); g.addColorStop(0, "rgba(53,208,127,0)"); g.addColorStop(.19, "rgba(53,208,127,.5)"); g.addColorStop(.2, "rgba(53,208,127,0)");
+        c.fillStyle = g; c.beginPath(); c.arc(cx, cy, R, 0, 6.283); c.fill();
+      }
+      c.strokeStyle = "#35d07f"; c.lineWidth = Math.max(2, R * .02);
+      c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); c.stroke();
+      c.fillStyle = "#b8ffd8";
+      for (i = 0; i < 3; i++) { var ba = i * 2.3 + 1, d = R * (.35 + .2 * i), age = ((a - ba) % 6.283 + 6.283) % 6.283; c.globalAlpha = Math.max(0, 1 - age / 4); c.beginPath(); c.arc(cx + Math.cos(ba) * d, cy + Math.sin(ba) * d, R * .04, 0, 6.283); c.fill(); }
+      c.globalAlpha = 1;
+    },
+    function scope(c, w, h, t) {                      /* osciloscopio */
+      c.fillStyle = "#091218"; c.fillRect(0, 0, w, h);
+      c.strokeStyle = "rgba(255,255,255,.08)"; c.lineWidth = 1;
+      var i; for (i = 1; i < 8; i++) { c.beginPath(); c.moveTo(w * i / 8, 0); c.lineTo(w * i / 8, h); c.stroke(); }
+      for (i = 1; i < 6; i++) { c.beginPath(); c.moveTo(0, h * i / 6); c.lineTo(w, h * i / 6); c.stroke(); }
+      var cols = ["#27c3d6", "#f2b134", "#8fd36b"];
+      for (i = 0; i < 3; i++) {
+        c.strokeStyle = cols[i]; c.lineWidth = Math.max(2, h * .012); c.beginPath();
+        for (var x = 0; x <= w; x += 3) {
+          var u = x / w, y = h * .5 + Math.sin(u * (7 + i * 3) + t * (1.4 + i * .5) + i) * h * (.2 - i * .04) * (.7 + .3 * Math.sin(t * .7 + u * 3));
+          if (x) c.lineTo(x, y); else c.moveTo(x, y);
+        }
+        c.stroke();
+      }
+    }
+  ];
+
+  function frameAt(t, dt) {
+    var k = reduce ? 1 : 1 - Math.exp(-dt * 11), i, r, g;
+    for (i = 0; i < 4; i++) {
+      g = target[i] || [.5, .5, 0, 0]; r = cur[i];
+      r.x += (g[0] - r.x) * k; r.y += (g[1] - r.y) * k; r.w += (g[2] - r.w) * k; r.h += (g[3] - r.h) * k;
+      r.a += ((target[i] ? 1 : 0) - r.a) * k;
+    }
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    var gap = Math.round(3 * S), fs = Math.round(13 * S);
+    for (i = 0; i < 4; i++) {
+      r = cur[i]; if (r.a < .03 || r.w < .02) continue;
+      var x = Math.round(r.x * W) + gap, y = Math.round(r.y * H) + gap, w = Math.round(r.w * W) - gap * 2, h = Math.round(r.h * H) - gap * 2;
+      if (w < 4 || h < 4) continue;
+      ctx.save(); ctx.globalAlpha = Math.min(1, r.a); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.translate(x, y);
+      SRC[i](ctx, w, h, t);
+      var label = T[lang].cam + (i + 1);
+      ctx.font = "600 " + fs + "px Barlow, 'Segoe UI', sans-serif"; var tw = ctx.measureText(label).width;
+      ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(gap * 2, h - fs * 2.3, tw + fs, fs * 1.7);
+      ctx.fillStyle = "#fff"; ctx.textBaseline = "middle"; ctx.fillText(label, gap * 2 + fs / 2, h - fs * 1.45);
+      ctx.restore();
+    }
+  }
+
+  /* temporizador y vúmetros */
+  var tc = document.getElementById("tc"), mL = document.getElementById("mL"), mR = document.getElementById("mR");
+  var lv = [.55, .5], lastTc = "";
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function hud(t) {
+    var s = Math.floor(t), f = Math.floor((t - s) * 30), str = "00:" + pad(Math.floor(s / 60) % 60) + ":" + pad(s % 60) + ":" + pad(f);
+    if (str !== lastTc) { tc.textContent = str; lastTc = str; }
+    for (var i = 0; i < 2; i++) {
+      var goal = .5 + .28 * Math.sin(t * (2.1 + i * .7) + i * 2) + .12 * Math.sin(t * 7.3 + i);
+      lv[i] += (goal - lv[i]) * .35;
+    }
+    mL.style.transform = "scaleX(" + Math.max(.04, Math.min(1, lv[0])).toFixed(3) + ")";
+    mR.style.transform = "scaleX(" + Math.max(.04, Math.min(1, lv[1])).toFixed(3) + ")";
+  }
+
+  var t0 = performance.now(), last = t0, raf = 0, visible = true;
+  function loop(now) {
+    raf = 0;
+    var dt = Math.min(.1, (now - last) / 1000); last = now;
+    var t = (now - t0) / 1000;
+    frameAt(t + 2, dt); hud(t);
+    if (visible && !document.hidden) raf = requestAnimationFrame(loop);
+  }
+  function start() { if (!raf && !reduce) { last = performance.now(); raf = requestAnimationFrame(loop); } }
+  function drawNow() { if (reduce) { frameAt(6, 1); hud(12); } }
+
+  resize();
+  if (reduce) { cur.forEach(function (r, i) { var g = target[i] || [.5, .5, 0, 0]; r.x = g[0]; r.y = g[1]; r.w = g[2]; r.h = g[3]; r.a = target[i] ? 1 : 0; }); }
+  window.addEventListener("resize", function () { resize(); drawNow(); });
+  document.addEventListener("visibilitychange", start);
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (es) { visible = es[0].isIntersecting; if (visible) start(); }).observe(cv);
+  }
+  document.querySelectorAll('input[name="lay"]').forEach(function (r) {
+    r.addEventListener("change", function () {
+      target = LAYOUTS[r.value];
+      if (reduce) { cur.forEach(function (c, i) { var g = target[i] || [.5, .5, 0, 0]; c.x = g[0]; c.y = g[1]; c.w = g[2]; c.h = g[3]; c.a = target[i] ? 1 : 0; }); drawNow(); }
+    });
+  });
+
+  var s = stored();
+  setLang(s === "es" || s === "en" ? s : ((navigator.language || "es").toLowerCase().indexOf("es") === 0 ? "es" : "en"));
+  drawNow(); start();
+})();
+</script>
+</body>
+</html>
