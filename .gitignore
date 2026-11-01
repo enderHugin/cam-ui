@@ -2,6 +2,7 @@
 *
 !.gitignore
 !camui.py
+!LICENSE
 !README.md
 !requirements.txt
 !tests/
