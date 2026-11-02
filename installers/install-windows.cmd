@@ -2,24 +2,47 @@
 setlocal EnableExtensions
 title Instalador de cam-ui
 
-rem Instala (o actualiza) cam-ui en %LOCALAPPDATA%\cam-ui:
+rem Instala (o actualiza) cam-ui:
 rem   - descarga camui.py
 rem   - crea un entorno de Python propio (no toca tu Python)
 rem   - instala numpy, pillow, pystray y pyvirtualcam
 rem   - descarga ffmpeg.exe si no esta
 rem   - crea un acceso en el menu Inicio y abre el programa
 rem Para quitarlo:  cam-ui-instalar.cmd desinstalar
+rem Para instalar en otra carpeta/unidad sin que te lo pregunte:
+rem   set CAMUI_INSTALL_DIR=D:\cam-ui   y luego ejecuta este archivo desde esa misma ventana
 
 set "BASE=https://enderhugin.github.io/cam-ui/dl"
-set "DEST=%LOCALAPPDATA%\cam-ui"
 set "FFZIP=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+if defined CAMUI_INSTALL_DIR (set "DEST=%CAMUI_INSTALL_DIR%") else (set "DEST=%LOCALAPPDATA%\cam-ui")
 
 if /i "%~1"=="desinstalar" goto :uninstall
 
 echo.
 echo  cam-ui - instalacion
-echo  Carpeta: %DEST%
 echo.
+set /p "ASK=  Carpeta de instalacion [%DEST%] (pulsa Intro para usar esta): "
+if not "%ASK%"=="" set "DEST=%ASK%"
+echo  Instalando en: %DEST%
+echo.
+
+rem ---- 0. espacio libre en esa unidad (aviso, no bloquea: por si el calculo falla)
+call :freemb "%DEST%" DESTFREE
+echo %DESTFREE%| findstr /r "^[0-9][0-9]*$" >nul
+if errorlevel 1 goto :spaceok
+echo  (espacio libre detectado en esa unidad: %DESTFREE% MB)
+if %DESTFREE% GEQ 1200 goto :spaceok
+echo.
+echo  Aviso: esa unidad tiene poco espacio libre ^(unos %DESTFREE% MB^).
+echo  cam-ui necesita alrededor de 1 GB entre Python, ffmpeg y las librerias.
+echo.
+echo  Para liberar espacio: Configuracion - Sistema - Almacenamiento - "Liberar
+echo  espacio ahora" (tambien ayuda vaciar la papelera y la carpeta Descargas).
+echo.
+set /p "ASK2=  Escribe otra carpeta/unidad (o pulsa Intro para seguir igualmente): "
+if not "%ASK2%"=="" set "DEST=%ASK2%"
+echo.
+:spaceok
 
 rem ---- 1. Python 3.10+ con Tkinter
 set "PY="
@@ -39,17 +62,18 @@ rem ---- 3. entorno de Python y paquetes
 echo  [2/4] Preparando Python (la primera vez tarda un par de minutos)...
 if not exist "%DEST%\venv\Scripts\pythonw.exe" %PY% -m venv "%DEST%\venv"
 if errorlevel 1 goto :fail
-"%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q numpy pillow
-if errorlevel 1 goto :fail
+rem --no-cache-dir: ocupa menos y evita depender de la cache de pip (a veces corrupta)
+"%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-cache-dir -q numpy pillow
+if errorlevel 1 goto :faildisk
 rem opcionales: sin ellos cam-ui funciona, pero sin icono de bandeja / camara virtual
-"%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q pystray
-"%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q pyvirtualcam
+"%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-cache-dir -q pystray
+"%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-cache-dir -q pyvirtualcam
 
 rem ---- 4. ffmpeg
 if exist "%DEST%\bin\ffmpeg.exe" goto :ffok
 echo  [3/4] Descargando ffmpeg (unos 100 MB, solo la primera vez)...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $z=Join-Path $env:TEMP 'cam-ui-ffmpeg.zip'; $d=Join-Path $env:TEMP 'cam-ui-ffmpeg'; Invoke-WebRequest -UseBasicParsing '%FFZIP%' -OutFile $z; if (Test-Path $d) { Remove-Item $d -Recurse -Force }; Expand-Archive $z $d -Force; $f = Get-ChildItem $d -Recurse -Filter ffmpeg.exe | Select-Object -First 1; Copy-Item $f.FullName '%DEST%\bin\ffmpeg.exe' -Force; Remove-Item $z -Force; Remove-Item $d -Recurse -Force"
-if errorlevel 1 goto :fail
+if errorlevel 1 goto :faildisk
 :ffok
 
 rem ---- 5. acceso en el menu Inicio y abrir
@@ -61,12 +85,30 @@ start "" /D "%DEST%" "%DEST%\venv\Scripts\pythonw.exe" camui.py
 timeout /t 4 >nul
 exit /b 0
 
+rem ---- subrutina: MB libres en la unidad de %1 -> variable %2 (vacia si no se pudo calcular)
+:freemb
+set "%~2="
+for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "try { $r = Split-Path -Qualifier '%~1'; if (-not $r) { $r = (Get-Location).Drive.Name + ':' }; $d = Get-PSDrive -Name $r.TrimEnd(':'); [math]::Floor($d.Free/1MB) } catch { '' }"`) do set "%~2=%%F"
+goto :eof
+
 :nopython
 echo.
 echo  No encuentro Python 3.10 o superior con Tkinter.
 echo  Instalalo desde https://www.python.org/downloads/windows/
 echo  (en el instalador, marca "Add python.exe to PATH") y vuelve a abrir este archivo.
 start "" https://www.python.org/downloads/windows/
+echo.
+pause
+exit /b 1
+
+:faildisk
+echo.
+echo  La instalacion no ha terminado (fallo al instalar un paquete de Python).
+echo  La causa mas frecuente es que la unidad "%DEST:~0,2%" se quedo sin espacio
+echo  libre a mitad de la instalacion. Comprueba el espacio en esa unidad concreta
+echo  (Explorador - Este equipo) y, si hace falta, vuelve a ejecutar este archivo
+echo  y escribe otra carpeta/unidad cuando te lo pregunte.
+echo  Si sigue fallando, cuentalo en https://github.com/enderHugin/cam-ui/issues/new/choose
 echo.
 pause
 exit /b 1
