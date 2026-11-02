@@ -64,7 +64,7 @@ if not exist "%DEST%\venv\Scripts\pythonw.exe" %PY% -m venv "%DEST%\venv"
 if errorlevel 1 goto :fail
 rem --no-cache-dir: ocupa menos y evita depender de la cache de pip (a veces corrupta)
 "%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-cache-dir -q numpy pillow
-if errorlevel 1 goto :faildisk
+if errorlevel 1 goto :failpkg
 rem opcionales: sin ellos cam-ui funciona, pero sin icono de bandeja / camara virtual
 "%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-cache-dir -q pystray
 "%DEST%\venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-cache-dir -q pyvirtualcam
@@ -72,8 +72,10 @@ rem opcionales: sin ellos cam-ui funciona, pero sin icono de bandeja / camara vi
 rem ---- 4. ffmpeg
 if exist "%DEST%\bin\ffmpeg.exe" goto :ffok
 echo  [3/4] Descargando ffmpeg (unos 100 MB, solo la primera vez)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $z=Join-Path $env:TEMP 'cam-ui-ffmpeg.zip'; $d=Join-Path $env:TEMP 'cam-ui-ffmpeg'; Invoke-WebRequest -UseBasicParsing '%FFZIP%' -OutFile $z; if (Test-Path $d) { Remove-Item $d -Recurse -Force }; Expand-Archive $z $d -Force; $f = Get-ChildItem $d -Recurse -Filter ffmpeg.exe | Select-Object -First 1; Copy-Item $f.FullName '%DEST%\bin\ffmpeg.exe' -Force; Remove-Item $z -Force; Remove-Item $d -Recurse -Force"
-if errorlevel 1 goto :faildisk
+rem extrae solo ffmpeg.exe y ffplay.exe del zip (no todo el paquete): mas rapido, menos
+rem espacio y evita un fallo conocido de Expand-Archive al limpiar tras descomprimir
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $z=Join-Path $env:TEMP 'cam-ui-ffmpeg.zip'; Invoke-WebRequest -UseBasicParsing '%FFZIP%' -OutFile $z; Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip=[System.IO.Compression.ZipFile]::OpenRead($z); try { $got=$false; foreach($n in @('ffmpeg.exe','ffplay.exe')) { $e=$zip.Entries | Where-Object { $_.Name -eq $n -and $_.FullName -like '*/bin/*' } | Select-Object -First 1; if ($e) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, (Join-Path '%DEST%\bin' $n), $true); if ($n -eq 'ffmpeg.exe') { $got=$true } } } if (-not $got) { throw 'ffmpeg.exe no estaba en el zip descargado' } } finally { $zip.Dispose() }; Remove-Item $z -Force"
+if errorlevel 1 goto :failffmpeg
 :ffok
 
 rem ---- 5. acceso en el menu Inicio y abrir
@@ -101,7 +103,7 @@ echo.
 pause
 exit /b 1
 
-:faildisk
+:failpkg
 echo.
 echo  La instalacion no ha terminado (fallo al instalar un paquete de Python).
 echo  La causa mas frecuente es que la unidad "%DEST:~0,2%" se quedo sin espacio
@@ -109,6 +111,16 @@ echo  libre a mitad de la instalacion. Comprueba el espacio en esa unidad concre
 echo  (Explorador - Este equipo) y, si hace falta, vuelve a ejecutar este archivo
 echo  y escribe otra carpeta/unidad cuando te lo pregunte.
 echo  Si sigue fallando, cuentalo en https://github.com/enderHugin/cam-ui/issues/new/choose
+echo.
+pause
+exit /b 1
+
+:failffmpeg
+echo.
+echo  La instalacion no ha terminado al preparar ffmpeg (no es un problema de espacio).
+echo  Suele ser la descarga cortada a mitad, o un antivirus bloqueando el archivo.
+echo  Vuelve a abrir este archivo para reintentarlo; si sigue fallando, copia el
+echo  texto de arriba y cuentalo en https://github.com/enderHugin/cam-ui/issues/new/choose
 echo.
 pause
 exit /b 1
