@@ -6,8 +6,9 @@ Mosaico de varias cámaras USB más audio L/R en un solo vídeo, para Windows.
 Interfaz Tkinter + FFmpeg (DirectShow). Un único archivo: `camui.py`.
 
 ## Instalación rápida (Windows)
-Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: prepara su propio entorno de Python,
-descarga ffmpeg y crea un acceso en el menú Inicio. Fuente: [`installers/install-windows.cmd`](installers/install-windows.cmd).
+Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no necesitas tener Python instalado
+(prepara el suyo), descarga ffmpeg y crea accesos en el menú Inicio y el escritorio. Para quitarlo, desde
+«Aplicaciones instaladas» de Windows. Fuente: [`installers/install-windows.cmd`](installers/install-windows.cmd).
 
 ## Requisitos (instalación a mano)
 - Windows, Python 3.10+ con Tkinter.

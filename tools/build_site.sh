@@ -2,6 +2,7 @@
 # Monta la página en _site/: la carpeta site/ + los archivos descargables en dl/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+BASE_URL="https://enderhugin.github.io/cam-ui/dl"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 PACK="$(sed -n 's/^APP_PACK[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' camui.py | head -1)"
 [ -n "$PACK" ] || { echo "camui.py no define APP_PACK" >&2; exit 1; }
@@ -11,8 +12,10 @@ rm -rf _site
 cp -r site _site
 mkdir -p _site/dl
 cp camui.py _site/dl/camui.py
-# el instalador se descarga como .cmd (con saltos de línea de Windows)
-sed 's/\r$//; s/$/\r/' installers/install-windows.cmd > _site/dl/cam-ui-instalar.cmd
+echo -n "$VERSION" > _site/dl/VERSION
+[ -f assets/cam-ui.ico ] && cp assets/cam-ui.ico _site/dl/icon.ico
+# el instalador se descarga como .cmd (con saltos de línea de Windows); __BASE_URL__ -> la propia dl/
+sed "s|__BASE_URL__|${BASE_URL}|g" installers/install-windows.cmd | sed 's/\r$//; s/$/\r/' > _site/dl/cam-ui-instalar.cmd
 sed -i "s/__VERSION__/${VERSION}/g" _site/index.html
 touch _site/.nojekyll
 # update.json: lo que lee «Buscar actualizaciones» (pack, huella sha256 y novedades)

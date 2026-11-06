@@ -312,7 +312,7 @@ footer span:first-child { margin-right: auto; }
     <div class="install">
       <ol class="steps">
         <li><h3 data-en="Download the installer">Descarga el instalador</h3><p data-en="One small file, cam-ui-instalar.cmd. You can read it in the repository before running it.">Un archivo pequeño, cam-ui-instalar.cmd. Puedes leerlo en el repositorio antes de ejecutarlo.</p></li>
-        <li><h3 data-en="Open it">Ábrelo</h3><p data-en="It sets up its own Python environment and downloads ffmpeg. The first time takes a few minutes.">Prepara su propio entorno de Python y descarga ffmpeg. La primera vez tarda unos minutos.</p></li>
+        <li><h3 data-en="Open it">Ábrelo</h3><p data-en="It sets up its own Python (you don't need Python installed) and downloads ffmpeg. The first time takes a couple of minutes.">Prepara su propio Python (no necesitas tener Python instalado) y descarga ffmpeg. La primera vez tarda un par de minutos.</p></li>
         <li><h3 data-en="Use it from the Start menu">Úsalo desde el menú Inicio</h3><p data-en="cam-ui opens when it finishes. To update, run the installer again: your settings stay.">cam-ui se abre al terminar. Para actualizar, vuelve a ejecutar el instalador: tus ajustes se conservan.</p></li>
       </ol>
       <div class="manual">
@@ -325,11 +325,11 @@ python camui.py</code>
     </div>
     <details>
       <summary data-en="What does the installer put on my computer?">¿Qué instala y dónde?</summary>
-      <p data-en="Everything goes into %LOCALAPPDATA%\cam-ui (the program, its own Python environment and ffmpeg) plus one Start menu shortcut. It does not touch your own Python or ask for administrator rights.">Todo va a %LOCALAPPDATA%\cam-ui (el programa, su entorno de Python y ffmpeg) más un acceso en el menú Inicio. No toca tu Python ni pide permisos de administrador.</p>
+      <p data-en="Everything goes into your own user folders (the program in %LOCALAPPDATA%\Programs\cam-ui, its own Python and ffmpeg in %LOCALAPPDATA%\cam-ui), with a shortcut in the Start menu and on the desktop, and it shows up in “Installed apps”. It does not touch any Python you already have, or ask for administrator rights.">Todo va a tus propias carpetas de usuario (el programa en %LOCALAPPDATA%\Programs\cam-ui, su Python propio y ffmpeg en %LOCALAPPDATA%\cam-ui), con un acceso en el menú Inicio y en el escritorio, y aparece en «Aplicaciones instaladas». No toca el Python que ya tengas, ni pide permisos de administrador.</p>
     </details>
     <details>
       <summary data-en="How do I remove it?">¿Cómo lo quito?</summary>
-      <p data-en="Run the installer with the word “desinstalar” after its name (cam-ui-instalar.cmd desinstalar) from a command window, or delete the cam-ui folder and the Start menu shortcut. Your recordings are never touched.">Ejecuta el instalador con la palabra «desinstalar» detrás de su nombre (cam-ui-instalar.cmd desinstalar) desde una ventana de comandos, o borra la carpeta cam-ui y el acceso del menú Inicio. Tus grabaciones no se tocan.</p>
+      <p data-en="From Windows Settings → Apps → Installed apps, look for “cam-ui” — same as removing any other program. It asks whether to also delete your captures, recordings and settings, or keep them for next time.">Desde Configuración de Windows → Aplicaciones → Aplicaciones instaladas, busca «cam-ui» — igual que para quitar cualquier otro programa. Pregunta si también quieres borrar tus capturas, grabaciones y ajustes, o conservarlos por si lo vuelves a instalar.</p>
     </details>
     <details>
       <summary data-en="Why does Windows warn me about the file?">¿Por qué Windows me avisa al abrir el archivo?</summary>
@@ -337,7 +337,7 @@ python camui.py</code>
     </details>
     <details>
       <summary data-en="How much space does it need?">¿Cuánto espacio necesita?</summary>
-      <p data-en="About 1 GB free on the drive where your user folder lives (usually C:), for Python, ffmpeg and the libraries. The installer checks and tells you the free space it finds before starting, and lets you pick another folder or drive.">Alrededor de 1 GB libre en la unidad donde está tu carpeta de usuario (normalmente C:), entre Python, ffmpeg y las librerías. El instalador comprueba el espacio libre que encuentra antes de empezar y te deja elegir otra carpeta o unidad.</p>
+      <p data-en="About 500 MB free on the drive where your user folder lives (usually C:), for Python, ffmpeg and the libraries; the installer warns you if it finds less. If that drive is too full, you can install on another one: open a command window, type set CAMUI_INSTALL_DIR=D:\cam-ui (with the drive and folder you want) and run the installer from that same window.">Alrededor de 500 MB libres en la unidad donde está tu carpeta de usuario (normalmente C:), entre Python, ffmpeg y las librerías; el instalador avisa si encuentra menos. Si esa unidad anda corta, puedes instalar en otra: abre una ventana de comandos, escribe set CAMUI_INSTALL_DIR=D:\cam-ui (con la unidad y carpeta que quieras) y ejecuta el instalador desde esa misma ventana.</p>
     </details>
     <details>
       <summary data-en="Does the virtual camera need something else?">¿La cámara virtual necesita algo más?</summary>

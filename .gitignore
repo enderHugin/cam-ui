@@ -19,6 +19,8 @@ tests/t/
 !installers/**
 !tools/
 !tools/**
+!assets/
+!assets/**
 !site/
 !site/**
 !site/fonts/*.woff2
