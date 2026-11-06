@@ -282,6 +282,8 @@ def mode_key(mode):
 
 
 def list_camera_modes(spec):
+    if _is_net_spec(spec):
+        return []                          # una URL no anuncia modos DirectShow; se usa tal cual
     return parse_camera_modes(_run_ffmpeg(["-list_options", "true", "-f", "dshow",
                                            "-i", "video=" + spec]))
 
@@ -663,9 +665,30 @@ def plan_geometry(plan):
 # =====================================================================
 #  Construcción del comando ffmpeg (puro: se puede probar sin cámaras)
 # =====================================================================
+_NET_SCHEMES = ("http://", "https://", "rtsp://", "rtsps://")
+
+
+def _is_net_spec(spec):
+    """True si «spec» es una URL (cámara de red: el móvil con una app como IP Webcam) en vez de
+    un nombre de dispositivo DirectShow."""
+    return (spec or "").strip().lower().startswith(_NET_SCHEMES)
+
+
+def _net_video_input(spec, opt=None):
+    """Entrada de vídeo por red (http/https MJPEG o rtsp): spec es la URL completa. En pruebas:
+    sin cámara real que probar desde aquí, solo validado contra servidores locales de prueba."""
+    spec = spec.strip()
+    pre = []
+    if spec.lower().startswith(("rtsp://", "rtsps://")):
+        pre += ["-rtsp_transport", "tcp"]       # evita paquetes perdidos por UDP en wifi
+    return pre + ["-i", spec]
+
+
 def _dshow_input(kind, spec, opt=None):
     """opt: modo de captura (vídeo) o tamaño del búfer en ms (audio; 0 = el del dispositivo)."""
     if kind == "video":
+        if _is_net_spec(spec):
+            return _net_video_input(spec, opt)
         return (["-f", "dshow", "-rtbufsize", "512M"] + capture_args(opt) +
                 ["-i", "video=" + spec])
     buf = 50 if opt is None else int(opt)
@@ -2333,6 +2356,9 @@ class CamApp:
         self._about = None
         self._cb = {"change": self._on_change, "frame": self._on_frame, "color": self._on_color}
         self._cfg = self._read_config()
+        nc = self._cfg.get("net_cams")
+        self.net_cams = dict((lab, d) for lab, d in nc.items()
+                              if isinstance(d, dict) and d.get("spec")) if isinstance(nc, dict) else {}
         ui = self._cfg.get("ui")
         self.mode, self._geo = read_ui_cfg(ui)               # modo con el que se cerró la última vez
         ui = ui if isinstance(ui, dict) else {}
@@ -3137,6 +3163,11 @@ class CamApp:
         row.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Button(row, text="Refrescar dispositivos",
                    command=lambda: self._refresh_devices()).pack(side="left")
+        ttk.Button(row, text="Añadir cámara de red…",
+                   command=self._add_net_cam).pack(side="left", padx=(6, 0))
+        self.btn_net_del = ttk.Button(row, text="Quitar cámara de red",
+                                      command=self._del_net_cam)
+        self.btn_net_del.pack(side="left", padx=(6, 0))
 
         mb = ttk.Labelframe(tab, text="2 · Mosaico  (clic = elegir · arrastrar = intercambiar)")
         mb.pack(fill="x", **pad)
@@ -3420,6 +3451,7 @@ class CamApp:
             if not self.vdevs:                          # plan B en el hilo principal
                 self.vdevs = label_devices(list_video_pygrabber())
                 log.info("pygrabber: %d camaras", len(self.vdevs))
+            self.vdevs = list(self.vdevs) + list(self.net_cams.values())
             self.vdev = dict((d["label"], d) for d in self.vdevs)
             self.adev = dict((d["label"], d) for d in self.adevs)
             self._apply_devices(first)
@@ -3466,6 +3498,74 @@ class CamApp:
             self.root.after(300, self._auto_preview)
         else:
             self._set_status("Listo. Marca al menos una cámara.")
+
+    def _add_net_cam(self):
+        """Cámara de red (http/https MJPEG o rtsp): el móvil con una app como IP Webcam, en la
+        misma wifi. En pruebas: no hay forma de probarla aquí con un teléfono real."""
+        if self.recording or self.busy:
+            return
+        top = tk.Toplevel(self.root)
+        top.title("Añadir cámara de red")
+        top.configure(bg=BG)
+        top.transient(self.root)
+        top.resizable(False, False)
+        frm = ttk.Frame(top)
+        frm.pack(fill="both", expand=True, padx=12, pady=12)
+        ttk.Label(frm, text="Nombre").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        name_var = tk.StringVar(value="Móvil")
+        ttk.Entry(frm, textvariable=name_var, width=38).grid(row=0, column=1, pady=(0, 4))
+        ttk.Label(frm, text="URL").grid(row=1, column=0, sticky="w")
+        url_var = tk.StringVar()
+        e_url = ttk.Entry(frm, textvariable=url_var, width=38)
+        e_url.grid(row=1, column=1)
+        ttk.Label(frm, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="La dirección que da la app del móvil (p. ej. «IP Webcam» en Android): algo "
+                       "como http://192.168.1.50:8080/video, o por rtsp "
+                       "rtsp://192.168.1.50:8080/h264_ulaw.sdp. El móvil y este ordenador deben "
+                       "estar en la misma red wifi. Solo vídeo, sin audio."
+                  ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 10))
+        err = ttk.Label(frm, text="", foreground="#ff6b6b", background=BG)
+        err.grid(row=3, column=0, columnspan=2, sticky="w")
+        bar = ttk.Frame(frm)
+        bar.grid(row=4, column=0, columnspan=2, sticky="e", pady=(8, 0))
+
+        def ok():
+            name = name_var.get().strip() or "Móvil"
+            url = url_var.get().strip()
+            if not _is_net_spec(url):
+                err.config(text="La URL debe empezar por http://, https:// o rtsp://")
+                return
+            label = base = "🌐 " + name
+            n = 2
+            while label in self.vdev and not self.vdev[label].get("net"):
+                label = "{0} #{1}".format(base, n)
+                n += 1
+            self.net_cams[label] = {"name": name, "alt": None, "label": label, "spec": url,
+                                    "net": True}
+            top.destroy()
+            self._refresh_devices()
+            self._set_status("Cámara de red «{0}» añadida; márcala en la lista para usarla.".format(name))
+
+        ttk.Button(bar, text="Cancelar", command=top.destroy).pack(side="right")
+        ttk.Button(bar, text="Añadir", command=ok).pack(side="right", padx=(0, 6))
+        e_url.focus_set()
+        top.bind("<Return>", lambda e: ok())
+        top.bind("<Escape>", lambda e: top.destroy())
+        try:
+            px, py = self.root.winfo_rootx(), self.root.winfo_rooty()
+            top.geometry("+{0}+{1}".format(px + 60, py + 60))
+        except Exception:
+            pass
+
+    def _del_net_cam(self):
+        lab = self.sel
+        if not lab or not self.vdev.get(lab, {}).get("net") or self.recording or self.busy:
+            return
+        if not messagebox.askokcancel("Quitar cámara de red", "¿Quitar «{0}»?".format(lab)):
+            return
+        self.net_cams.pop(lab, None)
+        self._refresh_devices()
+        self._set_status("Cámara de red quitada.")
 
     def _fill_tree(self):
         self.tree.delete(*self.tree.get_children())
@@ -3520,6 +3620,9 @@ class CamApp:
             if self.previewing:
                 self._set_status("Detén la vista previa para detectar los modos de la cámara.")
             return
+        if self.vdev.get(self.sel, {}).get("net"):
+            self._set_status("Las cámaras de red no tienen modos de captura que detectar.")
+            return
         spec = self.vdev[self.sel]["spec"]
         lab = self.sel
         self._set_status("Consultando modos de captura de «{0}»…".format(lab))
@@ -3540,6 +3643,9 @@ class CamApp:
         if not cs or self.busy or self.recording or self.sel not in self.vdev:
             if self.recording:
                 self._set_status("No se pueden probar modos mientras se graba.")
+            return
+        if self.vdev.get(self.sel, {}).get("net"):
+            self._set_status("Las cámaras de red no tienen modos de captura que probar.")
             return
         spec, lab = self.vdev[self.sel]["spec"], self.sel
         if not messagebox.askokcancel(
@@ -3690,7 +3796,11 @@ class CamApp:
             self._set_state(w, free)
         for w in self.color_widgets:
             self._set_state(w, bool(cs))               # el color se puede tocar grabando
-        self._set_state(self.w_driver, free)
+        is_net = bool(cs) and self.vdev.get(self.sel, {}).get("net")
+        self._set_state(self.w_driver, free and not is_net)
+        self._set_state(self.w_detect, free and not is_net)
+        self._set_state(self.w_probe, free and not is_net)
+        self._set_state(self.btn_net_del, bool(cs) and is_net and not self.recording)
         self.w_edit.config(text="✔   Terminar el encuadre" if self.editing
                            else "✂   Encuadrar sobre la imagen…")
         labs = list(self.order)
@@ -4487,6 +4597,7 @@ class CamApp:
                      "geo": dict(self._geo), "tray_asked": bool(self._tray_asked)}
         cfg["startup"] = round(float(self.eng.startup_time), 2)     # para grabar sin vista previa
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
+        cfg["net_cams"] = self.net_cams
         try:
             with open(CONFIG, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
