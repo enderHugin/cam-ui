@@ -223,15 +223,21 @@ try {
     $venv = Join-Path $Prog 'venv'
     $vpy  = Join-Path $venv 'Scripts\python.exe'
     $vpyw = Join-Path $venv 'Scripts\pythonw.exe'
-    # un entorno a medias de un intento anterior (sin pythonw.exe) se rehace solo
-    if ((Test-Path $venv) -and -not (Test-Path $vpyw)) {
-        Say 'entorno anterior incompleto: se rehace'
+    # un entorno a medias de un intento anterior (sin pythonw.exe, o sin pip: "uv venv" no lo
+    # instala salvo que se le pida con --seed) se rehace solo
+    $venvOk = $false
+    if (Test-Path $vpyw) {
+        & $vpy -c "import pip" 2>$null
+        if ($LASTEXITCODE -eq 0) { $venvOk = $true } else { Say 'entorno anterior sin pip: se rehace' }
+    }
+    if (-not $venvOk -and (Test-Path $venv)) {
         Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
     }
-    if (-not (Test-Path $vpyw)) {
+    if (-not $venvOk) {
         # "uv venv" (en vez del "python -m venv" de la libreria estandar) conoce mejor las
         # compilaciones de python-build-standalone, incluido donde quedan los archivos de Tcl/Tk.
-        $r = Run-Uv @('venv', '--python', $py, $venv)
+        # --seed: que incluya pip (si no, el entorno se crea sin el).
+        $r = Run-Uv @('venv', '--seed', '--python', $py, $venv)
         if ($r.rc -ne 0 -or -not (Test-Path $vpyw)) { throw 'no se pudo crear el entorno de Python' }
     } else {
         Say 'el entorno ya estaba'
