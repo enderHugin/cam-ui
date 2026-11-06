@@ -46,6 +46,8 @@ import time
 import argparse
 import queue
 import socket
+import hashlib
+import shutil
 import webbrowser
 import threading
 import subprocess
@@ -69,6 +71,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
 DEF_DIR = os.path.join(HERE, "Capturas")
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+# ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
+# vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
+APP_VERSION = "2026.11.06"            # ha de coincidir con el archivo VERSION del repositorio
+APP_PACK = 1                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
+UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
+UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
+APP_FILE = os.path.abspath(__file__)
+UPDATE_FILES = ("camui.py",)
 
 
 def _resolve_tool(name, env_var, default):
@@ -2306,6 +2318,413 @@ def desktop_bounds(root):
     return (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
 
 
+# =====================================================================
+#  Actualizaciones (mismo sistema que widget-arena: huella sha256, copia de
+#  seguridad antes de tocar nada, vuelta atrás y reinicio solo)
+# =====================================================================
+_UPDATE_ST = {}
+
+
+def update_state():
+    global _UPDATE_ST
+    if not _UPDATE_ST:
+        try:
+            with open(UPDATE_STATE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception:
+            d = {}
+        _UPDATE_ST = d if isinstance(d, dict) else {}
+    return _UPDATE_ST
+
+
+def update_state_save():
+    try:
+        os.makedirs(os.path.dirname(UPDATE_STATE), exist_ok=True)
+        tmp = UPDATE_STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(update_state(), f, indent=2, ensure_ascii=False)
+        os.replace(tmp, UPDATE_STATE)
+    except OSError as e:
+        log.warning("actualizar: no se pudo guardar el estado: %s", e)
+
+
+def _sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def update_local_info():
+    try:
+        sha = _sha256_file(APP_FILE)
+    except OSError:
+        sha = ""
+    return {"pack": APP_PACK, "sha256": sha, "label": APP_VERSION, "file": APP_FILE}
+
+
+def _update_get(url, limit, timeout=20):
+    """Descarga una dirección de la web del proyecto (y nada más: ni siquiera si hay una
+    redirección a otro sitio)."""
+    import urllib.request
+    import ssl
+    if not url.startswith(UPDATE_BASE):
+        raise ValueError("dirección no permitida")
+
+    class _Same(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not newurl.startswith(UPDATE_BASE):
+                raise ValueError("redirección a otro sitio rechazada")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        ctx = ssl.create_default_context()
+    op = urllib.request.build_opener(_Same(), urllib.request.HTTPSHandler(context=ctx))
+    with op.open(urllib.request.Request(url, headers={"User-Agent": "cam-ui", "Cache-Control": "no-cache"}),
+                 timeout=timeout) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("la respuesta es demasiado grande")
+    return data
+
+
+def update_check():
+    """Mira la versión publicada. Devuelve {ok, state: newer|same|older|diverged, info, local}
+    o {ok: False, error}."""
+    try:
+        info = json.loads(_update_get(UPDATE_BASE + "update.json?t=%d" % int(time.time()),
+                                      262144).decode("utf-8"))
+        meta = info["files"]["camui.py"]
+        pack, sha, size = int(info["pack"]), str(meta["sha256"]).lower(), int(meta["size"])
+        if not re.fullmatch(r"[0-9a-f]{64}", sha) or size <= 0 or size > 12 * 1048576:
+            raise ValueError("update.json no es válido")
+    except Exception as e:
+        return {"ok": False, "error": str(e) or e.__class__.__name__}
+    loc = update_local_info()
+    if pack > loc["pack"]:
+        st = "newer"
+    elif pack < loc["pack"]:
+        st = "older"
+    else:
+        st = "same" if sha == loc["sha256"] else "diverged"
+    update_state()["last_check"] = time.time()
+    update_state_save()
+    return {"ok": True, "state": st, "info": info, "local": loc}
+
+
+def _update_file(info, name):
+    if name not in UPDATE_FILES:
+        raise ValueError("archivo no permitido")
+    meta = info["files"][name]
+    # con la huella en la dirección no se sirve una copia vieja de la caché
+    data = _update_get(UPDATE_BASE + name + "?v=" + str(meta["sha256"])[:12], int(meta["size"]))
+    if len(data) != int(meta["size"]) or hashlib.sha256(data).hexdigest() != str(meta["sha256"]).lower():
+        raise ValueError("%s: lo descargado no coincide con la huella publicada (se cancela; si "
+                         "acaban de publicar, inténtalo de nuevo en unos minutos)" % name)
+    compile(data, name, "exec")           # que al menos sea Python válido antes de tocar nada
+    return data
+
+
+def _update_put(path, data):
+    tmp = path + ".nuevo"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def _update_bkname():
+    """Nombre libre para una copia (nunca pisa otra, aunque se hagan dos en el mismo segundo)."""
+    base = os.path.join(UPDATE_BACKUPS, "camui.pack%d.%s" % (APP_PACK, time.strftime("%Y%m%d-%H%M%S")))
+    p, i = base + ".py", 2
+    while os.path.exists(p):
+        p = "%s-%d.py" % (base, i)
+        i += 1
+    return p
+
+
+def update_apply(info):
+    """Descarga y comprueba la versión publicada, guarda una copia de la actual y la sustituye.
+    Devuelve {backup}."""
+    d = os.path.dirname(APP_FILE)
+    if not os.access(d, os.W_OK) or not os.access(APP_FILE, os.W_OK):
+        raise ValueError("No hay permiso para escribir en la carpeta del programa (%s)." % d)
+    data = _update_file(info, "camui.py")
+    m = re.search(rb"^APP_PACK\s*=\s*(\d+)", data, re.M)
+    if not m or int(m.group(1)) != int(info["pack"]):
+        raise ValueError("El archivo publicado no es el de la versión anunciada (se cancela).")
+    os.makedirs(UPDATE_BACKUPS, exist_ok=True)
+    bk = _update_bkname()
+    shutil.copyfile(APP_FILE, bk)
+    _update_put(APP_FILE, data)
+    st = update_state()
+    st.update({"last_backup": bk, "from_pack": APP_PACK, "to_pack": int(info["pack"]), "applied": time.time()})
+    update_state_save()
+    try:                                   # se conservan las 5 últimas copias
+        olds = sorted((os.path.join(UPDATE_BACKUPS, f) for f in os.listdir(UPDATE_BACKUPS)
+                       if f.startswith("camui.pack")), key=os.path.getmtime)
+        for f in olds[:-5]:
+            os.remove(f)
+    except OSError:
+        pass
+    return {"backup": bk}
+
+
+def update_backup_available():
+    bk = update_state().get("last_backup")
+    return bool(bk) and os.path.exists(bk) and os.path.abspath(os.path.dirname(bk)) == os.path.abspath(UPDATE_BACKUPS)
+
+
+def update_rollback():
+    """Vuelve a la copia guardada en la última actualización (y deja la actual como copia, por
+    si quieres volver a ella)."""
+    if not update_backup_available():
+        raise ValueError("No hay una copia anterior a la que volver.")
+    st = update_state()
+    bk = st["last_backup"]
+    with open(bk, "rb") as f:
+        data = f.read()
+    compile(data, "camui.py", "exec")
+    cur = _update_bkname()
+    shutil.copyfile(APP_FILE, cur)
+    _update_put(APP_FILE, data)
+    st.update({"last_backup": cur, "applied": time.time()})
+    update_state_save()
+    return {"backup": cur}
+
+
+def update_spawn_restart(delay=3):
+    """Lanza, aparte, una orden que vuelve a abrir cam-ui pasados unos segundos (da tiempo a
+    que este termine de guardar y cerrarse)."""
+    cmd = [sys.executable, APP_FILE] + list(sys.argv[1:])
+    code = ("import subprocess, sys, time\ntime.sleep({0})\n"
+           "subprocess.Popen(sys.argv[1:], close_fds=True{1})").format(
+        int(delay), ", creationflags=0x08000008" if os.name == "nt" else ", start_new_session=True")
+    kw = {"creationflags": 0x08000008} if os.name == "nt" else {"start_new_session": True}
+    subprocess.Popen([sys.executable, "-c", code] + cmd, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, **kw)
+    return cmd
+
+
+def _ask_update_now(parent, pack_remote):
+    """Diálogo «¿actualizar ahora?» con una casilla «no preguntar más». Devuelve
+    (quiere_actualizar, no_preguntar_mas)."""
+    res = {"go": False, "dont_ask": False}
+    top = tk.Toplevel(parent)
+    top.title("cam-ui")
+    top.configure(bg=BG)
+    top.transient(parent)
+    top.resizable(False, False)
+    frm = ttk.Frame(top)
+    frm.pack(fill="both", expand=True, padx=16, pady=14)
+    ttk.Label(frm, text="Hay una versión nueva de cam-ui (pack {0}).".format(pack_remote),
+             font=("Segoe UI", 10, "bold")).pack(anchor="w")
+    ttk.Label(frm, style="Muted.TLabel", wraplength=360, justify="left",
+             text="¿Descargarla e instalarla ahora? Se guarda una copia de la versión actual y "
+                  "el programa se reinicia; tu configuración no se toca."
+             ).pack(anchor="w", pady=(6, 10))
+    dont = tk.BooleanVar(value=False)
+    ttk.Checkbutton(frm, text="No preguntar más, prefiero actualizar a mano",
+                    variable=dont).pack(anchor="w")
+    bar = ttk.Frame(frm)
+    bar.pack(fill="x", pady=(12, 0))
+
+    def go():
+        res["go"], res["dont_ask"] = True, bool(dont.get())
+        top.destroy()
+
+    def cancel():
+        res["dont_ask"] = bool(dont.get())
+        top.destroy()
+    ttk.Button(bar, text="Cancelar", command=cancel).pack(side="right")
+    ttk.Button(bar, text="Aceptar", command=go).pack(side="right", padx=(0, 6))
+    top.bind("<Escape>", lambda e: cancel())
+    top.protocol("WM_DELETE_WINDOW", cancel)
+    try:
+        top.update_idletasks()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        tw, th = top.winfo_width(), top.winfo_height()
+        top.geometry("+{0}+{1}".format(px + max(0, (pw - tw) // 2), py + max(0, (ph - th) // 2)))
+    except Exception:
+        pass
+    top.grab_set()
+    top.wait_window()
+    return res["go"], res["dont_ask"]
+
+
+class UpdateDialog:
+    """Versión instalada y publicada, novedades, instalar, volver a la anterior y el aviso
+    al abrir el programa. Misma idea que widget-arena, en Tkinter."""
+
+    def __init__(self, app):
+        self.app = app
+        self.res = None
+        self.busy = False
+        top = self.top = tk.Toplevel(app.root)
+        self.alive = True
+        top.bind("<Destroy>", lambda e: setattr(self, "alive", False) if e.widget is top else None)
+        top.title("Actualizaciones")
+        top.configure(bg=BG)
+        top.transient(app.root)
+        top.geometry("620x460")
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        frm = ttk.Frame(top)
+        frm.pack(fill="both", expand=True, padx=12, pady=10)
+        ttk.Label(frm, text="Actualizaciones", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        self.lbl_local = ttk.Label(frm, text="")
+        self.lbl_local.pack(anchor="w", pady=(6, 0))
+        self.lbl_remote = ttk.Label(frm, text="")
+        self.lbl_remote.pack(anchor="w")
+        self.lbl_status = ttk.Label(frm, style="Muted.TLabel", wraplength=590, justify="left")
+        self.lbl_status.pack(anchor="w", fill="x", pady=(8, 6))
+        ttk.Label(frm, text="Novedades").pack(anchor="w")
+        self.notes = tk.Text(frm, wrap="word", height=12, bg=PANEL, fg=FG, insertbackground=FG,
+                             relief="flat", padx=8, pady=6)
+        self.notes.pack(fill="both", expand=True, pady=(2, 8))
+        self.notes.config(state="disabled")
+        self.var_auto = tk.BooleanVar(value=update_state().get("auto", True) is not False)
+        ttk.Checkbutton(frm, text="Avisarme al abrir el programa si hay una versión nueva",
+                        variable=self.var_auto, command=self._auto_toggled).pack(anchor="w")
+        bar = ttk.Frame(frm)
+        bar.pack(fill="x", pady=(10, 0))
+        self.b_check = ttk.Button(bar, text="Buscar de nuevo", command=self.start_check)
+        self.b_check.pack(side="left")
+        self.b_back = ttk.Button(bar, text="Volver a la versión anterior", command=self._rollback)
+        self.b_back.pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        self.b_go = ttk.Button(bar, text="Actualizar y reiniciar", command=self._apply)
+        self.b_go.pack(side="right", padx=(0, 6))
+        self._fill_local()
+        self._buttons()
+
+    def _fill_local(self):
+        loc = update_local_info()
+        self.lbl_local.config(text="Tu versión:  pack {0}{1}  ·  huella {2}".format(
+            loc["pack"], ("  ·  " + loc["label"]) if loc["label"] else "", (loc["sha256"][:8] or "?")))
+        self.lbl_remote.config(text="Publicada:  —")
+
+    def _buttons(self):
+        r = self.res or {}
+        can = bool(r.get("ok")) and r.get("state") in ("newer", "diverged") and not self.busy \
+            and not self.app.recording
+        self.b_go.config(state="normal" if can else "disabled",
+                         text="Sustituir por la publicada" if r.get("state") == "diverged"
+                         else "Actualizar y reiniciar")
+        self.b_back.config(state="normal" if (update_backup_available() and not self.busy
+                                              and not self.app.recording) else "disabled")
+        self.b_check.config(state="disabled" if self.busy else "normal")
+
+    def start_check(self):
+        self.busy = True
+        self.lbl_status.config(text="Buscando la versión publicada…")
+        self._buttons()
+        self.app._bg(update_check, self._on_checked)
+
+    def _auto_toggled(self):
+        update_state()["auto"] = bool(self.var_auto.get())
+        update_state_save()
+
+    def _on_checked(self, r):
+        self.busy = False
+        self.res = r
+        self._fill_local()
+        if not r.get("ok"):
+            self.lbl_status.config(text="No se pudo comprobar: {0}\nRevisa tu conexión e "
+                                   "inténtalo de nuevo.".format(r.get("error", "")))
+            self._buttons()
+            return
+        info, st = r["info"], r["state"]
+        self.lbl_remote.config(text="Publicada:  pack {0}{1}".format(
+            info.get("pack"), ("  ·  " + str(info.get("version"))) if info.get("version") else ""))
+        self.notes.config(state="normal")
+        self.notes.delete("1.0", "end")
+        self.notes.insert("1.0", str(info.get("notes") or "(sin novedades indicadas)"))
+        self.notes.config(state="disabled")
+        self.lbl_status.config(text={
+            "newer": "Hay una versión nueva (pack {0}). Se guardará una copia de la actual y el "
+                    "programa se reiniciará; tu configuración no se toca.".format(info.get("pack")),
+            "same": "Ya tienes la última versión.",
+            "older": "Tu copia (pack {0}) es más nueva que la publicada (pack {1}): no hay nada "
+                    "que actualizar.".format(r["local"]["pack"], info.get("pack")),
+            "diverged": "Tienes el mismo pack que la web, pero tu archivo es distinto (cambios "
+                        "propios sin publicar). Puedes sustituirlo por el publicado: se guarda una copia.",
+        }[st])
+        self._buttons()
+
+    def apply_result(self, r):
+        """Desde el aviso del arranque: ya se sabe que hay una versión nueva y se dijo que sí."""
+        self._on_checked(r)
+        self._apply(confirm=False)
+
+    def _apply(self, confirm=True):
+        r = self.res or {}
+        if not r.get("ok") or r.get("state") not in ("newer", "diverged"):
+            return
+        if self.app.recording:
+            messagebox.showinfo("Actualizar", "No se puede actualizar mientras se está "
+                                "grabando. Para la grabación primero.")
+            return
+        if confirm:
+            warn = ("\n\nTu archivo tiene cambios sin publicar; se guardará una copia por si "
+                    "quieres volver.") if r["state"] == "diverged" else ""
+            if not messagebox.askyesno(
+                    "Actualizar", "Se descargará la versión publicada (pack {0}), se guardará "
+                    "una copia de la actual y el programa se reiniciará.{1}\n\n¿Continuar?".format(
+                        r["info"].get("pack"), warn)):
+                return
+        self.busy = True
+        self.lbl_status.config(text="Descargando e instalando…")
+        self._buttons()
+        info = r["info"]
+        self.app._bg(lambda: _update_run(update_apply, info), self._on_applied)
+
+    def _rollback(self):
+        if self.app.recording:
+            messagebox.showinfo("Actualizar", "No se puede volver a la versión anterior "
+                                "mientras se está grabando. Para la grabación primero.")
+            return
+        if not messagebox.askyesno(
+                "Volver a la versión anterior", "Se restaurará la copia guardada en la última "
+                "actualización y el programa se reiniciará. La versión actual queda guardada.\n\n"
+                "¿Continuar?"):
+            return
+        self.busy = True
+        self.lbl_status.config(text="Restaurando…")
+        self._buttons()
+        self.app._bg(lambda: _update_run(update_rollback), self._on_applied)
+
+    def _on_applied(self, r):
+        self.busy = False
+        if not r.get("ok"):
+            self.lbl_status.config(text="No se pudo completar: {0}\nNo se ha cambiado "
+                                   "nada.".format(r.get("error", "")))
+            self._buttons()
+            messagebox.showwarning("Actualizar", "No se pudo completar:\n{0}\n\nNo se ha "
+                                   "cambiado nada.".format(r.get("error", "")))
+            return
+        self.lbl_status.config(text="Listo. El programa se reinicia en unos segundos…")
+        self.b_go.config(state="disabled")
+        self.app.root.after(900, self.app.update_restart_app)
+
+    def close(self):
+        self.top.destroy()
+
+
+def _update_run(fn, *a):
+    """Envoltorio para self._bg: fn puede lanzar una excepción; aquí se convierte en
+    {ok: False, error} igual que si la hubiera devuelto update_check()."""
+    try:
+        r = fn(*a)
+        r = dict(r or {})
+        r["ok"] = True
+        return r
+    except Exception as e:
+        return {"ok": False, "error": str(e) or e.__class__.__name__}
+
+
 class CamApp:
     def __init__(self, root):
         self.root = root
@@ -2403,6 +2822,7 @@ class CamApp:
         root.after(33, self._tick)
         root.bind("<Map>", self._on_map, add="+")
         root.after(900, self._tray_boot)
+        root.after(12000, self.update_auto_check)
         if self._vcam_cfg.get("on"):
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar
 
@@ -2704,6 +3124,7 @@ class CamApp:
                              post("rec")),
             pystray.MenuItem("Cámara virtual", post("vcam"), checked=lambda item: app.vcam_on),
             pystray.MenuItem("Reiniciar cámaras (pánico)", post("panic")),
+            pystray.MenuItem("Buscar actualizaciones...", post("update")),
             pystray.MenuItem("Salir", post("quit")))
         try:
             icon = pystray.Icon("camwin32", make_tray_image(False), "CamWin32", menu)
@@ -2794,6 +3215,8 @@ class CamApp:
                     self._set_status("Probando «{0}»: {1}/{2} · {3}".format(lab, i, n, m))
                 elif cmd == "panic_done":
                     self._panic_done(*arg)
+                elif cmd == "update":
+                    self.show_updates()
                 elif cmd == "quit":
                     self.on_close()
                 elif cmd == "installed":
@@ -2816,6 +3239,48 @@ class CamApp:
             dlg.lift()
             return
         self._about = AboutDialog(self.root)
+
+    # ---- actualizaciones ----------------------------------------------------------
+    def show_updates(self, *_a, check=True):
+        dlg = getattr(self, "_updates", None)
+        if dlg is not None and dlg.alive:
+            dlg.top.lift()
+            return dlg
+        dlg = self._updates = UpdateDialog(self)
+        if check:
+            dlg.start_check()
+        return dlg
+
+    def update_auto_check(self):
+        """Al abrir el programa: si hay una versión nueva, pregunta (salvo que se haya
+        pedido no avisar, o que ya se haya mirado hace menos de una hora)."""
+        st = update_state()
+        if st.get("auto", True) is False or os.environ.get("CAMUI_OFFLINE") or self.recording:
+            return
+        if time.time() - float(st.get("last_check", 0) or 0) < 3600:
+            return
+        self._bg(update_check, self._update_probe_done)
+
+    def _update_probe_done(self, r):
+        if not r.get("ok") or r.get("state") != "newer" or self.recording:
+            return
+        go, dont_ask = _ask_update_now(self.root, r["info"].get("pack"))
+        if dont_ask:
+            update_state()["auto"] = False
+            update_state_save()
+        if go:
+            self.show_updates(check=False).apply_result(r)
+
+    def update_restart_app(self):
+        """Reinicia cam-ui (pasados unos segundos) y cierra este con el guardado de siempre."""
+        try:
+            update_spawn_restart()
+        except Exception as e:
+            log.error("actualizar: no se pudo preparar el reinicio: %r", e)
+            messagebox.showwarning("Actualizar", "La actualización está instalada, pero no se "
+                                   "pudo reiniciar sola.\nCierra y abre de nuevo cam-ui.")
+            return
+        self.on_close()
 
     def _arm_watchdog(self, force=False):
         """Si el hilo de la interfaz no vuelve a pasar por aquí en 8 s, faulthandler
@@ -3021,6 +3486,7 @@ class CamApp:
         rbtn("⚠  Reiniciar", self.panic_reset, {N})
         rbtn("Diagnóstico", self._diagnose, {N})
         rbtn("☕  Acerca de", self.show_about, {N})
+        rbtn("🔄  Actualizaciones", self.show_updates, {N})
         # barra mini (sin marco de ventana): cerrar, restaurar (= modo normal, como Esc) y minimizar
         self.btn_wclose = rbtn("✕", self.on_close, {M})
         self.btn_wclose.config(style="Close.TButton")

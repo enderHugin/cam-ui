@@ -26,6 +26,9 @@ descarga ffmpeg y crea un acceso en el menú Inicio. Fuente: [`installers/instal
 - Tres modos de ventana: normal, compacto y mini (barra con Rec/Stop), con icono en la bandeja.
 - Botón de pánico (F12) que cierra todos los ffmpeg.
 - Cámara virtual (OBS Studio + `pyvirtualcam`) para usar el mosaico en videollamadas; solo vídeo.
+- Cámara de red: un móvil por wifi (http/rtsp, p. ej. «IP Webcam» en Android) como una cámara más.
+- Se actualiza sola (con tu permiso): avisa si hay una versión nueva, guarda una copia de la
+  anterior y puede volver a ella. Botón «🔄 Actualizaciones» o icono de la bandeja.
 
 ## Atajos
 F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico · Esc vuelve al modo normal desde mini.
@@ -33,7 +36,8 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 ## Estado
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
-Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH).
+Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
+`tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH).
 Si algo falla, adjuntar `camui.log` (se crea junto al script).
 
 ## Opinar, avisar de fallos, pedir funciones
