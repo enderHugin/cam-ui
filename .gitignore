@@ -25,3 +25,4 @@ tests/t/
 !site/**
 !site/fonts/*.woff2
 _site/
+tools/__pycache__/
