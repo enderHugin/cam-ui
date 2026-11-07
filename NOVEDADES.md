@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 5 — 2026.11.07
+- **Salida en red: ahora también se oye.** Si hay un micrófono activado, la página del navegador
+  incluye un botón «🔊 Activar sonido» (los navegadores no dejan reproducir sonido solo al abrir
+  la página, hay que pulsar algo) con control de silencio y volumen propios. El vídeo va igual
+  que antes; el sonido viaja aparte, codificado en MP3, que entienden todos los navegadores
+  sin plugins.
+- **Salida en red: pantalla completa.** Botón «⛶ Pantalla completa» en la página del navegador.
+- La dirección de la barra de estado ahora, al hacer clic, abre directamente el navegador
+  predeterminado en esa dirección (antes la copiaba al portapapeles).
+
 ## pack 4 — 2026.11.07
 - **Salida en red**: la barra de estado y la bandeja ahora muestran la dirección por IP *y* por
   nombre del equipo (antes solo una de las dos), para cuando una de las dos no resuelve en el

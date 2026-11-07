@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 4                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 5                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -818,6 +818,10 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         fc.append("[mix0]pad={0}:{1}:0:0:color=black[mix]".format(W, H))   # márgenes / huecos
 
     # ---- audio ----
+    ip = plan.get("ipout")
+    if ip and not ip.get("port"):
+        ip = None                                  # sin socket de vídeo no hay salida en red
+    ipa_map = None                                  # etiqueta del filtro con el audio para la red (si hace falta)
     audio = plan.get("audio") or {}
     arows = [audio.get("L"), audio.get("R")]
     act = [r for r in arows if r and r.get("spec")]
@@ -831,6 +835,8 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         if r and r.get("spec") and r["spec"] not in specs:
             specs.append(r["spec"])
     has_audio = bool(specs)
+    # ip con puerto de audio armado Y de verdad hay micrófono: solo entonces se oye en la red
+    need_ip_audio = bool(ip and ip.get("aport") and has_audio)
     if has_audio:
         off = audio.get("offset", 0) / 1000.0
         uses = dict((s, sum(1 for r in arows if r and r.get("spec") == s)) for s in specs)
@@ -866,7 +872,7 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
                 if dl > 0:
                     chain += ",adelay={0}".format(dl)
                 fc.append(chain + "[{0}]".format(lab))
-        fc.append("[ar0][ar1]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[aout]")
+        fc.append("[ar0][ar1]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[aoutJ]")
 
     use_meter = preview and plan.get("meter", True)
     null_meter = plan.get("meter_mode", "null") == "null"
@@ -875,22 +881,31 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
              "ametadata=mode=print:key=lavfi.astats.2.Peak_level" +
              ("[ameter]" if null_meter else ",anullsink"))
     if has_audio:
-        if outfile and use_meter:
-            fc.append("[aout]asplit=2[arec0][am]")
-            fc.append("[arec0]atrim=start={0:.3f},asetpts=PTS-STARTPTS[arec]".format(warmup))
-            fc.append("[am]" + meter)
-        elif outfile:
-            fc.append("[aout]atrim=start={0:.3f},asetpts=PTS-STARTPTS[arec]".format(warmup))
-        elif use_meter:
-            fc.append("[aout]" + meter)
+        # el audio final ([aoutJ]) puede tener varios consumidores a la vez (grabación, vúmetro,
+        # salida en red): igual que con el vídeo, solo se reparte con asplit entre los que hagan
+        # falta -- así nunca queda una salida de asplit sin usar (ffmpeg no lo permite)
+        a_outs = [k for k, on in (("rec", bool(outfile)), ("meter", use_meter),
+                                  ("ip", need_ip_audio)) if on]
+        a_names = {"rec": "aout_rec", "meter": "aout_meter", "ip": "aout_ip"}
+        if len(a_outs) > 1:
+            fc.append("[aoutJ]asplit={0}{1}".format(
+                len(a_outs), "".join("[{0}]".format(a_names[k]) for k in a_outs)))
+            a_src = dict((k, "[{0}]".format(a_names[k])) for k in a_outs)
+        elif len(a_outs) == 1:
+            a_src = {a_outs[0]: "[aoutJ]"}
+        else:
+            a_src = {}                   # nadie quiere el audio (plan sin grabar/medir/red): no se usa
+        if "rec" in a_src:
+            fc.append("{0}atrim=start={1:.3f},asetpts=PTS-STARTPTS[arec]".format(a_src["rec"], warmup))
+        if "meter" in a_src:
+            fc.append(a_src["meter"] + meter)
+        if "ip" in a_src:
+            ipa_map = a_src["ip"]        # "[aout_ip]" si se repartió, o "[aoutJ]" si era el único
 
     # ---- salidas de vídeo ----
     vc = plan.get("vcam")
     if vc and not vc.get("port"):
         vc = None                                  # sin socket de destino no hay cámara virtual
-    ip = plan.get("ipout")
-    if ip and not ip.get("port"):
-        ip = None                                  # sin socket de destino no hay salida en red
     outs = [k for k, on in (("rec", bool(outfile)), ("pv", bool(preview)), ("vc", bool(vc)),
                             ("ip", bool(ip))) if on]
     names = {"rec": "mrec0", "pv": "mp0", "vc": "mvc0", "ip": "mip0"}
@@ -943,6 +958,12 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         # convierte en MJPEG (así un visor que se cuelga o se desconecta no afecta a ffmpeg)
         cmd += ["-map", "[ip]", "-f", "rawvideo", "-pix_fmt", ip.get("pix", "rgb24"),
                 "tcp://127.0.0.1:{0}".format(int(ip["port"]))]
+    if ipa_map:
+        # el audio de la salida en red sí lo codifica ffmpeg (a MP3: lo entiende cualquier
+        # navegador directamente, sin plugins) y va por su propio socket local, hasta nuestro
+        # servidor HTTP, que simplemente reenvía los bytes tal cual a quien esté escuchando
+        cmd += ["-map", ipa_map, "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3",
+                "tcp://127.0.0.1:{0}".format(int(ip["aport"]))]
     if has_audio and use_meter and null_meter:
         cmd += ["-map", "[ameter]", "-f", "null", "-"]
     meta = {"pw": pw, "ph": ph, "W": W, "H": H, "has_audio": has_audio, "tiles": tiles[:n],
@@ -1239,16 +1260,116 @@ def _local_ips():
     return ips
 
 
+_VIEWER_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>cam-ui &middot; en la red</title>
+<style>
+html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden}
+#stage{position:relative;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#000}
+#v{max-width:100%;max-height:100%;object-fit:contain}
+#bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;
+     padding:12px;background:linear-gradient(transparent,rgba(0,0,0,.65))}
+button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:7px;
+       padding:9px 16px;font-size:15px;cursor:pointer}
+button:active{background:#3a3f48}
+button:disabled{opacity:.6}
+#mute{display:none;padding:9px 12px}
+#vol{display:none;width:90px;vertical-align:middle;accent-color:#6aa0ff}
+</style></head>
+<body>
+<div id="stage">
+  <img id="v" src="/stream.mjpg" alt="cam-ui">
+  <div id="bar">
+    <button id="snd">&#128266; Activar sonido</button>
+    <button id="mute">&#128266;</button>
+    <input id="vol" type="range" min="0" max="1" step="0.05" value="1">
+    <button id="full">&#10021; Pantalla completa</button>
+  </div>
+</div>
+<audio id="a" src="/audio.mp3" preload="none"></audio>
+<script>
+var a = document.getElementById("a"), snd = document.getElementById("snd");
+var mute = document.getElementById("mute"), vol = document.getElementById("vol");
+function setMuteIcon() {
+  mute.innerHTML = (a.muted || a.volume === 0) ? "&#128263;" : "&#128266;";
+}
+snd.onclick = function () {
+  a.play().then(function () {
+    snd.style.display = "none";
+    mute.style.display = "";
+    vol.style.display = "";
+    setMuteIcon();
+  }).catch(function () {
+    snd.textContent = "\\u26A0 Sin sonido (reinicia la pagina)";
+  });
+};
+mute.onclick = function () {
+  a.muted = !a.muted;
+  setMuteIcon();
+};
+vol.oninput = function () {
+  a.volume = parseFloat(vol.value);
+  if (a.volume > 0 && a.muted) { a.muted = false; }
+  setMuteIcon();
+};
+var stage = document.getElementById("stage"), full = document.getElementById("full");
+function inFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+full.onclick = function () {
+  if (inFs()) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else {
+    (stage.requestFullscreen || stage.webkitRequestFullscreen).call(stage);
+  }
+};
+document.addEventListener("fullscreenchange", function () {
+  full.textContent = inFs() ? "\\u2715 Salir de pantalla completa" : "\\u2721 Pantalla completa";
+});
+document.addEventListener("webkitfullscreenchange", function () {
+  full.textContent = inFs() ? "\\u2715 Salir de pantalla completa" : "\\u2721 Pantalla completa";
+});
+</script>
+</body></html>
+""".encode("utf-8")
+
+
 class _MjpegHandler(http.server.BaseHTTPRequestHandler):
-    """Sirve el último fotograma de IpServer a cada cliente como multipart/x-mixed-replace
-    (lo que entiende un navegador sin más: abrir la URL ya enseña el vídeo). Cada petición va en
-    su propio hilo (ThreadingHTTPServer); un visor lento o colgado solo se queda sin fotogramas
-    nuevos, nunca bloquea a los demás."""
+    """Página sencilla (vídeo + sonido + pantalla completa) en «/», el vídeo en vivo como
+    multipart/x-mixed-replace en «/stream.mjpg» (lo que entiende un navegador sin más) y, si hay
+    micrófono, el sonido como MP3 en «/audio.mp3». Cada petición va en su propio hilo
+    (ThreadingHTTPServer); un visor lento o colgado solo se queda sin fotogramas o sonido nuevos,
+    nunca bloquea a los demás ni a ffmpeg."""
 
     def log_message(self, *_a):
         pass                                      # no ensuciar el registro con cada petición
 
     def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path in ("/", "/index.html"):
+            self._serve_page()
+        elif path == "/stream.mjpg":
+            self._serve_video()
+        elif path == "/audio.mp3":
+            self._serve_audio()
+        else:
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except Exception:
+                pass
+
+    def _serve_page(self):
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(_VIEWER_HTML)))
+            self.send_header("Cache-Control", "no-cache, private")
+            self.end_headers()
+            self.wfile.write(_VIEWER_HTML)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _serve_video(self):
         owner = self.server.owner
         boundary = "camui"
         try:
@@ -1279,6 +1400,33 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             pass
         finally:
             owner._client_delta(-1)
+
+    def _serve_audio(self):
+        """Reenvía tal cual los bytes MP3 que manda ffmpeg (nuestro servidor no los toca ni los
+        decodifica): cada visor tiene su propia cola pequeña, así que uno lento o colgado se
+        queda sin trozos de sonido sin afectar a los demás ni a ffmpeg."""
+        owner = self.server.owner
+        q = queue.Queue(maxsize=200)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Cache-Control", "no-cache, private")
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        owner._aclient_add(q)
+        try:
+            while not owner._closed:
+                try:
+                    chunk = q.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                if chunk:
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+            pass
+        finally:
+            owner._aclient_remove(q)
 
 
 class _MjpegHTTPServer(http.server.ThreadingHTTPServer):
@@ -1311,6 +1459,13 @@ class IpServer:
         self._jpeg = None
         self._jgen = 0
         self._closed = False
+        # ---- sonido (opcional: solo si hay micrófono en el plan) --------------------------
+        self.aport = 0
+        self.a_received = self.a_dropped = 0
+        self._agen = 0
+        self._asrv = None
+        self._aclients = []
+        self._aclients_lk = threading.Lock()
 
     @property
     def active(self):
@@ -1324,6 +1479,7 @@ class IpServer:
         http_srv.owner = self
         self.w, self.h, self.fps, self.port = int(w), int(h), int(fps), int(port)
         self.sent = self.dropped = self.received = self.errors = self.clients = 0
+        self.a_received = self.a_dropped = 0
         self._closed = False
         self._latest = None
         self._jpeg, self._jgen = None, 0
@@ -1353,6 +1509,94 @@ class IpServer:
             try:
                 srv.close()
             except Exception:
+                pass
+
+    def arm_audio(self):
+        """Igual que arm(), pero para el socket del sonido (puerto distinto, independiente del
+        de vídeo: a ffmpeg no le hace falta tener micrófono para que el vídeo funcione)."""
+        self._drop_asrv()
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        srv.settimeout(0.4)
+        self._asrv = srv
+        self._agen += 1
+        threading.Thread(target=self._aserve, args=(srv, self._agen), daemon=True).start()
+        self.aport = srv.getsockname()[1]
+        return self.aport
+
+    def _drop_asrv(self):
+        srv, self._asrv = self._asrv, None
+        self._agen += 1
+        if srv is not None:
+            try:
+                srv.close()
+            except Exception:
+                pass
+
+    def _aserve(self, srv, gen):
+        conn = None
+        t_end = time.time() + 30
+        while gen == self._agen and not self._closed and time.time() < t_end:
+            try:
+                conn, _a = srv.accept()
+                break
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+        try:
+            srv.close()
+        except Exception:
+            pass
+        if conn is None:
+            return
+        conn.settimeout(None)
+        try:
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        log.info("salida en red: audio conectado")
+        try:
+            self._aread(conn)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            log.info("salida en red: audio desconectado (%d recibidos, %d descartados)",
+                     self.a_received, self.a_dropped)
+
+    def _aread(self, conn):
+        """Reenvía tal cual (sin decodificar) cada trozo de MP3 que llega a cada oyente conectado
+        a /audio.mp3; nunca espera a que alguno lo recoja, así que ffmpeg no se bloquea."""
+        while not self._closed:
+            try:
+                chunk = conn.recv(4096)
+            except Exception:
+                return
+            if not chunk:
+                return
+            self.a_received += 1
+            if self._http is None:
+                continue                      # cerrada: solo se vacía el socket
+            with self._aclients_lk:
+                qs = list(self._aclients)
+            for q in qs:
+                try:
+                    q.put_nowait(chunk)
+                except queue.Full:
+                    self.a_dropped += 1       # ese oyente se queda sin este trozo; no bloquea a nadie
+
+    def _aclient_add(self, q):
+        with self._aclients_lk:
+            self._aclients.append(q)
+
+    def _aclient_remove(self, q):
+        with self._aclients_lk:
+            try:
+                self._aclients.remove(q)
+            except ValueError:
                 pass
 
     def _serve(self, srv, gen):
@@ -1459,7 +1703,10 @@ class IpServer:
     def close(self):
         self._closed = True
         self._drop_srv()
+        self._drop_asrv()
         self.release()
+
+
 _METER_RE = re.compile(r"lavfi\.astats\.(\d)\.Peak_level=(\S+)")
 _INPUT_RE = re.compile(r"^Input #(\d+),")
 _OUTPUT_RE = re.compile(r"^Output #\d+,")
@@ -1768,6 +2015,7 @@ class FFmpegEngine:
                 plan.pop("vcam", None)
             if plan.get("ipout") and self.ipsrv is not None and self.ipsrv.active:
                 plan["ipout"]["port"] = self.ipsrv.arm()     # un socket nuevo en cada intento
+                plan["ipout"]["aport"] = self.ipsrv.arm_audio()  # igual, para el sonido (si hay)
             else:
                 plan.pop("ipout", None)
             cmd, meta = build_command(plan, outfile, warmup, time.time(), True,
@@ -1938,6 +2186,7 @@ class FFmpegEngine:
             self.vcam._drop_srv()
         if self.ipsrv is not None:
             self.ipsrv._drop_srv()
+            self.ipsrv._drop_asrv()
         with self.lock:
             self.latest = None
         self.levels = [-90.0, -90.0]
@@ -3966,9 +4215,9 @@ class CamApp:
         self.lbl_hint.pack(fill="x")
         sbar = ttk.Frame(r, style="Bar.TFrame")
         sbar.pack(fill="x", side="bottom")
-        self.lbl_ip_bar = ttk.Label(sbar, text="", style="Bar.TLabel", anchor="e")
+        self.lbl_ip_bar = ttk.Label(sbar, text="", style="Bar.TLabel", anchor="e", cursor="hand2")
         self.lbl_ip_bar.pack(side="right", ipady=3, padx=(0, 8))
-        self.lbl_ip_bar.bind("<Button-1>", self._copy_ip_url)
+        self.lbl_ip_bar.bind("<Button-1>", self._open_ip_url)
         self.status = ttk.Label(sbar, text="Listo.", style="Bar.TLabel", anchor="w")
         self.status.pack(fill="x", side="left", expand=True, ipady=3)
 
@@ -4305,12 +4554,15 @@ class CamApp:
         self.lbl_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
         ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
                   text="Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
-                       "(wifi) para ver el mosaico en directo; también en la bandeja, el menú «Modo» "
-                       "y, en compacto y mini, el botón 🌐. Solo para ver: nadie puede controlar "
-                       "cam-ui desde ahí, y es independiente de grabar y de la cámara virtual (se "
-                       "puede usar a la vez). Sin contraseña: cualquiera en esa red puede verlo "
-                       "mientras esté activa. La primera vez, Windows puede pedir permiso en el "
-                       "cortafuegos: dalo para «redes privadas»."
+                       "(wifi) para ver el mosaico en directo, con pantalla completa; también en la "
+                       "bandeja, el menú «Modo» y, en compacto y mini, el botón 🌐 (clic en la "
+                       "dirección de la barra de estado la abre directamente). Si hay micrófono "
+                       "activado también se oye (botón «Activar sonido» en la página, con su propio "
+                       "control de volumen). Solo para ver: nadie puede controlar cam-ui desde ahí, y "
+                       "es independiente de grabar y de la cámara virtual (se puede usar a la vez). "
+                       "Sin contraseña: cualquiera en esa red puede verlo (y oírlo) mientras esté "
+                       "activa. La primera vez, Windows puede pedir permiso en el cortafuegos: dalo "
+                       "para «redes privadas»."
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
@@ -6030,14 +6282,15 @@ class CamApp:
         urls.append("http://{0}:{1}/".format(socket.gethostname(), port))
         return ", ".join(urls)
 
-    def _copy_ip_url(self, *_a):
+    def _open_ip_url(self, *_a):
+        """Clic en la dirección de la barra de estado: la abre en el navegador predeterminado
+        (de este mismo equipo, para comprobar rápido que funciona)."""
         if not self.ipout_on:
             return
         url = self._ip_primary_url()
         try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(url)
-            self._set_status("Copiado: {0}".format(url))
+            webbrowser.open(url)
+            self._set_status("Abriendo en el navegador: {0}".format(url))
         except Exception:
             pass
 
