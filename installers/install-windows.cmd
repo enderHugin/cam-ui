@@ -49,13 +49,46 @@ function Step([int]$n, [string]$text) {
 }
 function Say([string]$text) { Write-Host ('      ' + $text) }
 
-function Get-File([string]$url, [string]$dest) {
+function Get-File([string]$url, [string]$dest, [int]$timeoutSec = 180) {
+    # Invoke-WebRequest, si la conexion se queda atascada a medias (no cortada, solo sin avanzar),
+    # puede quedarse colgada indefinidamente sin avisar ni fallar -- y como no se le ve progreso
+    # (ver $ProgressPreference mas arriba), eso es indistinguible de verdad de una descarga lenta
+    # pero viva. Se lanza en un job aparte con un limite de tiempo real: si no termina a tiempo, se
+    # mata y se cuenta como un intento fallido mas (hay 3, con espera creciente entre ellos). De
+    # paso, se va avisando cuanto se lleva descargado cada pocos segundos para que no parezca
+    # colgado mientras de verdad esta avanzando.
     $last = $null
     for ($try = 1; $try -le 3; $try++) {
+        if (Test-Path $dest) { Remove-Item $dest -Force -ErrorAction SilentlyContinue }
+        $job = $null
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $dest
-            if ((Get-Item $dest).Length -gt 0) { return }
-        } catch { $last = $_ }
+            $job = Start-Job -ScriptBlock {
+                param($u, $d)
+                $ProgressPreference = 'SilentlyContinue'
+                try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+                Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $d
+            } -ArgumentList $url, $dest
+            $deadline = (Get-Date).AddSeconds($timeoutSec)
+            $lastMb = -1
+            while ($job.State -eq 'Running' -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Seconds 3
+                if (Test-Path $dest) {
+                    $mb = [math]::Floor((Get-Item $dest).Length / 1MB)
+                    if ($mb -gt $lastMb) { Say ('... ' + $mb + ' MB'); $lastMb = $mb }
+                }
+            }
+            if ($job.State -eq 'Running') {
+                Stop-Job -Job $job -ErrorAction SilentlyContinue
+                throw ('la descarga no termino en ' + $timeoutSec + 's (conexion muy lenta o atascada)')
+            }
+            Receive-Job -Job $job -ErrorAction Stop | Out-Null
+            if ((Get-Item $dest -ErrorAction SilentlyContinue).Length -gt 0) { return }
+            throw 'el archivo descargado esta vacio'
+        } catch {
+            $last = $_
+        } finally {
+            if ($job) { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+        }
         Start-Sleep -Seconds (2 * $try)
     }
     throw ("No se pudo descargar " + $url + " (" + $last + "). Comprueba tu conexion a internet.")
@@ -269,9 +302,16 @@ try {
     $ffdir = Join-Path $Prog 'bin'
     New-Item -ItemType Directory -Force -Path $ffdir | Out-Null
     if (-not (Test-Path (Join-Path $ffdir 'ffmpeg.exe'))) {
-        Say 'descargando ffmpeg (unos 100 MB, solo la primera vez)...'
+        Say 'descargando ffmpeg (unos 100 MB, solo la primera vez; puede tardar varios minutos)...'
         $z = Join-Path $Root 'ffmpeg.zip'
-        Get-File $FFZIP $z
+        try {
+            Get-File $FFZIP $z -timeoutSec 480
+        } catch {
+            throw ('No se pudo descargar ffmpeg (' + $_.Exception.Message + '). Puedes bajarlo tu mismo: ' +
+                   'abre ' + $FFZIP + ' con el navegador, y de dentro del zip copia "bin\ffmpeg.exe" y ' +
+                   '"bin\ffplay.exe" a "' + $ffdir + '" (creala si no existe); luego vuelve a ejecutar ' +
+                   'este instalador, que al verlos ya puestos seguira sin pararse aqui.')
+        }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zipf = [System.IO.Compression.ZipFile]::OpenRead($z)
         try {

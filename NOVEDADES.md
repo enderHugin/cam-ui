@@ -1,5 +1,14 @@
 # Novedades de cam-ui
 
+## instalador (2) — 2026.11.07
+- La descarga de ffmpeg (la más pesada, ~100 MB) no mostraba ningún progreso mientras bajaba, así
+  que una conexión lenta se veía exactamente igual que una colgada de verdad — sin forma de
+  distinguirlas. Ahora avisa cada pocos segundos cuántos MB lleva, y si de verdad se queda
+  atascada sin avanzar (no solo lenta) pasado un buen rato, lo cuenta como un intento fallido y
+  reintenta, en vez de quedarse esperando para siempre. Si aun así no consigue bajarlo, el aviso
+  de error ya trae las instrucciones para bajarlo a mano con el navegador y dejarlo donde el
+  instalador lo espera, sin tener que preguntar.
+
 ## instalador — 2026.11.07
 - Arreglado un fallo real del instalador (`cam-ui-instalar.cmd`) que podía dejar la instalación
   a medias con solo «Traceback (most recent call last):» y nada más: si una instalación anterior
