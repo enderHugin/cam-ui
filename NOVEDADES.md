@@ -1,5 +1,23 @@
 # Novedades de cam-ui
 
+## pack 6 — 2026.11.07
+- **Arreglado un fallo real en «Añadir cámara de red...» con la sincronía por defecto.** Con el
+  modo de sincronía normal («por reloj común», el que se usa salvo que se cambie a mano), una
+  cámara de red (el móvil con «IP Webcam», u otro PC con cam-ui en «la red» — ver más abajo) no
+  grababa ningún fotograma: el vídeo se veía en la vista previa pero la grabación salía vacía o
+  casi, sin avisar de ningún error. La causa: una opción de ffmpeg con la que ese modo calcula la
+  hora real de cada fotograma no la respeta el tipo de flujo que usan las cámaras de red, así que
+  todos los fotogramas se consideraban "de antes de empezar" y se descartaban. Comprobado de
+  verdad con ffmpeg real (antes del arreglo: 0 fotogramas grabados pese a verse en la vista
+  previa; después: fotogramas reales grabados y verificados con ffprobe).
+- **Se pueden encadenar varias cam-ui.** Con el arreglo de arriba ya se puede añadir la dirección
+  de la «salida en red» de un PC (algo como `http://192.168.1.50:8554/stream.mjpg`) como «cámara
+  de red» en OTRO PC con cam-ui, para combinarla en su propio mosaico, grabarla, verla en red otra
+  vez, etc. Por ahora solo el vídeo: la cámara de red sigue sin traer audio consigo (está en la
+  lista para una próxima vez).
+- **Salida en red: nueva opción 1920×1080** en el desplegable de tamaño (antes el máximo era
+  1280×720).
+
 ## instalador (2) — 2026.11.07
 - La descarga de ffmpeg (la más pesada, ~100 MB) no mostraba ningún progreso mientras bajaba, así
   que una conexión lenta se veía exactamente igual que una colgada de verdad — sin forma de

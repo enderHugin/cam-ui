@@ -72,4 +72,48 @@ finally:
         os.remove(out)
 print("5) extremo a extremo (http MJPEG real -> mosaico -> mp4) OK")
 
+# 6) lo mismo que el bloque 5 pero con "sync": "clock" -- el modo normal/por defecto, que el
+#    bloque 5 no cubre (usa "device"). Fallo real encontrado con esto: "-use_wallclock_as_timestamps"
+#    (con el que el modo "clock" convierte PTS en la hora real de llegada) no lo hace el demuxer
+#    "mpjpeg" -- numera los fotogramas 0,1,2... como si fuera un archivo -- así que el filtro
+#    "fps" de más abajo los veía con una marca de tiempo absurda (segundos desde 1970 menos el
+#    reloj común) y los descartaba TODOS: ningún fotograma grabado, pero el .mp4 seguía
+#    "existiendo" con un tamaño pequeño pero no cero (cabecera sin vídeo dentro), así que un
+#    simple "> 0 bytes" no lo habría detectado -- hace falta comprobar que de verdad hay
+#    fotogramas reales (duración/decodificación con ffprobe), no solo que el archivo no esté vacío.
+out6 = os.path.join(HERE, "_netcam_e2e_clock.mp4")
+if os.path.exists(out6):
+    os.remove(out6)
+PORT6 = 8792
+srv6 = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re",
+                         "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=6",
+                         "-f", "mpjpeg", "-listen", "1", "http://127.0.0.1:{0}/".format(PORT6)])
+time.sleep(0.8)
+try:
+    plan3 = dict(plan)
+    plan3["sync"] = "clock"
+    plan3["cams"] = [dict(plan["cams"][0], spec="http://127.0.0.1:{0}/".format(PORT6))]
+    cmd3, _ = camui.build_command(plan3, outfile=out6, preview=False)
+    cmd3 += ["-t", "3"]
+    r6 = subprocess.run(cmd3, capture_output=True, text=True, timeout=15)
+    assert os.path.exists(out6), "no se generó el archivo: rc={0}\n{1}".format(
+        r6.returncode, r6.stderr[-800:])
+    rp = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                         "-show_entries", "stream=nb_read_frames,duration",
+                         "-of", "default=noprint_wrappers=1", out6],
+                        capture_output=True, text=True, timeout=10)
+    nframes = None
+    for line in rp.stdout.splitlines():
+        if line.startswith("nb_read_frames="):
+            nframes = int(line.split("=", 1)[1])
+    assert nframes is not None and nframes >= 15, (
+        "con sync=clock se grabaron muy pocos (o cero) fotogramas reales de una cámara de red: "
+        "{0}\nffprobe:\n{1}{2}".format(nframes, rp.stdout, rp.stderr))
+finally:
+    srv6.wait(timeout=5)
+    if os.path.exists(out6):
+        os.remove(out6)
+print("6) extremo a extremo con sync=clock (el modo por defecto): {0} fotogramas reales grabados "
+      "de una cámara de red OK".format(nframes))
+
 print("TODO OK unit_netcam")

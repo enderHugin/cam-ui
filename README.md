@@ -27,7 +27,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 - Tres modos de ventana: normal, compacto y mini (barra con Rec/Stop), con icono en la bandeja.
 - Botón de pánico (F12) que cierra todos los ffmpeg.
 - Cámara virtual (OBS Studio + `pyvirtualcam`) para usar el mosaico en videollamadas; solo vídeo.
-- Cámara de red: un móvil por wifi (http/rtsp, p. ej. «IP Webcam» en Android) como una cámara más.
+- Cámara de red: un móvil por wifi (http/rtsp, p. ej. «IP Webcam» en Android) como una cámara más;
+  también vale la «salida en red» de otro PC con cam-ui, para encadenar varios equipos (de
+  momento solo el vídeo).
 - Salida en red: ver (y, si hay micrófono, oír) el mosaico en vivo desde otro PC o móvil de la
   misma wifi con el navegador (menú Modo, botón de la barra, pestaña Ajustes o bandeja), con
   pantalla completa; funciona a la vez que se graba y que la cámara virtual, es solo para ver

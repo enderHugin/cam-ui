@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 5                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 6                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -710,14 +710,25 @@ def _dshow_input(kind, spec, opt=None):
             (["-audio_buffer_size", str(buf)] if buf > 0 else []) + ["-i", "audio=" + spec])
 
 
-def _rebase(clock, t0, offset_s, audio=False):
+def _rebase(clock, t0, offset_s, audio=False, net=False):
     """Expresión setpts/asetpts. clock: línea de tiempo común (T0); device: cada
-    flujo empieza en 0. offset_s>0 retrasa el flujo."""
+    flujo empieza en 0. offset_s>0 retrasa el flujo.
+    net=True (solo vídeo, ver video_chain): "-use_wallclock_as_timestamps" -- con el que esto
+    normalmente convierte PTS en la hora real de llegada -- no lo hacen todos los demuxers.
+    Comprobado de verdad: el de «mpjpeg» (una cámara de red MJPEG, sea un móvil o la propia
+    salida en red de otra instancia de cam-ui) ignora esa opción y numera los fotogramas 0,1,2...
+    como si fuera un archivo, así que PTS-T0/TB da un número enorme y negativo y el filtro "fps"
+    de más abajo los descarta TODOS (0 fotogramas de salida, probado con ffmpeg real). Para estas
+    fuentes se usa en su lugar RTCTIME -- la hora real del reloj del sistema en el momento en que
+    el propio filtro procesa cada fotograma, no la que diga el demuxer -- que no depende de que el
+    demuxer de turno sepa hacerlo bien."""
     if clock and audio:
         # Audio: línea de tiempo CONTINUA contando muestras, anclada solo a la hora de la primera.
         # Con la hora de llegada de cada paquete (reloj de pared) cualquier parón de ffmpeg
         # desordena las marcas y aresample rellena con silencio / descarta audio.
         return "STARTPTS-({0:.6f}-{1:.6f})/TB+NB_CONSUMED_SAMPLES/SR/TB".format(t0, offset_s)
+    if clock and net:
+        return "(RTCTIME/1000000-({0:.6f}-{1:.6f}))/TB".format(t0, offset_s)
     if clock:
         return "PTS-({0:.6f}-{1:.6f})/TB".format(t0, offset_s)
     return "PTS-STARTPTS+{0:.6f}/TB".format(offset_s)
@@ -735,7 +746,8 @@ def _src_matches_tile(cam, cw, ch):
 
 
 def video_chain(i, cam, cw, ch, fps, clock, t0):
-    f = ["setpts=" + _rebase(clock, t0, cam.get("delay", 0) / 1000.0),
+    net = _is_net_spec(cam.get("spec"))
+    f = ["setpts=" + _rebase(clock, t0, cam.get("delay", 0) / 1000.0, net=net),
          "fps=fps={0}:start_time=0".format(fps)]
     if cam.get("h"):
         f.append("hflip")
@@ -1218,7 +1230,7 @@ class VirtualCam:
 #  que un visor que se cuelga o se desconecta nunca afecte a ffmpeg ni a la grabación.
 # =====================================================================
 IP_SIZES = (("640×360  (recomendado)", (640, 360)), ("960×540", (960, 540)),
-           ("1280×720", (1280, 720)))
+           ("1280×720", (1280, 720)), ("1920×1080", (1920, 1080)))
 IP_FPS = 10                  # de sobra para verlo: ahorra wifi y CPU (va aparte de los fps de grabación)
 IP_PORT_DEFAULT = 8554
 IP_JPEG_QUALITY = 70
@@ -4666,8 +4678,11 @@ class CamApp:
         ttk.Label(frm, style="Muted.TLabel", wraplength=380, justify="left",
                   text="La dirección que da la app del móvil (p. ej. «IP Webcam» en Android): algo "
                        "como http://192.168.1.50:8080/video, o por rtsp "
-                       "rtsp://192.168.1.50:8080/h264_ulaw.sdp. El móvil y este ordenador deben "
-                       "estar en la misma red wifi. Solo vídeo, sin audio."
+                       "rtsp://192.168.1.50:8080/h264_ulaw.sdp. También vale la dirección de la "
+                       "«salida en red» de otro PC con cam-ui (algo como "
+                       "http://192.168.1.50:8554/stream.mjpg), para encadenar varios equipos. El "
+                       "otro aparato y este ordenador deben estar en la misma red wifi. Solo "
+                       "vídeo, sin audio."
                   ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 10))
         err = ttk.Label(frm, text="", foreground="#ff6b6b", background=BG)
         err.grid(row=3, column=0, columnspan=2, sticky="w")
