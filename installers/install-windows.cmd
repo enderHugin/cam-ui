@@ -145,12 +145,22 @@ try {
             if (-not $sp.IsBypassed($tu)) { $pu = $sp.GetProxy($tu); if ($pu -and $pu.AbsoluteUri -ne $tu.AbsoluteUri) { $env:HTTPS_PROXY = $pu.AbsoluteUri; Say ('proxy del sistema: ' + $pu.AbsoluteUri) } }
         } catch { }
     }
-    function Run-Uv([string[]]$uvArgs) {
+    function Run-Native([string]$exe, [string[]]$nativeArgs) {
+        # $ErrorActionPreference = 'Stop' (puesto al principio del script) hace que la simple
+        # escritura a stderr de un programa nativo -- aunque se redirija con "2>$null" -- tire
+        # abajo TODO el instalador con una excepcion que solo deja ver la primera linea (por eso
+        # a veces se veia solo "Traceback (most recent call last):" y nada mas, sin ni siquiera
+        # el mensaje de error pensado para esa situacion). Aqui se baja la guardia un momento
+        # para poder leer el fallo entero y decidir que hacer, en vez de morir a medias.
         $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-        try { $o = & $uv @uvArgs 2>&1 | ForEach-Object { [string]$_ }; $rc = $LASTEXITCODE } catch { $o = @([string]$_); $rc = 99 }
+        try { $o = & $exe @nativeArgs 2>&1 | ForEach-Object { [string]$_ }; $rc = $LASTEXITCODE } catch { $o = @([string]$_); $rc = 99 }
         $ErrorActionPreference = $old
-        $o | ForEach-Object { Write-Host ('      ' + $_) }
         return @{ rc = $rc; out = @($o) }
+    }
+    function Run-Uv([string[]]$uvArgs) {
+        $r = Run-Native $uv $uvArgs
+        $r.out | ForEach-Object { Write-Host ('      ' + $_) }
+        return $r
     }
     $py = $null; $uvTail = ''
     $tries = @(
@@ -227,8 +237,8 @@ try {
     # instala salvo que se le pida con --seed) se rehace solo
     $venvOk = $false
     if (Test-Path $vpyw) {
-        & $vpy -c "import pip" 2>$null
-        if ($LASTEXITCODE -eq 0) { $venvOk = $true } else { Say 'entorno anterior sin pip: se rehace' }
+        $rpip = Run-Native $vpy @('-c', 'import pip')
+        if ($rpip.rc -eq 0) { $venvOk = $true } else { Say 'entorno anterior sin pip: se rehace' }
     }
     if (-not $venvOk -and (Test-Path $venv)) {
         Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
@@ -242,11 +252,18 @@ try {
     } else {
         Say 'el entorno ya estaba'
     }
-    & $vpy -m pip install --disable-pip-version-check --no-cache-dir -q --upgrade numpy pillow
-    if ($LASTEXITCODE -ne 0) { throw 'fallo al instalar numpy/pillow' }
-    # opcionales: sin ellos cam-ui funciona, pero sin icono de bandeja / camara virtual
-    & $vpy -m pip install --disable-pip-version-check --no-cache-dir -q --upgrade pystray | Out-Null
-    & $vpy -m pip install --disable-pip-version-check --no-cache-dir -q --upgrade pyvirtualcam | Out-Null
+    $rpip2 = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'numpy', 'pillow')
+    if ($rpip2.rc -ne 0) {
+        throw ('fallo al instalar numpy/pillow: ' + (($rpip2.out | Where-Object { $_.Trim() } | Select-Object -Last 4) -join ' | '))
+    }
+    # opcionales: sin ellos cam-ui funciona igual, solo que sin icono de bandeja / camara virtual --
+    # si fallan (red, antivirus...) no debe tirar abajo el resto de la instalacion, solo avisar
+    $rpystray = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'pystray')
+    if ($rpystray.rc -ne 0) { Say ('no se pudo instalar pystray (opcional; sin el no habra icono de bandeja): ' + (($rpystray.out | Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' | ')) }
+    $rpvcam = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'pyvirtualcam')
+    if ($rpvcam.rc -ne 0) { Say ('no se pudo instalar pyvirtualcam (opcional; sin el no habra camara virtual): ' + (($rpvcam.out | Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' | ')) }
+    # (sin tildes a proposito en estos dos avisos: el mismo patron que el resto del instalador,
+    # que evita acentos en los textos de consola por si la code page de alguna consola los destroza)
 
     # ffmpeg (solo si falta: no se vuelve a bajar en cada actualizacion)
     $ffdir = Join-Path $Prog 'bin'

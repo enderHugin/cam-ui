@@ -1,5 +1,17 @@
 # Novedades de cam-ui
 
+## instalador — 2026.11.07
+- Arreglado un fallo real del instalador (`cam-ui-instalar.cmd`) que podía dejar la instalación
+  a medias con solo «Traceback (most recent call last):» y nada más: si una instalación anterior
+  dejaba el entorno de Python sin `pip` (por ejemplo, tras otro fallo a mitad de instalar), la
+  comprobación que debía detectarlo y rehacerlo se topaba con un problema de PowerShell (un
+  mensaje de error de un programa escribiendo en su «stderr» paraba todo el instalador en vez de
+  dejar que el código siguiera, aun estando redirigido) y el instalador se caía en vez de arreglar
+  el entorno solo. Si te pasó esto, vuelve a descargar el instalador (este fallo ya está
+  corregido) y ejecútalo tal cual, sin borrar nada a mano: seguirá donde lo dejó. También: si
+  fallan los paquetes opcionales (icono de bandeja o cámara virtual), ahora el instalador avisa de
+  cuál fue y sigue adelante, en vez de arriesgarse al mismo problema.
+
 ## pack 5 — 2026.11.07
 - **Salida en red: ahora también se oye.** Si hay un micrófono activado, la página del navegador
   incluye un botón «🔊 Activar sonido» (los navegadores no dejan reproducir sonido solo al abrir
