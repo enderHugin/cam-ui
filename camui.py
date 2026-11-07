@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 2                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 3                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -3075,6 +3075,7 @@ class CamApp:
         self._tray_asked = bool(ui.get("tray_asked", False))
         self._tray = None
         self._tray_rec = False
+        self._tray_title_last = ""
         self._tray_q = deque()                               # órdenes del icono de bandeja (otro hilo)
         self._hidden = False
         self._mini_drag = None
@@ -3441,6 +3442,16 @@ class CamApp:
         log.info("icono de bandeja activo")
         return True
 
+    def _tray_title(self):
+        """Texto del icono de la bandeja: en Windows se ve como el «tooltip» al dejar el ratón
+        encima, así que aquí es donde conviene que se vea la dirección para la salida en red."""
+        parts = ["cam-ui"]
+        if self.recording:
+            parts.append("grabando")
+        if self.ipout_on:
+            parts.append("red: " + self._ip_primary_url())
+        return " · ".join(parts)
+
     def _tray_update(self, menu=False):
         icon = self._tray
         if icon is None:
@@ -3449,8 +3460,11 @@ class CamApp:
             if self.recording != self._tray_rec:
                 self._tray_rec = self.recording
                 icon.icon = make_tray_image(self.recording)
-                icon.title = "CamWin32 · grabando" if self.recording else "CamWin32"
                 menu = True
+            title = self._tray_title()
+            if title != self._tray_title_last:
+                self._tray_title_last = title
+                icon.title = title
             if menu:
                 icon.update_menu()
         except Exception:
@@ -3887,8 +3901,13 @@ class CamApp:
         self.lbl_hint = ttk.Label(right, style="Muted.TLabel",
                                   text="Clic en una imagen = elegir cámara  ·  doble clic = encuadrar (zoom y posición)")
         self.lbl_hint.pack(fill="x")
-        self.status = ttk.Label(r, text="Listo.", style="Bar.TLabel", anchor="w")
-        self.status.pack(fill="x", side="bottom", ipady=3)
+        sbar = ttk.Frame(r, style="Bar.TFrame")
+        sbar.pack(fill="x", side="bottom")
+        self.lbl_ip_bar = ttk.Label(sbar, text="", style="Bar.TLabel", anchor="e")
+        self.lbl_ip_bar.pack(side="right", ipady=3, padx=(0, 8))
+        self.lbl_ip_bar.bind("<Button-1>", self._copy_ip_url)
+        self.status = ttk.Label(sbar, text="Listo.", style="Bar.TLabel", anchor="w")
+        self.status.pack(fill="x", side="left", expand=True, ipady=3)
 
     def _make_picker(self, tab, live=False):
         """Selector de cámara al principio de una pestaña (sincronizado con la selección)."""
@@ -5920,10 +5939,34 @@ class CamApp:
         return IP_PORT_DEFAULT
 
     def _ip_urls(self, port):
+        """Todas las direcciones donde probar, ya en formato URL: primero la(s) IP de este
+        equipo (lo más fiable, también desde el móvil) y al final el nombre del equipo (más
+        fácil de recordar; funciona en muchas redes Windows sin más, pero no siempre desde
+        un móvil)."""
         ips = _local_ips()
-        if not ips:
-            return "http://(la IP de este equipo):{0}/".format(port)
-        return ", ".join("http://{0}:{1}/".format(ip, port) for ip in ips)
+        urls = ["http://{0}:{1}/".format(ip, port) for ip in ips]
+        if not urls:
+            urls = ["http://(la IP de este equipo):{0}/".format(port)]
+        urls.append("http://{0}:{1}/".format(socket.gethostname(), port))
+        return ", ".join(urls)
+
+    def _ip_primary_url(self):
+        """Una sola dirección (la mejor suposición) para sitios con poco espacio: bandeja, barra
+        de estado compacta."""
+        ips = _local_ips()
+        host = ips[0] if ips else socket.gethostname()
+        return "http://{0}:{1}/".format(host, self.ipsrv.port)
+
+    def _copy_ip_url(self, *_a):
+        if not self.ipout_on:
+            return
+        url = self._ip_primary_url()
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self._set_status("Copiado: {0}".format(url))
+        except Exception:
+            pass
 
     def _ip_enable(self, quiet=False):
         """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa."""
@@ -6173,6 +6216,8 @@ class CamApp:
             self.btn_ip2.config(text="🌐  Apagar en la red" if ion else "🌐  Activar en la red",
                                 style="Accent.TButton" if ion else "TButton", state=ist)
         self._ip_var.set(ion)
+        if getattr(self, "lbl_ip_bar", None) is not None:
+            self.lbl_ip_bar.config(text=("🌐 " + self._ip_primary_url()) if ion else "")
         self._tray_update()
 
     def _set_status(self, txt):

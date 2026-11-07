@@ -1,5 +1,11 @@
 # Novedades de cam-ui
 
+## pack 3 — 2026.11.07
+- **Salida en red: la dirección se ve sin buscarla.** Mientras está activa, la esquina de la
+  barra de estado (abajo) y el icono de la bandeja (al dejar el ratón encima) muestran la
+  dirección exacta que hay que abrir en el otro equipo o móvil. Clic en la barra de estado para
+  copiarla.
+
 ## pack 2 — 2026.11.07
 - **Salida en red**: nueva opción «En la red» (menú Modo, botón de la barra, pestaña Ajustes y
   bandeja) para ver el mosaico en vivo desde otro PC o móvil de la misma wifi, con el navegador,

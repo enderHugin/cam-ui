@@ -196,4 +196,34 @@ conn6.close()
 srv6.close()
 print("6) extremo a extremo con el comando real de cam-ui (ffmpeg -> IpServer -> HTTP) OK")
 
+# 7) direcciones mostradas al usuario: barra de estado y bandeja (CamApp._ip_urls / _tray_title /
+#    _ip_primary_url) para que sepa adónde ir sin tener que abrir Ajustes. Se llaman tal cual las
+#    llamaría la app, con un "self" de mentira (no hace falta Tk para probar esta lógica) --------
+import socket
+import types
+
+fake = types.SimpleNamespace(ipsrv=types.SimpleNamespace(port=8554), ipout_on=True, recording=False)
+fake._ip_primary_url = lambda: camui.CamApp._ip_primary_url(fake)
+
+urls = camui.CamApp._ip_urls(fake, 8554)
+assert socket.gethostname() in urls, urls               # el nombre del equipo, como alternativa a la IP
+assert urls.count("http://") >= 2, urls                 # al menos una IP y el nombre, en formato URL
+
+primary = fake._ip_primary_url()
+assert primary.startswith("http://") and primary.endswith(":8554/"), primary
+
+t_rec_ip = camui.CamApp._tray_title(fake)
+assert t_rec_ip == "cam-ui · red: " + primary, t_rec_ip
+fake.recording = True
+t_rec_ip2 = camui.CamApp._tray_title(fake)
+assert t_rec_ip2 == "cam-ui · grabando · red: " + primary, t_rec_ip2
+fake.ipout_on = False
+t_rec = camui.CamApp._tray_title(fake)
+assert t_rec == "cam-ui · grabando", t_rec
+fake.recording = False
+t_off = camui.CamApp._tray_title(fake)
+assert t_off == "cam-ui", t_off
+print("7) direcciones en la barra de estado y la bandeja (_ip_urls / _ip_primary_url / "
+      "_tray_title) OK")
+
 print("TODO OK unit_ipout")
