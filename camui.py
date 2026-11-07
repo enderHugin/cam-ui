@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 7                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 8                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -139,6 +139,11 @@ def setup_logging():
 
 FFMPEG = _resolve_tool("ffmpeg.exe", "CAMWIN32_FFMPEG", r"C:\io\Tools\ffmpeg.exe")
 FFPLAY = _resolve_tool("ffplay.exe", "CAMWIN32_FFPLAY", r"C:\io\Tools\ffplay.exe")
+# fuente para el aviso «Sin señal» (ver _offline_lavfi): de serie en Windows desde siempre,
+# no depende de que haya fontconfig en el ffmpeg instalado. En pruebas (Linux) se sustituye
+# por una fuente real del sistema.
+PLACEHOLDER_FONT = os.path.join(os.environ.get("WINDIR", r"C:\Windows"),
+                                "Fonts", "arial.ttf").replace("\\", "/")
 
 ASPECTS = [("16:9", 16, 9), ("4:3", 4, 3), ("3:2", 3, 2), ("5:4", 5, 4), ("1:1", 1, 1),
            ("4:5 (vertical)", 4, 5), ("9:16 (vertical)", 9, 16), ("21:9", 21, 9), ("2:1", 2, 1)]
@@ -698,6 +703,33 @@ def _net_video_input(spec, opt=None):
     return pre + ["-i", spec]
 
 
+def _dt_escape(s):
+    """Escapa texto para el valor text= de drawtext dentro de una entrada «-f lavfi -i ...»
+    (ver _offline_lavfi). Probado de verdad con acentos, emoji, comillas, dos puntos, % y
+    corchetes -- todo lo que un nombre de cámara puesto a mano podría llevar."""
+    s = (s or "").replace("\\", "\\\\")
+    for ch in (":", "'", "%", "[", "]", ",", ";"):
+        s = s.replace(ch, "\\" + ch)
+    return s
+
+
+def _offline_lavfi(w, h, fps, label):
+    """Entrada sintética (fondo + «Sin señal: <nombre>») para poner en el sitio de una cámara
+    que ffmpeg no pudo abrir, en vez de dejar que todo el proceso (vista previa + grabación,
+    que comparten uno solo) se caiga por una sola cámara. Con fontfile= de verdad (no depende
+    de que el ffmpeg instalado traiga fontconfig, solo libfreetype -- lo trae hasta el build
+    «essentials» de gyan.dev que usa el instalador)."""
+    w, h = max(16, int(w)), max(16, int(h))
+    fs = max(11, min(26, h // 11))
+    text = _dt_escape("Sin señal: {0}".format(label or "cámara"))
+    font = "fontfile='{0}':".format(PLACEHOLDER_FONT.replace("\\", "/").replace(":", "\\:")) \
+        if PLACEHOLDER_FONT else ""
+    return ("color=c=0x303030:s={0}x{1}:r={2},"
+           "drawtext={3}text='{4}':fontcolor=0xdddddd:fontsize={5}:"
+           "x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=0x000000a0:boxborderw=10".format(
+               w, h, fps, font, text, fs))
+
+
 def _dshow_input(kind, spec, opt=None):
     """opt: modo de captura (vídeo) o tamaño del búfer en ms (audio; 0 = el del dispositivo)."""
     if kind == "video":
@@ -746,7 +778,11 @@ def _src_matches_tile(cam, cw, ch):
 
 
 def video_chain(i, cam, cw, ch, fps, clock, t0):
-    net = _is_net_spec(cam.get("spec"))
+    # el marcador «sin señal» (ver _offline_lavfi, build_command) es, igual que una cámara de
+    # red, una fuente que no se puede fiar de "-use_wallclock_as_timestamps" (es "lavfi", que
+    # numera sus propios fotogramas igual que hacía "mpjpeg" -- el mismo fallo ya arreglado
+    # antes para las cámaras de red, ver _rebase): necesita el mismo rebase por RTCTIME.
+    net = _is_net_spec(cam.get("spec")) or bool(cam.get("_offline"))
     f = ["setpts=" + _rebase(clock, t0, cam.get("delay", 0) / 1000.0, net=net),
          "fps=fps={0}:start_time=0".format(fps)]
     if cam.get("h"):
@@ -815,10 +851,18 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
     if clock:
         pre += ["-use_wallclock_as_timestamps", "1"]
 
+    labels = plan.get("labels") or []
     fc = []
     # ---- vídeo ----
     for i, c in enumerate(cams):
-        cmd += pre + input_fn("video", c["spec"], c.get("mode"))
+        if c.get("_offline"):
+            # la cámara no se pudo abrir en un intento anterior (ver _engine_start /
+            # failing_cam_index): se sustituye por un marcador «sin señal» para que el resto
+            # del mosaico siga funcionando en vez de que todo el proceso se caiga por ella.
+            lab = labels[i] if i < len(labels) else None
+            cmd += ["-f", "lavfi", "-i", _offline_lavfi(tiles[i][2], tiles[i][3], fps, lab)]
+        else:
+            cmd += pre + input_fn("video", c["spec"], c.get("mode"))
         fc.append(video_chain(i, c, tiles[i][2], tiles[i][3], fps, clock, t0))
     if n == 1:
         fc.append("[v0]null[mix0]")
@@ -1279,7 +1323,7 @@ _VIEWER_HTML = """<!doctype html>
 <style>
 html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden}
 #stage{position:relative;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#000}
-#v{max-width:100%;max-height:100%;object-fit:contain}
+#v{width:100%;height:100%;object-fit:contain}
 #bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;
      padding:12px;background:linear-gradient(transparent,rgba(0,0,0,.65))}
 button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:7px;
@@ -1799,6 +1843,31 @@ def failing_spec(text):
     """Dispositivo de vídeo/audio que ffmpeg no pudo abrir, a partir de su mensaje de error."""
     m = re.findall(r"Error opening input file (video|audio)=(.+?)\.\s*$", text or "", re.M)
     return (m[-1][0], m[-1][1].strip()) if m else (None, None)
+
+
+def failing_net_spec(text):
+    """URL de una cámara de red que ffmpeg no pudo abrir (p. ej. «Connection ... failed» o
+    «Error opening input file http://host:puerto/ruta.»): a diferencia de failing_spec (las
+    DirectShow locales, con el prefijo video=/audio=), aquí ffmpeg pone la URL tal cual."""
+    m = re.findall(r"Error opening input file ((?:https?|rtsps?)://\S+?)\.\s*$", text or "", re.M)
+    return m[-1].strip() if m else None
+
+
+def failing_cam_index(cams, text):
+    """Índice (en la lista de cámaras del plan) de la que ffmpeg no pudo abrir, según su
+    mensaje de error -- tanto una DirectShow local (video=NOMBRE) como una de red (la URL
+    tal cual, sin el prefijo video=). None si no se identifica ninguna."""
+    kind, spec = failing_spec(text)
+    if kind == "video" and spec:
+        for i, c in enumerate(cams):
+            if c.get("spec") == spec:
+                return i
+    url = failing_net_spec(text)
+    if url:
+        for i, c in enumerate(cams):
+            if c.get("spec") == url:
+                return i
+    return None
 
 
 def ffmpeg_pids():
@@ -3878,6 +3947,8 @@ class CamApp:
                                                "Puedes instalarlo a mano:  pip install pyvirtualcam".format(msg))
                 elif cmd == "badmode":
                     self._on_badmode(*arg)
+                elif cmd == "cam_offline":
+                    self._on_cam_offline(arg)
                 elif cmd == "probe_prog":
                     lab, i, n, m = arg
                     self._set_status("Probando «{0}»: {1}/{2} · {3}".format(lab, i, n, m))
@@ -4318,6 +4389,7 @@ class CamApp:
         self.tree.pack(fill="x", padx=6, pady=(6, 2))
         self.tree.bind("<Button-1>", self._tree_click)
         self.tree.bind("<<TreeviewSelect>>", self._tree_select)
+        self.tree.bind("<Double-Button-1>", self._tree_double_click)
         row = ttk.Frame(box)
         row.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Button(row, text="Refrescar dispositivos",
@@ -4687,31 +4759,63 @@ class CamApp:
             self._set_status("Listo. Marca al menos una cámara.")
 
     def _add_net_cam(self):
+        self._net_cam_dialog()
+
+    def _edit_net_cam(self, label):
+        self._net_cam_dialog(editing=label)
+
+    def _rename_cam_state(self, old_label, new_label):
+        """Mueve los ajustes (zoom, encuadre, color...) de una cámara de un nombre a otro, para
+        cuando editar una cámara de red le cambia el nombre (y por tanto la etiqueta): se
+        reconstruye el CamState con los mismos valores en vez de perderlos como si fuera otra
+        cámara distinta."""
+        old = self.cams.get(old_label)
+        if old is None:
+            return
+        new_cs = CamState(new_label, old.to_cfg(), self._cb)
+        new_cs.modes_tried = old.modes_tried
+        new_cs.ok_modes = dict(old.ok_modes)
+        new_cs.bad_modes = set(old.bad_modes)
+        del self.cams[old_label]
+        self.cams[new_label] = new_cs
+        if old_label in self.order:
+            self.order[self.order.index(old_label)] = new_label
+        if self.sel == old_label:
+            self.sel = new_label
+
+    def _net_cam_dialog(self, editing=None):
         """Cámara de red (http/https MJPEG o rtsp): el móvil con una app como IP Webcam, en la
-        misma wifi. En pruebas: no hay forma de probarla aquí con un teléfono real."""
+        misma wifi, o la «salida en red» de otro PC con cam-ui. En pruebas: no hay forma de
+        probarla aquí con un teléfono real. editing=<etiqueta>: se edita esa cámara ya añadida
+        (doble clic en la lista) en vez de crear una nueva -- mismo diálogo, con el nombre y la
+        URL ya puestos, conservando su sitio en el mosaico y sus ajustes (zoom, color...)."""
         if self.recording or self.busy:
             return
+        cur = self.net_cams.get(editing) if editing else None
+        if editing and cur is None:
+            return
         top = tk.Toplevel(self.root)
-        top.title("Añadir cámara de red")
+        top.title("Editar cámara de red" if cur else "Añadir cámara de red")
         top.configure(bg=BG)
         top.transient(self.root)
         top.resizable(False, False)
         frm = ttk.Frame(top)
         frm.pack(fill="both", expand=True, padx=12, pady=12)
         ttk.Label(frm, text="Nombre").grid(row=0, column=0, sticky="w", pady=(0, 4))
-        name_var = tk.StringVar(value="Móvil")
+        name_var = tk.StringVar(value=cur["name"] if cur else "Móvil")
         ttk.Entry(frm, textvariable=name_var, width=38).grid(row=0, column=1, pady=(0, 4))
         ttk.Label(frm, text="URL").grid(row=1, column=0, sticky="w")
-        url_var = tk.StringVar()
+        url_var = tk.StringVar(value=cur["spec"] if cur else "")
         e_url = ttk.Entry(frm, textvariable=url_var, width=38)
         e_url.grid(row=1, column=1)
         ttk.Label(frm, style="Muted.TLabel", wraplength=380, justify="left",
                   text="La dirección que da la app del móvil (p. ej. «IP Webcam» en Android): algo "
                        "como http://192.168.1.50:8080/video, o por rtsp "
                        "rtsp://192.168.1.50:8080/h264_ulaw.sdp. También vale la dirección de la "
-                       "«salida en red» de otro PC con cam-ui (algo como "
-                       "http://192.168.1.50:8554/stream.mjpg), para encadenar varios equipos. El "
-                       "otro aparato y este ordenador deben estar en la misma red wifi. Solo "
+                       "«salida en red» de otro PC con cam-ui -- la URL completa, terminada en "
+                       "/stream.mjpg (algo como http://192.168.1.50:8554/stream.mjpg) -- para "
+                       "encadenar varios equipos. El otro aparato y este ordenador deben estar "
+                       "en la misma red wifi, y el otro PC debe tener «En la red» activada. Solo "
                        "vídeo, sin audio."
                   ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 10))
         err = ttk.Label(frm, text="", foreground="#ff6b6b", background=BG)
@@ -4730,15 +4834,23 @@ class CamApp:
             while label in self.vdev and not self.vdev[label].get("net"):
                 label = "{0} #{1}".format(base, n)
                 n += 1
+            if editing and label != editing:
+                self.net_cams.pop(editing, None)
+                self._rename_cam_state(editing, label)
             self.net_cams[label] = {"name": name, "alt": None, "label": label, "spec": url,
                                     "net": True}
             top.destroy()
             self._refresh_devices()
-            self._set_status("Cámara de red «{0}» añadida; márcala en la lista para usarla.".format(name))
+            if editing:
+                self._set_status("Cámara de red «{0}» actualizada.".format(name))
+            else:
+                self._set_status("Cámara de red «{0}» añadida; márcala en la lista para usarla.".format(name))
 
         ttk.Button(bar, text="Cancelar", command=top.destroy).pack(side="right")
-        ttk.Button(bar, text="Añadir", command=ok).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text="Guardar" if cur else "Añadir", command=ok).pack(side="right", padx=(0, 6))
         e_url.focus_set()
+        if cur:
+            e_url.select_range(0, "end")
         top.bind("<Return>", lambda e: ok())
         top.bind("<Escape>", lambda e: top.destroy())
         try:
@@ -4784,6 +4896,18 @@ class CamApp:
             self.tree.set(row, "use", "☑" if cs.use else "☐")
             self._bind_detail()
             self._on_change()
+            return "break"
+
+    def _tree_double_click(self, e):
+        """Doble clic en una cámara de red (añadida a mano): la abre para editar nombre/URL,
+        igual que al añadirla -- en vez de tener que quitarla y volver a crearla (se pierden
+        el zoom, el encuadre y el color si se hace así)."""
+        if self.recording or self.busy:
+            return "break"
+        row = self.tree.identify_row(e.y)
+        col = self.tree.identify_column(e.x)
+        if row and col == "#2" and self.vdev.get(row, {}).get("net"):
+            self._edit_net_cam(row)
             return "break"
 
     def _tree_select(self, _e=None):
@@ -5864,12 +5988,33 @@ class CamApp:
             res = self.eng.start(plan, **kw)
         for _ in range(5):
             ok, err = res if isinstance(res, tuple) else (False, str(res))
-            if ok or self.eng._abort or not is_mode_error(err):
+            if ok or self.eng._abort:
                 break
-            if not self._drop_bad_mode(plan, err):
+            if is_mode_error(err):
+                if not self._drop_bad_mode(plan, err):
+                    break
+            elif not self._drop_bad_cam(plan, err):
                 break
             res = self.eng.start(plan, **kw)
         return res
+
+    def _drop_bad_cam(self, plan, err):
+        """Si el error identifica una cámara (DirectShow local o de red) que ffmpeg no pudo
+        abrir, la sustituye por un marcador «sin señal» (build_command / _offline_lavfi) y deja
+        que el resto del mosaico siga, en vez de que todo el proceso (vista previa + grabación,
+        que comparten uno solo) se caiga por esa única cámara. False si el error no identifica
+        ninguna cámara del plan, o si esa cámara YA se había marcado antes en este mismo
+        intento (para no reintentar sin fin si ni el propio marcador consigue arrancar)."""
+        i = failing_cam_index(plan["cams"], err)
+        if i is None or plan["cams"][i].get("_offline"):
+            return False
+        plan["cams"][i]["_offline"] = True
+        labs = plan.get("labels") or []
+        lab = labs[i] if i < len(labs) else (plan["cams"][i].get("spec") or "?")
+        log.warning("«%s» no se pudo abrir; se sustituye por «sin señal» y se sigue:\n%s",
+                   lab, err[-300:])
+        self._tray_q.append(("cam_offline", lab))
+        return True
 
     def _drop_bad_mode(self, plan, err):
         """Marca como inválido el modo de la cámara que falló y le pone otro. False si no procede."""
@@ -6081,6 +6226,15 @@ class CamApp:
         self._set_status("«{0}» no admite el modo {1}: {2}.".format(
             lab, bad, "probando {0}".format(new) if new else "se usa el modo de fábrica del driver"
             if new == "" else "vuelve a Auto"))
+
+    def _on_cam_offline(self, lab):
+        """(hilo principal) Una cámara (de red o local) no se pudo abrir al (re)arrancar: en su
+        sitio del mosaico queda un marcador «sin señal» y el resto sigue. Se vuelve a intentar
+        de verdad la próxima vez que se reinicie la vista previa (cambiar un ajuste, quitar y
+        volver a marcar la cámara, «Reiniciar», etc.) -- esto no reintenta ella sola en caliente."""
+        self._set_status("«{0}» no se pudo conectar: sigue el resto, con un aviso «sin señal» "
+                         "en su sitio. Para reintentarla, vuelve a aplicar algún cambio (o "
+                         "«⚠ Reiniciar»).".format(lab))
 
     def panic_reset(self):
         """Botón de pánico: cierra TODOS los ffmpeg (también los huérfanos que retienen una
@@ -6722,6 +6876,19 @@ class CamApp:
         err = self.eng.last_errors()
         log.error("ffmpeg murio solo (rec=%s). Ultimas lineas:\n%s", was_rec, err)
         self.eng.stop()
+        if not was_rec:
+            # si no se estaba grabando (solo vista previa) y el error señala justo a una
+            # cámara del mosaico actual, se reintenta sola: _start_preview -> _engine_start ya
+            # sustituye esa cámara por un marcador «sin señal» si vuelve a fallar (ver
+            # _drop_bad_cam), así que el resto sigue en vez de dejar todo caído con un aviso.
+            # Si el fallo no se puede identificar con ninguna cámara, se deja el aviso de
+            # siempre: mejor un error claro que un reintento ciego sin fin.
+            plan = self._plan()
+            if plan and failing_cam_index(plan["cams"], err) is not None:
+                log.warning("vista previa: se reintenta tras identificar la cámara caída")
+                self.previewing = False
+                self._start_preview(auto=True)
+                return
         self._set_idle("ffmpeg se detuvo.")
         msg = "ffmpeg se detuvo de forma inesperada (¿cámara desconectada?).\n\n" + err
         if was_rec:

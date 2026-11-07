@@ -1,5 +1,23 @@
 # Novedades de cam-ui
 
+## pack 8 — 2026.11.07
+- **Una cámara que falla ya no tira todo el mosaico abajo.** Hasta ahora, si una cámara de red se
+  desconectaba (o cualquier cámara tardaba demasiado en responder, o dejaba de dar señal a media
+  grabación), ffmpeg se paraba entero y aparecía el aviso «ffmpeg se detuvo de forma inesperada» —
+  se perdían TODAS las cámaras, no solo la que falló. Ahora, al detectar cuál es la cámara
+  problemática (por su nombre o dirección en el error de ffmpeg), se sustituye en su sitio del
+  mosaico por un aviso «Sin señal: nombre» y el resto sigue grabando con normalidad; en vista
+  previa (no grabando) ni siquiera hace falta tocar nada, se reintenta sola. Si la cámara vuelve a
+  responder más adelante, basta con F5 (o reiniciar la grabación) para que vuelva a aparecer.
+  Comprobado con ffmpeg real: un mosaico con una cámara caída sigue grabando fotogramas de verdad
+  del resto, con el aviso bien visible en el hueco de la que falló.
+- **Editar una cámara de red ya añadida, sin tener que borrarla y volver a crearla.** Doble clic
+  sobre su nombre en la lista de cámaras abre el mismo cuadro que al añadirla, con el nombre y la
+  dirección ya puestos; al guardar conserva el zoom, el encuadre y el color que ya tenía, aunque
+  se le cambie el nombre.
+- **Arreglada la pantalla completa de «En la red».** El vídeo se veía pequeño, sin ocupar la
+  pantalla, en vez de aprovechar todo el espacio como debía.
+
 ## pack 7 — 2026.11.07
 - **Actualizaciones: nueva casilla «Actualizar automáticamente al abrir el programa, sin
   preguntar»**, en la ventana de «🔄 Actualizaciones», junto a la de «Avisarme al abrir el

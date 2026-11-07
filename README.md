@@ -29,7 +29,10 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 - Cámara virtual (OBS Studio + `pyvirtualcam`) para usar el mosaico en videollamadas; solo vídeo.
 - Cámara de red: un móvil por wifi (http/rtsp, p. ej. «IP Webcam» en Android) como una cámara más;
   también vale la «salida en red» de otro PC con cam-ui, para encadenar varios equipos (de
-  momento solo el vídeo).
+  momento solo el vídeo). Doble clic sobre ella en la lista para editar su nombre o dirección sin
+  perder el encuadre ni el color. Si se desconecta (o cualquier otra cámara tarda demasiado en
+  responder), no se cae todo el mosaico: queda un aviso «Sin señal: nombre» en su sitio, el resto
+  sigue grabando, y se reconecta sola cuando vuelve.
 - Salida en red: ver (y, si hay micrófono, oír) el mosaico en vivo desde otro PC o móvil de la
   misma wifi con el navegador (menú Modo, botón de la barra, pestaña Ajustes o bandeja), con
   pantalla completa; funciona a la vez que se graba y que la cámara virtual, es solo para ver
@@ -47,7 +50,9 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH).
+`tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH). `tests/ui_netcam_edit.py`
+prueba el diálogo de doble-clic con una ventana Tk real: en Linux hace falta un display
+(`xvfb-run -a python3 tests/ui_netcam_edit.py`), en Windows basta con tener Tk.
 Si algo falla, adjuntar `camui.log` (se crea junto al script).
 
 ## Opinar, avisar de fallos, pedir funciones
