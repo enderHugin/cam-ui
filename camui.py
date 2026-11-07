@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 3                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 4                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2548,6 +2548,51 @@ def make_tray_image(rec=False, size=64):
     return im
 
 
+STARTUP_NAME = "cam-ui"
+STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def _startup_cmd():
+    """Comando para relanzar cam-ui igual que arrancó (mismo Python, mismo archivo), pero con
+    pythonw.exe si lo hay al lado, para que no asome una consola en cada inicio de Windows."""
+    exe = sys.executable or "python"
+    if exe.lower().endswith("python.exe"):
+        cand = exe[:-len("python.exe")] + "pythonw.exe"
+        if os.path.isfile(cand):
+            exe = cand
+    return '"{0}" "{1}"'.format(exe, APP_FILE)
+
+
+def startup_get():
+    """True si cam-ui está puesto para iniciarse con Windows y, además, apunta a este mismo
+    archivo (si se movió o se reinstaló en otra carpeta, cuenta como que no está puesto: al
+    activarlo se corrige solo)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY) as k:
+            val, _ = winreg.QueryValueEx(k, STARTUP_NAME)
+        return val == _startup_cmd()
+    except Exception:
+        return False
+
+
+def startup_set(on):
+    """Activa o desactiva el inicio con Windows. Devuelve (ok, error)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            if on:
+                winreg.SetValueEx(k, STARTUP_NAME, 0, winreg.REG_SZ, _startup_cmd())
+            else:
+                try:
+                    winreg.DeleteValue(k, STARTUP_NAME)
+                except FileNotFoundError:
+                    pass
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 def pip_install(pkg, timeout=240):
     """Instala un paquete con el mismo Python. Devuelve (ok, mensaje)."""
     exe = sys.executable or "python"
@@ -3091,6 +3136,7 @@ class CamApp:
         self.ipsrv = IpServer()                              # salida en red (ver desde otro equipo)
         self.eng.ipsrv = self.ipsrv
         self.ipout_on = False
+        self.startup_on = startup_get()                      # se comprueba de verdad, no se guarda aparte
         try:
             self.eng.startup_time = min(8.0, max(0.5, float(self._cfg.get("startup", 2.5))))
         except Exception:
@@ -3426,6 +3472,8 @@ class CamApp:
                              post("rec")),
             pystray.MenuItem("Cámara virtual", post("vcam"), checked=lambda item: app.vcam_on),
             pystray.MenuItem("En la red", post("ip"), checked=lambda item: app.ipout_on),
+            pystray.MenuItem("Iniciar con Windows", post("startup"),
+                             checked=lambda item: app.startup_on),
             pystray.MenuItem("Reiniciar cámaras (pánico)", post("panic")),
             pystray.MenuItem("Buscar actualizaciones...", post("update")),
             pystray.MenuItem("Salir", post("quit")))
@@ -3449,7 +3497,7 @@ class CamApp:
         if self.recording:
             parts.append("grabando")
         if self.ipout_on:
-            parts.append("red: " + self._ip_primary_url())
+            parts.append("red: " + self._ip_dual_url())
         return " · ".join(parts)
 
     def _tray_update(self, menu=False):
@@ -3469,6 +3517,19 @@ class CamApp:
                 icon.update_menu()
         except Exception:
             log.warning("bandeja: %r", sys.exc_info()[1])
+
+    def toggle_startup(self):
+        """Pone o quita cam-ui del inicio de Windows (solo desde el menú de la bandeja)."""
+        want = not self.startup_on
+        ok, err = startup_set(want)
+        if ok:
+            self.startup_on = want
+            self._set_status("Se iniciará con Windows." if want
+                             else "Ya no se inicia con Windows.")
+        else:
+            log.warning("inicio con Windows: no se pudo cambiar: %s", err)
+            self._set_status("No se pudo cambiar el inicio con Windows: {0}".format(err[-200:]))
+        self._tray_update(menu=True)
 
     def _tray_boot(self, force=False):
         """Arranca el icono; si falta pystray ofrece instalarlo (una sola vez)."""
@@ -3518,6 +3579,8 @@ class CamApp:
                     self.toggle_ipout()
                 elif cmd == "ip_off":
                     self._ip_disable(arg)
+                elif cmd == "startup":
+                    self.toggle_startup()
                 elif cmd == "vcam_installed":
                     ok, msg = arg
                     if ok:
@@ -5951,11 +6014,21 @@ class CamApp:
         return ", ".join(urls)
 
     def _ip_primary_url(self):
-        """Una sola dirección (la mejor suposición) para sitios con poco espacio: bandeja, barra
-        de estado compacta."""
+        """Una sola dirección (la mejor suposición: la IP, o el nombre si no hay IP) para copiar
+        al portapapeles con un solo clic."""
         ips = _local_ips()
         host = ips[0] if ips else socket.gethostname()
         return "http://{0}:{1}/".format(host, self.ipsrv.port)
+
+    def _ip_dual_url(self):
+        """IP + nombre del equipo, las dos en formato URL, para sitios con poco espacio (barra
+        de estado, bandeja): si una de las dos no resuelve en el otro aparato, queda la otra a
+        mano sin tener que ir a Ajustes a buscarla."""
+        ips = _local_ips()
+        port = self.ipsrv.port
+        urls = ["http://{0}:{1}/".format(ips[0], port)] if ips else []
+        urls.append("http://{0}:{1}/".format(socket.gethostname(), port))
+        return ", ".join(urls)
 
     def _copy_ip_url(self, *_a):
         if not self.ipout_on:
@@ -6217,7 +6290,7 @@ class CamApp:
                                 style="Accent.TButton" if ion else "TButton", state=ist)
         self._ip_var.set(ion)
         if getattr(self, "lbl_ip_bar", None) is not None:
-            self.lbl_ip_bar.config(text=("🌐 " + self._ip_primary_url()) if ion else "")
+            self.lbl_ip_bar.config(text=("🌐 " + self._ip_dual_url()) if ion else "")
         self._tray_update()
 
     def _set_status(self, txt):

@@ -33,6 +33,7 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   la cámara virtual, es solo para ver (sin contraseña) y no depende de ffmpeg para servir el vídeo.
 - Se actualiza sola (con tu permiso): avisa si hay una versión nueva, guarda una copia de la
   anterior y puede volver a ella. Botón «🔄 Actualizaciones» o icono de la bandeja.
+- Iniciar con Windows: opción en el menú del icono de la bandeja.
 
 ## Atajos
 F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico · Esc vuelve al modo normal desde mini.

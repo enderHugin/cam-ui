@@ -1,5 +1,13 @@
 # Novedades de cam-ui
 
+## pack 4 — 2026.11.07
+- **Salida en red**: la barra de estado y la bandeja ahora muestran la dirección por IP *y* por
+  nombre del equipo (antes solo una de las dos), para cuando una de las dos no resuelve en el
+  otro aparato.
+- **Iniciar con Windows**: nueva opción en el menú del icono de la bandeja (clic derecho). Pone
+  o quita cam-ui del inicio de sesión de Windows; si el programa se reinstala en otra carpeta, se
+  corrige sola la próxima vez que se active.
+
 ## pack 3 — 2026.11.07
 - **Salida en red: la dirección se ve sin buscarla.** Mientras está activa, la esquina de la
   barra de estado (abajo) y el icono de la bandeja (al dejar el ratón encima) muestran la
