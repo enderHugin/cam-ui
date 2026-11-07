@@ -1,5 +1,16 @@
 # Novedades de cam-ui
 
+## pack 10 — 2026.11.07
+- **Nuevo botón «▶️ Abrir en VLC» en «En la red».** VLC ya sabe leer este vídeo tal cual (se ha
+  comprobado con un flujo real de cam-ui: decodifica cada fotograma igual que un navegador) y,
+  lo mejor, VLC trae **de serie** el envío a Chromecast: una vez abierto ahí, su propio menú
+  Reproducción → Renderizador deja elegir el Chromecast de la wifi y VLC hace la conversión él
+  solo — sin tener que programar nada de eso en cam-ui. Está en la pestaña Ajustes (junto a
+  «Activar en la red»), en el menú «Modo» y en el icono de la bandeja. Si VLC no está instalado,
+  ofrece abrir su página de descarga. AirPlay no tiene un equivalente así: ningún reproductor de
+  Windows lo trae integrado (solo existe como función del propio macOS), así que de momento
+  queda fuera.
+
 ## pack 9 — 2026.11.07
 - **Arreglados botones que no se veían en la ventana de «🔄 Actualizaciones».** Con las
   novedades ya largas (como estas que estás leyendo), los botones de abajo («Buscar de nuevo»,

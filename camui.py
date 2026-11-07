@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 9                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 10                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1314,6 +1314,27 @@ def _local_ips():
     except Exception:
         pass
     return ips
+
+
+def _find_vlc():
+    """Ruta a vlc(.exe) si está instalado (PATH, o las rutas típicas de instalación en Windows
+    cuando no se añadió al PATH); None si no se encuentra. Se usa para el botón «Abrir en VLC»
+    de «En la red»: VLC decodifica MJPEG de toda la vida y, desde su propio menú Reproducción ->
+    Renderizador, ya sabe enviarlo a un Chromecast sin que cam-ui tenga que programar nada de
+    eso (comprobado con un flujo MJPEG real de cam-ui: VLC decodifica cada fotograma JPEG tal
+    cual)."""
+    exe = shutil.which("vlc") or shutil.which("vlc.exe")
+    if exe:
+        return exe
+    if os.name == "nt":
+        for env_var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+            base = os.environ.get(env_var)
+            if not base:
+                continue
+            p = os.path.join(base, "VideoLAN", "VLC", "vlc.exe")
+            if os.path.isfile(p):
+                return p
+    return None
 
 
 _VIEWER_HTML = """<!doctype html>
@@ -3836,6 +3857,8 @@ class CamApp:
                              post("rec")),
             pystray.MenuItem("Cámara virtual", post("vcam"), checked=lambda item: app.vcam_on),
             pystray.MenuItem("En la red", post("ip"), checked=lambda item: app.ipout_on),
+            pystray.MenuItem("Abrir en VLC (Chromecast)", post("vlc"),
+                             enabled=lambda item: app.ipout_on),
             pystray.MenuItem("Iniciar con Windows", post("startup"),
                              checked=lambda item: app.startup_on),
             pystray.MenuItem("Reiniciar cámaras (pánico)", post("panic")),
@@ -3943,6 +3966,8 @@ class CamApp:
                     self.toggle_ipout()
                 elif cmd == "ip_off":
                     self._ip_disable(arg)
+                elif cmd == "vlc":
+                    self._open_in_vlc()
                 elif cmd == "startup":
                     self.toggle_startup()
                 elif cmd == "vcam_installed":
@@ -4272,6 +4297,8 @@ class CamApp:
         self._ip_var = tk.BooleanVar(value=False)
         self.mode_menu.add_checkbutton(label="En la red (ver desde otro equipo)", variable=self._ip_var,
                                        command=self.toggle_ipout)
+        self.mode_menu.add_command(label="Abrir en VLC (para enviar a Chromecast)…",
+                                   command=self._open_in_vlc)
         self.mode_menu.add_command(label="Reiniciar cámaras (pánico)  F12", command=self.panic_reset)
         self.mode_menu.add_command(label="Icono de la bandeja…", command=lambda: self._tray_boot(True))
         self.mode_menu.add_command(label="Salir", command=self.on_close)
@@ -4669,8 +4696,11 @@ class CamApp:
         nf = ttk.Labelframe(tab, text="En la red (verlo desde otro equipo o móvil)")
         nf.pack(fill="x", **pad)
         self.btn_ip2 = ttk.Button(nf, text="🌐  Activar en la red", command=self.toggle_ipout)
-        self.btn_ip2.grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+        self.btn_ip2.grid(row=2, column=0, sticky="w", padx=6, pady=(2, 6))
         self._live.add(str(self.btn_ip2))                # se puede apagar mientras se graba
+        self.btn_vlc = ttk.Button(nf, text="▶️  Abrir en VLC", command=self._open_in_vlc)
+        self.btn_vlc.grid(row=2, column=1, sticky="w", padx=6, pady=(2, 6))
+        self._live.add(str(self.btn_vlc))
         ttk.Label(nf, text="Tamaño").grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(nf, textvariable=self.v_ipsize, values=[z[0] for z in IP_SIZES], width=24,
                      state="readonly").grid(row=0, column=1, sticky="w")
@@ -4692,7 +4722,11 @@ class CamApp:
                        "es independiente de grabar y de la cámara virtual (se puede usar a la vez). "
                        "Sin contraseña: cualquiera en esa red puede verlo (y oírlo) mientras esté "
                        "activa. La primera vez, Windows puede pedir permiso en el cortafuegos: dalo "
-                       "para «redes privadas»."
+                       "para «redes privadas». «Abrir en VLC» (si está instalado) lo abre ahí en vez "
+                       "del navegador; desde el propio menú de VLC Reproducción -> Renderizador se "
+                       "puede enviar a un Chromecast de la misma red -- VLC hace la conversión él "
+                       "solo, sin nada más que instalar aquí. VLC no sabe enviar a AirPlay (solo "
+                       "existe como función del propio macOS)."
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
@@ -6519,6 +6553,35 @@ class CamApp:
         except Exception:
             pass
 
+    def _open_in_vlc(self, *_a):
+        """Abre el vídeo de «En la red» directamente en VLC (si está instalado), en vez del
+        navegador. Desde ahí, el propio menú de VLC Reproducción -> Renderizador ya permite
+        enviarlo a un Chromecast de la misma red (VLC transcodifica él mismo; cam-ui no tiene
+        que hacer nada más). VLC no tiene AirPlay integrado -- solo existe como función del
+        propio macOS, así que no sirve para el Windows al que apunta cam-ui."""
+        if not self.ipout_on:
+            self._set_status("Antes activa «En la red».")
+            return
+        url = "http://127.0.0.1:{0}/stream.mjpg".format(self.ipsrv.port)
+        vlc = _find_vlc()
+        if not vlc:
+            if messagebox.askyesno(
+                    "Abrir en VLC",
+                    "No se encontró VLC instalado en este equipo.\n\n"
+                    "VLC puede reproducir este vídeo y, desde su propio menú Reproducción -> "
+                    "Renderizador, enviarlo a un Chromecast de la misma red sin que cam-ui tenga "
+                    "que hacer nada más.\n\n¿Abrir la página de descarga de VLC "
+                    "(videolan.org)?"):
+                webbrowser.open("https://www.videolan.org/vlc/")
+            return
+        try:
+            subprocess.Popen([vlc, url], creationflags=CREATE_NO_WINDOW)
+            self._set_status("Abriendo en VLC… (allí: Reproducción -> Renderizador, para "
+                             "enviarlo a un Chromecast)")
+        except Exception as e:
+            messagebox.showerror("Abrir en VLC", "No se pudo abrir VLC.\n\n{0}".format(
+                str(e).strip()[-300:]))
+
     def _ip_enable(self, quiet=False):
         """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa."""
         w, h = ip_size_value(self.v_ipsize.get())
@@ -6766,6 +6829,8 @@ class CamApp:
         if getattr(self, "btn_ip2", None) is not None:
             self.btn_ip2.config(text="🌐  Apagar en la red" if ion else "🌐  Activar en la red",
                                 style="Accent.TButton" if ion else "TButton", state=ist)
+        if getattr(self, "btn_vlc", None) is not None:
+            self.btn_vlc.config(state="disabled" if (b or not ion) else "normal")
         self._ip_var.set(ion)
         if getattr(self, "lbl_ip_bar", None) is not None:
             self.lbl_ip_bar.config(text=("🌐 " + self._ip_dual_url()) if ion else "")
