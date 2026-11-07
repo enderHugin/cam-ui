@@ -193,6 +193,87 @@ kept = [f for f in os.listdir(camui.UPDATE_BACKUPS) if f.startswith("camui.pack"
 assert len(kept) == 5, kept
 print("11) solo se conservan las 5 copias de seguridad mas recientes: OK")
 
+# 12) update_set_auto_apply(True): si el aviso normal («avisarme al abrir») estaba apagado
+#     (se habia marcado antes "no preguntar mas"), se reactiva solo -- si no, "actualizar
+#     sola" nunca llegaria a mirar si hay algo que aplicar.
+camui._UPDATE_ST = {"auto": False}
+camui.update_set_auto_apply(True)
+st = camui.update_state()
+assert st["auto_apply"] is True and st["auto"] is True, st
+print("12) update_set_auto_apply(True) reactiva el aviso normal si estaba apagado: OK")
+
+# 13) update_set_auto_apply(False) solo apaga eso: no toca el aviso normal (que puede seguir
+#     activado tal cual estaba)
+camui._UPDATE_ST = {"auto": True, "auto_apply": True}
+camui.update_set_auto_apply(False)
+st = camui.update_state()
+assert st["auto_apply"] is False and st["auto"] is True, st
+print("13) update_set_auto_apply(False) no afecta al aviso normal: OK")
+
+
+# 14) CamApp._update_probe_done: con "auto_apply" activado, al encontrar una version nueva se
+#     instala sola -- el mismo camino que si se hubiera preguntado y dicho que si -- SIN
+#     mostrar el aviso de "¿actualizar ahora?". Se llama al metodo real (sin Tk: ni self.root
+#     ni self.show_updates necesitan ser de la GUI de verdad para comprobar que elige el
+#     camino correcto).
+class _FakeDialog:
+    def __init__(self):
+        self.applied_with = None
+
+    def apply_result(self, r):
+        self.applied_with = r
+
+
+class _FakeApp:
+    def __init__(self):
+        self.recording = False
+        self.root = None
+        self._dlg = _FakeDialog()
+        self.show_updates_calls = []
+
+    def show_updates(self, check=True):
+        self.show_updates_calls.append(check)
+        return self._dlg
+
+
+def _boom(*a, **kw):
+    raise AssertionError("no debia preguntar: auto_apply estaba activado")
+
+
+r_newer = {"ok": True, "state": "newer", "info": {"pack": 99}}
+camui._UPDATE_ST = {"auto_apply": True}
+old_ask = camui._ask_update_now
+camui._ask_update_now = _boom
+try:
+    fake = _FakeApp()
+    camui.CamApp._update_probe_done(fake, r_newer)
+    assert fake.show_updates_calls == [False], fake.show_updates_calls
+    assert fake._dlg.applied_with is r_newer, "no se aplico sola la version nueva"
+finally:
+    camui._ask_update_now = old_ask
+print("14) _update_probe_done con auto_apply activado: se aplica sola sin preguntar: OK")
+
+# 15) con "auto_apply" desactivado (lo normal), sigue preguntando como siempre; si el usuario
+#     cancela, no se aplica nada (no se regresiona el comportamiento de antes de este cambio)
+camui._UPDATE_ST = {"auto_apply": False}
+asked = {"v": False}
+
+
+def _fake_ask(parent, pack):
+    asked["v"] = True
+    return False, False          # cancela, sin marcar "no preguntar mas"
+
+
+camui._ask_update_now = _fake_ask
+try:
+    fake2 = _FakeApp()
+    camui.CamApp._update_probe_done(fake2, r_newer)
+    assert asked["v"], "debia preguntar si auto_apply no esta activado"
+    assert fake2.show_updates_calls == [], "no debia aplicar nada si el usuario cancelo"
+finally:
+    camui._ask_update_now = old_ask
+print("15) _update_probe_done sin auto_apply: sigue preguntando como antes: OK")
+
 srv.shutdown()
 other.shutdown()
 shutil.rmtree(WORK, ignore_errors=True)

@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 6                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 7                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2944,6 +2944,18 @@ def update_state_save():
         log.warning("actualizar: no se pudo guardar el estado: %s", e)
 
 
+def update_set_auto_apply(on):
+    """«Actualizar automáticamente al abrir el programa, sin preguntar» (casilla de
+    UpdateDialog). Si se activa y el aviso normal («avisarme al abrir») estaba apagado (se
+    marcó antes «no preguntar más»), se reactiva también: si no, nunca llegaría a mirar si
+    hay nada que aplicar solo. Apagarla, en cambio, no toca el aviso normal."""
+    st = update_state()
+    st["auto_apply"] = bool(on)
+    if on and st.get("auto", True) is False:
+        st["auto"] = True
+    update_state_save()
+
+
 def _sha256_file(p):
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -3184,6 +3196,14 @@ class UpdateDialog:
         self.var_auto = tk.BooleanVar(value=update_state().get("auto", True) is not False)
         ttk.Checkbutton(frm, text="Avisarme al abrir el programa si hay una versión nueva",
                         variable=self.var_auto, command=self._auto_toggled).pack(anchor="w")
+        self.var_autoapply = tk.BooleanVar(value=bool(update_state().get("auto_apply")))
+        ttk.Checkbutton(frm, text="Actualizar automáticamente al abrir el programa, sin preguntar",
+                        variable=self.var_autoapply, command=self._autoapply_toggled).pack(anchor="w")
+        ttk.Label(frm, style="Muted.TLabel", wraplength=590, justify="left",
+                 text="Con esto marcado, si al abrir el programa hay una versión nueva se instala "
+                      "sola (con su copia de seguridad de siempre) y el programa se reinicia solo, "
+                      "sin ningún aviso que haya que confirmar."
+                 ).pack(anchor="w", pady=(2, 0))
         bar = ttk.Frame(frm)
         bar.pack(fill="x", pady=(10, 0))
         self.b_check = ttk.Button(bar, text="Buscar de nuevo", command=self.start_check)
@@ -3222,6 +3242,10 @@ class UpdateDialog:
     def _auto_toggled(self):
         update_state()["auto"] = bool(self.var_auto.get())
         update_state_save()
+
+    def _autoapply_toggled(self):
+        update_set_auto_apply(self.var_autoapply.get())
+        self.var_auto.set(update_state().get("auto", True) is not False)
 
     def _on_checked(self, r):
         self.busy = False
@@ -3907,6 +3931,12 @@ class CamApp:
 
     def _update_probe_done(self, r):
         if not r.get("ok") or r.get("state") != "newer" or self.recording:
+            return
+        if update_state().get("auto_apply"):
+            # el mismo camino probado que si se hubiera preguntado y dicho que sí, sin
+            # preguntar: se ve la ventana de «Actualizaciones» con el progreso y al acabar
+            # se reinicia solo (ver UpdateDialog.apply_result / _on_applied).
+            self.show_updates(check=False).apply_result(r)
             return
         go, dont_ask = _ask_update_now(self.root, r["info"].get("pack"))
         if dont_ask:

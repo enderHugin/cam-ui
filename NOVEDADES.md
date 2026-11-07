@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 7 — 2026.11.07
+- **Actualizaciones: nueva casilla «Actualizar automáticamente al abrir el programa, sin
+  preguntar»**, en la ventana de «🔄 Actualizaciones», junto a la de «Avisarme al abrir el
+  programa si hay una versión nueva». Con ella marcada, al abrir cam-ui y encontrar una
+  versión nueva ya no aparece el aviso para confirmar: se instala sola (con su copia de
+  seguridad de siempre, por si hay que volver atrás) y el programa se reinicia solo pasados
+  unos segundos — se ve la misma ventana de progreso de siempre, solo que sin tener que
+  pulsar nada. Si estaba marcado «no preguntar más» (avisos apagados), marcar esta casilla
+  los reactiva también, porque si no nunca llegaría a mirar si hay algo que instalar.
+
 ## pack 6 — 2026.11.07
 - **Arreglado un fallo real en «Añadir cámara de red...» con la sincronía por defecto.** Con el
   modo de sincronía normal («por reloj común», el que se usa salvo que se cambie a mano), una
