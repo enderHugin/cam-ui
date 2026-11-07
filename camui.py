@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 8                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 9                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -3246,10 +3246,24 @@ class UpdateDialog:
         top.title("Actualizaciones")
         top.configure(bg=BG)
         top.transient(app.root)
-        top.geometry("620x460")
+        top.geometry("640x520")
+        top.minsize(560, 360)
         top.protocol("WM_DELETE_WINDOW", self.close)
         frm = ttk.Frame(top)
         frm.pack(fill="both", expand=True, padx=12, pady=10)
+        # los botones se empaquetan los PRIMEROS, pegados abajo (side="bottom"): así tienen
+        # siempre su espacio reservado y nunca desaparecen aunque el resto del contenido (p. ej.
+        # las novedades, que crecen en cada versión) no quepa entero -- lo que no cabe se queda
+        # dentro de su propio scroll (ver self.notes más abajo), no empuja los botones fuera.
+        bar = ttk.Frame(frm)
+        bar.pack(side="bottom", fill="x", pady=(10, 0))
+        self.b_check = ttk.Button(bar, text="Buscar de nuevo", command=self.start_check)
+        self.b_check.pack(side="left")
+        self.b_back = ttk.Button(bar, text="Volver a la versión anterior", command=self._rollback)
+        self.b_back.pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        self.b_go = ttk.Button(bar, text="Actualizar y reiniciar", command=self._apply)
+        self.b_go.pack(side="right", padx=(0, 6))
         ttk.Label(frm, text="Actualizaciones", font=("Segoe UI", 13, "bold")).pack(anchor="w")
         self.lbl_local = ttk.Label(frm, text="")
         self.lbl_local.pack(anchor="w", pady=(6, 0))
@@ -3258,9 +3272,14 @@ class UpdateDialog:
         self.lbl_status = ttk.Label(frm, style="Muted.TLabel", wraplength=590, justify="left")
         self.lbl_status.pack(anchor="w", fill="x", pady=(8, 6))
         ttk.Label(frm, text="Novedades").pack(anchor="w")
-        self.notes = tk.Text(frm, wrap="word", height=12, bg=PANEL, fg=FG, insertbackground=FG,
-                             relief="flat", padx=8, pady=6)
-        self.notes.pack(fill="both", expand=True, pady=(2, 8))
+        notes_box = ttk.Frame(frm)
+        notes_box.pack(fill="both", expand=True, pady=(2, 8))
+        self.notes = tk.Text(notes_box, wrap="word", height=8, bg=PANEL, fg=FG,
+                             insertbackground=FG, relief="flat", padx=8, pady=6)
+        notes_sb = ttk.Scrollbar(notes_box, orient="vertical", command=self.notes.yview)
+        self.notes.configure(yscrollcommand=notes_sb.set)
+        notes_sb.pack(side="right", fill="y")
+        self.notes.pack(side="left", fill="both", expand=True)
         self.notes.config(state="disabled")
         self.var_auto = tk.BooleanVar(value=update_state().get("auto", True) is not False)
         ttk.Checkbutton(frm, text="Avisarme al abrir el programa si hay una versión nueva",
@@ -3273,15 +3292,6 @@ class UpdateDialog:
                       "sola (con su copia de seguridad de siempre) y el programa se reinicia solo, "
                       "sin ningún aviso que haya que confirmar."
                  ).pack(anchor="w", pady=(2, 0))
-        bar = ttk.Frame(frm)
-        bar.pack(fill="x", pady=(10, 0))
-        self.b_check = ttk.Button(bar, text="Buscar de nuevo", command=self.start_check)
-        self.b_check.pack(side="left")
-        self.b_back = ttk.Button(bar, text="Volver a la versión anterior", command=self._rollback)
-        self.b_back.pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
-        self.b_go = ttk.Button(bar, text="Actualizar y reiniciar", command=self._apply)
-        self.b_go.pack(side="right", padx=(0, 6))
         self._fill_local()
         self._buttons()
 
@@ -4365,7 +4375,8 @@ class CamApp:
 
     def _tab_wheel(self, e):
         w = self.root.winfo_containing(e.x_root, e.y_root)
-        if w is None or w.winfo_class() in ("TCombobox", "TScale", "TSpinbox", "Text"):
+        if w is None or w.winfo_class() in ("TCombobox", "TScale", "TSpinbox", "Text",
+                                            "Treeview", "TScrollbar"):
             return
         for cv in getattr(self, "_tab_canvases", []):
             if str(w).startswith(str(cv)) and cv.winfo_ismapped():
@@ -4380,13 +4391,18 @@ class CamApp:
         pad = {"padx": 8, "pady": 4}
         box = ttk.Labelframe(tab, text="1 · Marca las cámaras que quieres usar")
         box.pack(fill="x", **pad)
-        self.tree = ttk.Treeview(box, columns=("use", "name"), show="headings", height=3,
+        tree_box = ttk.Frame(box)
+        tree_box.pack(fill="x", padx=6, pady=(6, 2))
+        self.tree = ttk.Treeview(tree_box, columns=("use", "name"), show="headings", height=5,
                                  selectmode="browse")
         self.tree.heading("use", text="")
         self.tree.heading("name", text="Cámara", anchor="w")
         self.tree.column("use", width=34, anchor="center", stretch=False)
         self.tree.column("name", width=300, anchor="w")
-        self.tree.pack(fill="x", padx=6, pady=(6, 2))
+        tree_sb = ttk.Scrollbar(tree_box, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_sb.set)
+        tree_sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<Button-1>", self._tree_click)
         self.tree.bind("<<TreeviewSelect>>", self._tree_select)
         self.tree.bind("<Double-Button-1>", self._tree_double_click)
@@ -5700,14 +5716,14 @@ class CamApp:
         top.title(title)
         top.configure(bg=BG)
         top.geometry("760x460")
+        top.minsize(420, 260)
         top.transient(self.root)
-        box = tk.Text(top, wrap="word", bg=PANEL, fg=FG, insertbackground=FG, relief="flat",
-                      font=("Consolas", 10), padx=12, pady=10)
-        box.insert("1.0", txt)
-        box.config(state="disabled")
-        box.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        # los botones se empaquetan los PRIMEROS, pegados abajo (side="bottom"): así tienen su
+        # espacio siempre reservado y no se quedan reducidos a una rendija cuando el informe es
+        # largo (con un informe de muchas líneas, antes "Copiar informe" quedaba con solo 8px de
+        # alto -- apenas un hilo, prácticamente invisible e imposible de pulsar).
         bar = ttk.Frame(top)
-        bar.pack(fill="x", padx=8, pady=(0, 8))
+        bar.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
 
         def copy():
             self.root.clipboard_clear()
@@ -5715,6 +5731,16 @@ class CamApp:
             self._set_status("Informe copiado al portapapeles.")
         ttk.Button(bar, text="Copiar informe", command=copy).pack(side="left")
         ttk.Button(bar, text="Cerrar", command=top.destroy).pack(side="right")
+        box_frame = ttk.Frame(top)
+        box_frame.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        box = tk.Text(box_frame, wrap="word", bg=PANEL, fg=FG, insertbackground=FG, relief="flat",
+                      font=("Consolas", 10), padx=12, pady=10)
+        box_sb = ttk.Scrollbar(box_frame, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=box_sb.set)
+        box_sb.pack(side="right", fill="y")
+        box.pack(side="left", fill="both", expand=True)
+        box.insert("1.0", txt)
+        box.config(state="disabled")
 
     # ------------------------------------------------------------ driver de la cámara
     def _driver_dialog(self):

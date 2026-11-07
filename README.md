@@ -51,8 +51,8 @@ Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardw
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
 `tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH). `tests/ui_netcam_edit.py`
-prueba el diálogo de doble-clic con una ventana Tk real: en Linux hace falta un display
-(`xvfb-run -a python3 tests/ui_netcam_edit.py`), en Windows basta con tener Tk.
+y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
+display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 Si algo falla, adjuntar `camui.log` (se crea junto al script).
 
 ## Opinar, avisar de fallos, pedir funciones

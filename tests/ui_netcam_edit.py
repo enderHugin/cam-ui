@@ -26,6 +26,13 @@ camui.LOGFILE = os.path.join(HOME, "camui.log")
 root = tk.Tk()
 root.withdraw()
 app = camui.CamApp(root)
+# sin cámaras de verdad en este entorno, la vista previa "siempre activa" de cam-ui no consigue
+# arrancar nunca y _tick() reintenta sola una y otra vez (_on_died -> _start_preview), lo que
+# deja app.busy=True en momentos impredecibles -- esto no es lo que se está probando aquí (ver
+# tests/unit_netcam.py para eso), así que se desactiva para que la prueba del diálogo no dependa
+# de ganarle la carrera a ese reintento de fondo.
+app.previewing = False
+app._start_preview = lambda *a, **kw: None
 root.update()
 
 t0 = time.time()
@@ -42,6 +49,14 @@ while LAB not in app.vdev and time.time() - t0 < 5:
     root.update()
     time.sleep(0.05)
 assert LAB in app.vdev, "no se añadió la cámara de red de prueba"
+# _refresh_devices() deja app.busy=True mientras escanea en segundo plano; _net_cam_dialog no
+# abre nada mientras tanto (mismo motivo que más abajo, tras guardar). Sin esperar aquí, el
+# primer doble clic podía fallar o no según cuánto hubiera tardado ya el bucle de arriba --
+# mejor no depender de esa suerte.
+t0 = time.time()
+while app.busy and time.time() - t0 < 5:
+    root.update()
+    time.sleep(0.05)
 app.cams[LAB].use = True
 if LAB not in app.order:
     app.order.append(LAB)

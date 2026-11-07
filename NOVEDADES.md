@@ -1,5 +1,18 @@
 # Novedades de cam-ui
 
+## pack 9 — 2026.11.07
+- **Arreglados botones que no se veían en la ventana de «🔄 Actualizaciones».** Con las
+  novedades ya largas (como estas que estás leyendo), los botones de abajo («Buscar de nuevo»,
+  «Volver a la versión anterior», «Actualizar y reiniciar», «Cerrar») quedaban completamente
+  recortados fuera de la ventana, sin verse ni poder pulsarse. Ahora siempre tienen su hueco
+  reservado, y el cuadro de «Novedades» tiene su propia barra de desplazamiento para poder
+  leerlas todas. Mismo arreglo en la ventana de informe/diagnóstico (con un informe largo,
+  «Copiar informe» y «Cerrar» quedaban reducidos a una rendija de 8 píxeles).
+- **La lista de cámaras ya tiene su propia barra de desplazamiento.** Antes, al hacer scroll
+  sobre la lista (con varias cámaras, sobre todo añadiendo cámaras de red), se desplazaba toda
+  la pestaña en vez de solo la lista, y no había forma de ver qué cámaras quedaban fuera salvo
+  agrandando la ventana.
+
 ## pack 8 — 2026.11.07
 - **Una cámara que falla ya no tira todo el mosaico abajo.** Hasta ahora, si una cámara de red se
   desconectaba (o cualquier cámara tardaba demasiado en responder, o dejaba de dar señal a media
