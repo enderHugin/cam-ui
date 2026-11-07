@@ -52,8 +52,8 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH); `tests/unit_vlc.py` no
-necesita ffmpeg. `tests/ui_netcam_edit.py`
+`tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH); `tests/unit_vlc.py` y
+`tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 Si algo falla, adjuntar `camui.log` (se crea junto al script).

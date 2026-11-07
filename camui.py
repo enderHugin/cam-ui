@@ -77,7 +77,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 10                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 11                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1353,6 +1353,10 @@ button:active{background:#3a3f48}
 button:disabled{opacity:.6}
 #mute{display:none;padding:9px 12px}
 #vol{display:none;width:90px;vertical-align:middle;accent-color:#6aa0ff}
+#casthelp{display:none;position:absolute;left:50%;bottom:64px;transform:translateX(-50%);
+  max-width:320px;background:#20242b;border:1px solid #4a4f58;border-radius:8px;
+  padding:10px 14px;font-size:13px;line-height:1.45;color:#ddd;text-align:left;z-index:2}
+#casthelp.show{display:block}
 </style></head>
 <body>
 <div id="stage">
@@ -1362,7 +1366,13 @@ button:disabled{opacity:.6}
     <button id="mute">&#128266;</button>
     <input id="vol" type="range" min="0" max="1" step="0.05" value="1">
     <button id="full">&#10021; Pantalla completa</button>
+    <button id="cast">&#128250; Chromecast</button>
   </div>
+  <div id="casthelp">Usa el icono <b>&laquo;Convertir en Chromecast&raquo;</b> de tu propio
+    navegador &mdash; cam-ui no necesita nada más, le pasa esta misma pantalla. En Chrome o
+    Edge: men&uacute; &#8942; &rarr; Guardar y compartir &rarr; Convertir en
+    Chromecast&hellip; (puedes fijar el icono en la barra para la próxima vez). Firefox y
+    Safari no lo traen integrado.</div>
 </div>
 <audio id="a" src="/audio.mp3" preload="none"></audio>
 <script>
@@ -1404,6 +1414,14 @@ document.addEventListener("fullscreenchange", function () {
 });
 document.addEventListener("webkitfullscreenchange", function () {
   full.textContent = inFs() ? "\\u2715 Salir de pantalla completa" : "\\u2721 Pantalla completa";
+});
+var cast = document.getElementById("cast"), casthelp = document.getElementById("casthelp");
+cast.onclick = function (e) {
+  e.stopPropagation();
+  casthelp.classList.toggle("show");
+};
+document.addEventListener("click", function (e) {
+  if (e.target !== cast && !casthelp.contains(e.target)) { casthelp.classList.remove("show"); }
 });
 </script>
 </body></html>

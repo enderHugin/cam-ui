@@ -1,5 +1,12 @@
 # Novedades de cam-ui
 
+## pack 11 — 2026.11.07
+- **Nuevo botón «📺 Chromecast» en la propia página de «En la red».** Quien vea el mosaico desde
+  el navegador de otro equipo o móvil ya no tiene que saberlo de antes: el botón explica cómo
+  usar el «Convertir en Chromecast» que ya trae el propio navegador (Chrome o Edge) para enviar
+  esa misma pantalla a un Chromecast de la wifi — cam-ui no tiene que hacer nada más, el
+  navegador se encarga. Avisa de que Firefox y Safari no lo traen integrado.
+
 ## pack 10 — 2026.11.07
 - **Nuevo botón «▶️ Abrir en VLC» en «En la red».** VLC ya sabe leer este vídeo tal cual (se ha
   comprobado con un flujo real de cam-ui: decodifica cada fotograma igual que un navegador) y,
