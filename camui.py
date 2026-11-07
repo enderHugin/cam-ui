@@ -38,6 +38,7 @@ CÁMARA VIRTUAL (opcional)
 Uso:  python camui.py  |  pythonw camui.py  |  python camui.py list  |  python camui.py multi -h
 """
 import os
+import io
 import re
 import sys
 import json
@@ -47,6 +48,7 @@ import argparse
 import queue
 import socket
 import hashlib
+import http.server
 import shutil
 import webbrowser
 import threading
@@ -74,8 +76,8 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
-APP_VERSION = "2026.11.06"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 1                          # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
+APP_PACK = 2                          # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -886,8 +888,12 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
     vc = plan.get("vcam")
     if vc and not vc.get("port"):
         vc = None                                  # sin socket de destino no hay cámara virtual
-    outs = [k for k, on in (("rec", bool(outfile)), ("pv", bool(preview)), ("vc", bool(vc))) if on]
-    names = {"rec": "mrec0", "pv": "mp0", "vc": "mvc0"}
+    ip = plan.get("ipout")
+    if ip and not ip.get("port"):
+        ip = None                                  # sin socket de destino no hay salida en red
+    outs = [k for k, on in (("rec", bool(outfile)), ("pv", bool(preview)), ("vc", bool(vc)),
+                            ("ip", bool(ip))) if on]
+    names = {"rec": "mrec0", "pv": "mp0", "vc": "mvc0", "ip": "mip0"}
     if len(outs) > 1:
         fc.append("[mix]split={0}{1}".format(len(outs), "".join("[{0}]".format(names[k]) for k in outs)))
         src = dict((k, "[{0}]".format(names[k])) for k in outs)
@@ -904,6 +910,12 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
                   "pad={2}:{3}:(ow-iw)/2:(oh-ih)/2:color=black,format={4}[vc]".format(
                       src["vc"], max(1, min(fps, int(vc.get("fps", 30)))), vw, vh,
                       vc.get("pix", "rgb24")))
+    if ip:
+        iw, ih = int(ip["w"]), int(ip["h"])
+        fc.append("{0}fps={1},scale={2}:{3}:force_original_aspect_ratio=decrease:flags=bilinear,"
+                  "pad={2}:{3}:(ow-iw)/2:(oh-ih)/2:color=black,format={4}[ip]".format(
+                      src["ip"], max(1, min(fps, int(ip.get("fps", IP_FPS)))), iw, ih,
+                      ip.get("pix", "rgb24")))
 
     cmd += ["-filter_complex", ";".join(fc)]
     if outfile:
@@ -926,6 +938,11 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         # la cámara virtual recibe RGB por un socket local (el único «pipe» libre es el de la vista previa)
         cmd += ["-map", "[vc]", "-f", "rawvideo", "-pix_fmt", vc.get("pix", "rgb24"),
                 "tcp://127.0.0.1:{0}".format(int(vc["port"]))]
+    if ip:
+        # la salida en red recibe RGB por un socket local; nuestro propio servidor HTTP lo
+        # convierte en MJPEG (así un visor que se cuelga o se desconecta no afecta a ffmpeg)
+        cmd += ["-map", "[ip]", "-f", "rawvideo", "-pix_fmt", ip.get("pix", "rgb24"),
+                "tcp://127.0.0.1:{0}".format(int(ip["port"]))]
     if has_audio and use_meter and null_meter:
         cmd += ["-map", "[ameter]", "-f", "null", "-"]
     meta = {"pw": pw, "ph": ph, "W": W, "H": H, "has_audio": has_audio, "tiles": tiles[:n],
@@ -1175,8 +1192,274 @@ class VirtualCam:
 
 
 # =====================================================================
-#  Motor
+#  Salida en red (ver el mosaico desde otro equipo/móvil de la misma wifi): ffmpeg -> socket
+#  local (igual mecanismo que la cámara virtual) -> servidor HTTP MJPEG propio, no ffmpeg, para
+#  que un visor que se cuelga o se desconecta nunca afecte a ffmpeg ni a la grabación.
 # =====================================================================
+IP_SIZES = (("640×360  (recomendado)", (640, 360)), ("960×540", (960, 540)),
+           ("1280×720", (1280, 720)))
+IP_FPS = 10                  # de sobra para verlo: ahorra wifi y CPU (va aparte de los fps de grabación)
+IP_PORT_DEFAULT = 8554
+IP_JPEG_QUALITY = 70
+
+
+def ip_size_label(size):
+    for lab, s in IP_SIZES:
+        if tuple(s) == tuple(size):
+            return lab
+    return IP_SIZES[0][0]
+
+
+def ip_size_value(label):
+    for lab, s in IP_SIZES:
+        if lab == label:
+            return s
+    return IP_SIZES[0][1]
+
+
+def _local_ips():
+    """IPs de este equipo en la(s) red(es) local(es) (las que verían otros dispositivos de la
+    misma wifi). La primera es la mejor suposición; puede haber más de una tarjeta de red."""
+    ips = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))           # no llega a enviar nada: solo elige la ruta/tarjeta
+            ips.append(s.getsockname()[0])
+        finally:
+            s.close()
+    except Exception:
+        pass
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip not in ips and not ip.startswith("127."):
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
+class _MjpegHandler(http.server.BaseHTTPRequestHandler):
+    """Sirve el último fotograma de IpServer a cada cliente como multipart/x-mixed-replace
+    (lo que entiende un navegador sin más: abrir la URL ya enseña el vídeo). Cada petición va en
+    su propio hilo (ThreadingHTTPServer); un visor lento o colgado solo se queda sin fotogramas
+    nuevos, nunca bloquea a los demás."""
+
+    def log_message(self, *_a):
+        pass                                      # no ensuciar el registro con cada petición
+
+    def do_GET(self):
+        owner = self.server.owner
+        boundary = "camui"
+        try:
+            self.send_response(200)
+            self.send_header("Age", "0")
+            self.send_header("Cache-Control", "no-cache, private")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=" + boundary)
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        owner._client_delta(1)
+        last = None
+        try:
+            while not owner._closed:
+                with owner._lk:
+                    frame, gen = owner._jpeg, owner._jgen
+                if frame is None or gen == last:
+                    time.sleep(0.04)
+                    continue
+                last = gen
+                self.wfile.write(b"--" + boundary.encode() + b"\r\n")
+                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                self.wfile.write(("Content-Length: " + str(len(frame)) + "\r\n\r\n").encode())
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+        except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+            pass
+        finally:
+            owner._client_delta(-1)
+
+
+class _MjpegHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class IpServer:
+    """Recibe de ffmpeg fotogramas RGB por un socket local (igual mecanismo que la cámara
+    virtual) y los ofrece como MJPEG por HTTP a cualquier navegador de la misma red. El servidor
+    HTTP es propio, no ffmpeg: un visor que se cuelga o se desconecta no afecta ni a ffmpeg ni a
+    la grabación, solo se queda sin imagen ese visor. El servidor HTTP se mantiene entre
+    reinicios de ffmpeg (p. ej. al empezar/parar una grabación), igual que la cámara virtual."""
+
+    def __init__(self):
+        self.w = self.h = 0
+        self.fps = IP_FPS
+        self.pix, self.bpp = "rgb24", 3
+        self.port = IP_PORT_DEFAULT
+        self.sent = self.dropped = self.received = 0
+        self.errors = 0
+        self.clients = 0
+        self._gen = 0
+        self._srv = None
+        self._http = None
+        self._encoder = None
+        self._latest = None
+        self._lk = threading.Lock()
+        self._ev = threading.Event()
+        self._jpeg = None
+        self._jgen = 0
+        self._closed = False
+
+    @property
+    def active(self):
+        return self._http is not None
+
+    def open(self, w, h, fps=IP_FPS, port=IP_PORT_DEFAULT):
+        """Abre el servidor HTTP (w×h fijo). Lanza OSError (puerto ocupado) u otra excepción con
+        un texto claro si no se puede."""
+        self.release()
+        http_srv = _MjpegHTTPServer(("0.0.0.0", int(port)), _MjpegHandler)
+        http_srv.owner = self
+        self.w, self.h, self.fps, self.port = int(w), int(h), int(fps), int(port)
+        self.sent = self.dropped = self.received = self.errors = self.clients = 0
+        self._closed = False
+        self._latest = None
+        self._jpeg, self._jgen = None, 0
+        self._ev.clear()
+        self._http = http_srv
+        threading.Thread(target=http_srv.serve_forever, daemon=True).start()
+        self._encoder = threading.Thread(target=self._encode_loop, daemon=True)
+        self._encoder.start()
+        log.info("salida en red abierta: puerto %d, %dx%d @%d", self.port, self.w, self.h, self.fps)
+
+    def arm(self):
+        """Prepara un socket de escucha para la próxima conexión de ffmpeg; devuelve su puerto."""
+        self._drop_srv()
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        srv.settimeout(0.4)
+        self._srv = srv
+        self._gen += 1
+        threading.Thread(target=self._serve, args=(srv, self._gen), daemon=True).start()
+        return srv.getsockname()[1]
+
+    def _drop_srv(self):
+        srv, self._srv = self._srv, None
+        self._gen += 1                       # el hilo que esperaba conexión termina solo
+        if srv is not None:
+            try:
+                srv.close()
+            except Exception:
+                pass
+
+    def _serve(self, srv, gen):
+        conn = None
+        t_end = time.time() + 30
+        while gen == self._gen and not self._closed and time.time() < t_end:
+            try:
+                conn, _a = srv.accept()
+                break
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+        try:
+            srv.close()
+        except Exception:
+            pass
+        if conn is None:
+            return
+        conn.settimeout(None)
+        try:
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        log.info("salida en red: ffmpeg conectado")
+        try:
+            self._read(conn)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            log.info("salida en red: ffmpeg desconectado (%d recibidos, %d codificados, %d descartados)",
+                     self.received, self.sent, self.dropped)
+
+    def _read(self, conn):
+        w, h, bpp = self.w, self.h, self.bpp
+        fb = w * h * bpp
+        while not self._closed:
+            buf = bytearray(fb)
+            mv = memoryview(buf)
+            pos = 0
+            while pos < fb:
+                try:
+                    n = conn.recv_into(mv[pos:])
+                except Exception:
+                    return
+                if not n:
+                    return
+                pos += n
+            self.received += 1
+            if self._http is None:
+                continue                       # cerrada: solo se vacía el socket
+            arr = np.frombuffer(buf, np.uint8).reshape((h, w, bpp))
+            with self._lk:
+                if self._latest is not None:
+                    self.dropped += 1          # el anterior no llegó a codificarse
+                self._latest = arr
+            self._ev.set()
+
+    def _encode_loop(self):
+        http_srv = self._http
+        while not self._closed and self._http is http_srv:
+            if not self._ev.wait(0.5):
+                continue
+            self._ev.clear()
+            with self._lk:
+                arr, self._latest = self._latest, None
+            if arr is None or arr.shape[0] != self.h or arr.shape[1] != self.w or arr.shape[2] != self.bpp:
+                continue
+            try:
+                buf = io.BytesIO()
+                Image.fromarray(arr, "RGB").save(buf, format="JPEG", quality=IP_JPEG_QUALITY)
+                data = buf.getvalue()
+                with self._lk:
+                    self._jpeg = data
+                    self._jgen += 1
+                self.sent += 1
+            except Exception:
+                self.errors += 1
+                if self.errors <= 3:
+                    log.warning("salida en red: error al codificar:\n%s", traceback.format_exc())
+
+    def _client_delta(self, d):
+        with self._lk:
+            self.clients = max(0, self.clients + d)
+
+    def release(self):
+        """Para el servidor HTTP (los fotogramas que sigan llegando se descartan sin bloquear
+        ffmpeg)."""
+        http_srv, self._http = self._http, None
+        self._ev.set()
+        if http_srv is not None:
+            try:
+                http_srv.shutdown()
+                http_srv.server_close()
+            except Exception:
+                pass
+            log.info("salida en red cerrada")
+        t = self._encoder
+        if t is not None and t is not threading.current_thread():
+            t.join(1.0)
+
+    def close(self):
+        self._closed = True
+        self._drop_srv()
+        self.release()
 _METER_RE = re.compile(r"lavfi\.astats\.(\d)\.Peak_level=(\S+)")
 _INPUT_RE = re.compile(r"^Input #(\d+),")
 _OUTPUT_RE = re.compile(r"^Output #\d+,")
@@ -1438,6 +1721,7 @@ class FFmpegEngine:
         self._released = 0.0         # instante en que se cerró el último ffmpeg
         self._abort = False          # el botón de pánico cancela los reintentos en curso
         self.vcam = None             # VirtualCam que recibe la salida RGB (o None)
+        self.ipsrv = None            # IpServer que recibe la salida en red (o None)
 
     # -- comandos en vivo (ffmpeg los lee por stdin: "c<filtro> -1 <orden> <valor>") --
     def send_filter_commands(self, cmds):
@@ -1482,6 +1766,10 @@ class FFmpegEngine:
                 plan["vcam"]["port"] = self.vcam.arm()       # un socket nuevo en cada intento
             else:
                 plan.pop("vcam", None)
+            if plan.get("ipout") and self.ipsrv is not None and self.ipsrv.active:
+                plan["ipout"]["port"] = self.ipsrv.arm()     # un socket nuevo en cada intento
+            else:
+                plan.pop("ipout", None)
             cmd, meta = build_command(plan, outfile, warmup, time.time(), True,
                                       input_fn, self.ffmpeg)
             self.cmd, self.meta, self.outfile = cmd, meta, outfile
@@ -1648,6 +1936,8 @@ class FFmpegEngine:
         self._released = time.time()
         if self.vcam is not None:
             self.vcam._drop_srv()
+        if self.ipsrv is not None:
+            self.ipsrv._drop_srv()
         with self.lock:
             self.latest = None
         self.levels = [-90.0, -90.0]
@@ -2795,6 +3085,11 @@ class CamApp:
         self.eng.vcam = self.vcam
         self.vcam_on = False
         self._vcam_asked = False
+        ic = self._cfg.get("ipout") if isinstance(self._cfg.get("ipout"), dict) else {}
+        self._ip_cfg = ic
+        self.ipsrv = IpServer()                              # salida en red (ver desde otro equipo)
+        self.eng.ipsrv = self.ipsrv
+        self.ipout_on = False
         try:
             self.eng.startup_time = min(8.0, max(0.5, float(self._cfg.get("startup", 2.5))))
         except Exception:
@@ -2825,6 +3120,8 @@ class CamApp:
         root.after(12000, self.update_auto_check)
         if self._vcam_cfg.get("on"):
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar
+        if self._ip_cfg.get("on"):
+            self._ip_enable(quiet=True)
 
     # ------------------------------------------------------------ modos: normal / compacto / mini
     def _cur_geo(self):
@@ -2982,8 +3279,8 @@ class CamApp:
         self.save_config()                       # el modo se recuerda aunque se cierre a la fuerza
 
     def _idle_mini(self):
-        """Mini sin cámara virtual: no hay vista previa y las cámaras quedan libres."""
-        return self.mode == "mini" and not self.vcam_on
+        """Mini sin cámara virtual ni salida en red: no hay vista previa y las cámaras quedan libres."""
+        return self.mode == "mini" and not self.vcam_on and not self.ipout_on
 
     def _sync_preview(self):
         """Mini: sin vista previa (las cámaras quedan libres hasta que se graba).
@@ -3095,6 +3392,10 @@ class CamApp:
             txt = "📹 Cámara virtual ON"
         elif txt.startswith("Cámara virtual desactivada"):
             txt = "📹 Cámara virtual OFF"
+        elif txt.startswith("En la red:"):
+            txt = "🌐 En la red ON"
+        elif txt.startswith("Salida en red desactivada"):
+            txt = "🌐 En la red OFF"
         txt = txt.strip()
         if len(txt) > 20:
             txt = txt[:19] + "…"
@@ -3123,6 +3424,7 @@ class CamApp:
             pystray.MenuItem(lambda item: "■  Parar grabación" if app.recording else "●  Grabar",
                              post("rec")),
             pystray.MenuItem("Cámara virtual", post("vcam"), checked=lambda item: app.vcam_on),
+            pystray.MenuItem("En la red", post("ip"), checked=lambda item: app.ipout_on),
             pystray.MenuItem("Reiniciar cámaras (pánico)", post("panic")),
             pystray.MenuItem("Buscar actualizaciones...", post("update")),
             pystray.MenuItem("Salir", post("quit")))
@@ -3198,6 +3500,10 @@ class CamApp:
                     self.toggle_vcam()
                 elif cmd == "vcam_off":
                     self._vcam_disable(arg)
+                elif cmd == "ip":
+                    self.toggle_ipout()
+                elif cmd == "ip_off":
+                    self._ip_disable(arg)
                 elif cmd == "vcam_installed":
                     ok, msg = arg
                     if ok:
@@ -3332,6 +3638,15 @@ class CamApp:
             vsz = VCAM_SIZES[0][1]
         self.v_vsize = t(value=vcam_size_label(vsz))
         self.v_vsize.trace_add("write", self._on_vsize)
+        isz = (self._cfg.get("ipout") or {}).get("size") if isinstance(self._cfg.get("ipout"), dict) else None
+        try:
+            iszv = (int(isz[0]), int(isz[1]))
+        except Exception:
+            iszv = IP_SIZES[0][1]
+        self.v_ipsize = t(value=ip_size_label(iszv))
+        self.v_ipsize.trace_add("write", self._on_ipsize)
+        iport = (self._cfg.get("ipout") or {}).get("port") if isinstance(self._cfg.get("ipout"), dict) else None
+        self.v_ipport = t(value=str(iport or IP_PORT_DEFAULT))
         self.v_avoff = tk.IntVar(value=int(c.get("av_offset", 0)))
         self.v_abuf = tk.IntVar(value=int(c.get("abuf", 50)))
         a = c.get("audio", {})
@@ -3461,6 +3776,7 @@ class CamApp:
         self.btn_photo = ttk.Button(inner, text="Foto  (F8)", command=self.take_photo,
                                     state="disabled")
         self.btn_vcam = ttk.Button(inner, text="📹  Cámara virtual", command=self.toggle_vcam)
+        self.btn_ip = ttk.Button(inner, text="🌐  En la red", command=self.toggle_ipout)
         self.lbl_timer = ttk.Label(inner, text="", style="Bar.TLabel",
                                    font=("Consolas", 12, "bold"))
         self.lbl_ms = ttk.Label(inner, text="", style="Bar.TLabel", foreground=MUTED,
@@ -3471,6 +3787,7 @@ class CamApp:
                           (self.btn_rec, {N, C, M}, {"padx": 8}),
                           (self.btn_photo, {N, C}, {}),
                           (self.btn_vcam, {C, M}, {"padx": 3}),   # en normal, la barra ya va justa
+                          (self.btn_ip, {C, M}, {"padx": 3}),
                           (self.lbl_timer, {N, C, M}, {"padx": 10}),
                           (self.lbl_ms, {M}, {})]
         # a la derecha: (widget, modos); se empaquetan en este orden (el primero queda más a la derecha)
@@ -3503,6 +3820,9 @@ class CamApp:
         self._vcam_var = tk.BooleanVar(value=False)
         self.mode_menu.add_checkbutton(label="Cámara virtual (OBS)", variable=self._vcam_var,
                                        command=self.toggle_vcam)
+        self._ip_var = tk.BooleanVar(value=False)
+        self.mode_menu.add_checkbutton(label="En la red (ver desde otro equipo)", variable=self._ip_var,
+                                       command=self.toggle_ipout)
         self.mode_menu.add_command(label="Reiniciar cámaras (pánico)  F12", command=self.panic_reset)
         self.mode_menu.add_command(label="Icono de la bandeja…", command=lambda: self._tray_boot(True))
         self.mode_menu.add_command(label="Salir", command=self.on_close)
@@ -3885,6 +4205,31 @@ class CamApp:
                        "el paquete pyvirtualcam. Solo vídeo, sin audio; el mosaico se centra con "
                        "barras negras en 16:9. Solo un programa puede usar esa cámara a la vez."
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        nf = ttk.Labelframe(tab, text="En la red (verlo desde otro equipo o móvil)")
+        nf.pack(fill="x", **pad)
+        self.btn_ip2 = ttk.Button(nf, text="🌐  Activar en la red", command=self.toggle_ipout)
+        self.btn_ip2.grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
+        self._live.add(str(self.btn_ip2))                # se puede apagar mientras se graba
+        ttk.Label(nf, text="Tamaño").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Combobox(nf, textvariable=self.v_ipsize, values=[z[0] for z in IP_SIZES], width=24,
+                     state="readonly").grid(row=0, column=1, sticky="w")
+        ttk.Label(nf, text="Puerto").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        e_ipport = ttk.Entry(nf, textvariable=self.v_ipport, width=8)
+        e_ipport.grid(row=1, column=1, sticky="w")
+        e_ipport.bind("<Return>", self._on_ipport_commit)
+        e_ipport.bind("<FocusOut>", self._on_ipport_commit)
+        self.lbl_ipurl = ttk.Label(nf, text="No está activa.", style="Muted.TLabel",
+                                   wraplength=380, justify="left")
+        self.lbl_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
+        ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
+                       "(wifi) para ver el mosaico en directo; también en la bandeja, el menú «Modo» "
+                       "y, en compacto y mini, el botón 🌐. Solo para ver: nadie puede controlar "
+                       "cam-ui desde ahí, y es independiente de grabar y de la cámara virtual (se "
+                       "puede usar a la vez). Sin contraseña: cualquiera en esa red puede verlo "
+                       "mientras esté activa. La primera vez, Windows puede pedir permiso en el "
+                       "cortafuegos: dalo para «redes privadas»."
+                  ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
         ttk.Label(df, text="Carpeta").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -5030,6 +5375,9 @@ class CamApp:
         if self.vcam_on and self.vcam.active:
             plan["vcam"] = {"w": self.vcam.w, "h": self.vcam.h, "fps": min(30, self._fps()),
                             "pix": self.vcam.pix}
+        if self.ipout_on and self.ipsrv.active:
+            plan["ipout"] = {"w": self.ipsrv.w, "h": self.ipsrv.h, "fps": self.ipsrv.fps,
+                             "pix": self.ipsrv.pix}
         return plan
 
     def _edit_plan(self):
@@ -5063,6 +5411,8 @@ class CamApp:
                      "geo": dict(self._geo), "tray_asked": bool(self._tray_asked)}
         cfg["startup"] = round(float(self.eng.startup_time), 2)     # para grabar sin vista previa
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
+        cfg["ipout"] = {"on": bool(self.ipout_on), "size": list(ip_size_value(self.v_ipsize.get())),
+                        "port": self._ip_port()}
         cfg["net_cams"] = self.net_cams
         try:
             with open(CONFIG, "w", encoding="utf-8") as f:
@@ -5125,6 +5475,13 @@ class CamApp:
             log.warning("la salida de la cámara virtual no conecta; se arranca sin ella:\n%s", err[-300:])
             plan.pop("vcam", None)
             self._tray_q.append(("vcam_off", "ffmpeg no pudo conectar con la cámara virtual (¿cortafuegos?)."))
+            res = self.eng.start(plan, **kw)
+        ok, err = res if isinstance(res, tuple) else (False, str(res))
+        if not ok and plan.get("ipout") and not self.eng._abort and \
+                re.search(r"127\.0\.0\.1|tcp://|connection (?:refused|reset|timed out)", err, re.I):
+            log.warning("la salida en red no conecta; se arranca sin ella:\n%s", err[-300:])
+            plan.pop("ipout", None)
+            self._tray_q.append(("ip_off", "ffmpeg no pudo conectar con la salida en red (¿cortafuegos?)."))
             res = self.eng.start(plan, **kw)
         for _ in range(5):
             ok, err = res if isinstance(res, tuple) else (False, str(res))
@@ -5539,6 +5896,110 @@ class CamApp:
         self.vcam.release()
         self._vcam_enable()
 
+    # ------------------------------------------------------------ salida en red
+    def toggle_ipout(self, *_a):
+        """Activa / desactiva la salida en red (ver el mosaico desde otro equipo o móvil)."""
+        if self.busy:
+            self._set_status("Un momento…")
+            return
+        if self.ipout_on:
+            self._ip_disable()
+        elif self.recording:
+            self._set_status("Para activar la salida en red termina antes la grabación.")
+            self._refresh_buttons()
+        else:
+            self._ip_enable()
+
+    def _ip_port(self):
+        try:
+            p = int(self.v_ipport.get())
+            if 1024 <= p <= 65535:
+                return p
+        except Exception:
+            pass
+        return IP_PORT_DEFAULT
+
+    def _ip_urls(self, port):
+        ips = _local_ips()
+        if not ips:
+            return "http://(la IP de este equipo):{0}/".format(port)
+        return ", ".join("http://{0}:{1}/".format(ip, port) for ip in ips)
+
+    def _ip_enable(self, quiet=False):
+        """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa."""
+        w, h = ip_size_value(self.v_ipsize.get())
+        port = self._ip_port()
+        try:
+            self.ipsrv.open(w, h, IP_FPS, port)
+        except OSError as e:
+            log.error("salida en red: no se pudo abrir: %s", e)
+            self._refresh_buttons()
+            msg = "No se pudo abrir el puerto {0} (¿ya está en uso? prueba con otro en «Ajustes»).".format(port)
+            if quiet:
+                self._later_status(msg)
+            else:
+                messagebox.showerror("En la red", msg + "\n\n{0}".format(str(e).strip()[-300:]))
+            return False
+        except Exception as e:
+            log.error("salida en red: no se pudo abrir: %s", e)
+            self._refresh_buttons()
+            if quiet:
+                self._later_status("No se pudo activar la salida en red.")
+            else:
+                messagebox.showerror("En la red", "No se pudo activar la salida en red.\n\n{0}".format(
+                    str(e).strip()[-300:]))
+            return False
+        self.ipout_on = True
+        self.paused = False
+        self._ip_changed("En la red: {0}".format(self._ip_urls(port)), quiet)
+        return True
+
+    def _ip_disable(self, why=None):
+        if not self.ipout_on and not self.ipsrv.active:
+            return
+        self.ipout_on = False
+        self.ipsrv.release()
+        self._ip_changed(why or "Salida en red desactivada.", False)
+        if why:
+            self._later_status(why)
+
+    def _ip_changed(self, msg, quiet):
+        self._refresh_buttons()
+        self._tray_update(menu=True)
+        if getattr(self, "lbl_ipurl", None) is not None:
+            self.lbl_ipurl.config(text=("Disponible en: " + self._ip_urls(self.ipsrv.port))
+                                  if self.ipout_on else "No está activa.")
+        if quiet:
+            return                         # al arrancar: la primera vista previa ya la incluye
+        self.save_config()
+        self._set_status(msg)
+        if self.recording:
+            return                         # el ffmpeg en marcha se actualiza al terminar la grabación
+        if self._idle_mini():
+            self._sync_preview()           # mini sin salida en red: se liberan las cámaras
+        elif self.order:
+            self._schedule_restart(200)    # reinicia la vista previa con (o sin) la salida en red
+
+    def _on_ipsize(self, *_a):
+        """Cambio de tamaño de la salida en red: si está activa se vuelve a abrir."""
+        if self._loading or not self.ipout_on:
+            return
+        if self.recording:
+            return
+        self.ipout_on = False
+        self.ipsrv.release()
+        self._ip_enable()
+
+    def _on_ipport_commit(self, *_a):
+        """Cambio de puerto confirmado (Intro o al salir del campo): si está activa se reabre."""
+        if self._loading or not self.ipout_on or self.recording:
+            return
+        if self._ip_port() == self.ipsrv.port:
+            return
+        self.ipout_on = False
+        self.ipsrv.release()
+        self._ip_enable()
+
     # ------------------------------------------------------------ grabación
     def toggle_rec(self):
         if self.busy:
@@ -5703,6 +6164,15 @@ class CamApp:
             self.btn_vcam2.config(text="📹  Apagar cámara virtual" if von else "📹  Activar cámara virtual",
                                   style="Accent.TButton" if von else "TButton", state=vst)
         self._vcam_var.set(von)
+        ion = self.ipout_on
+        ist = "disabled" if (b or (self.recording and not ion)) else "normal"
+        imark = "●" if ion else "○"
+        self.btn_ip.config(text=("🌐 " + imark) if mini else ("🌐 Red " + imark),
+                           style="Accent.TButton" if ion else "TButton", state=ist)
+        if getattr(self, "btn_ip2", None) is not None:
+            self.btn_ip2.config(text="🌐  Apagar en la red" if ion else "🌐  Activar en la red",
+                                style="Accent.TButton" if ion else "TButton", state=ist)
+        self._ip_var.set(ion)
         self._tray_update()
 
     def _set_status(self, txt):
@@ -5866,6 +6336,10 @@ class CamApp:
         finally:
             try:
                 self.vcam.close()
+            except Exception:
+                pass
+            try:
+                self.ipsrv.close()
             except Exception:
                 pass
             try:
