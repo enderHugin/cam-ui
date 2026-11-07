@@ -50,6 +50,7 @@ import socket
 import hashlib
 import http.server
 import shutil
+import tempfile
 import webbrowser
 import threading
 import subprocess
@@ -77,7 +78,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 11                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 12                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1279,6 +1280,16 @@ IP_FPS = 10                  # de sobra para verlo: ahorra wifi y CPU (va aparte
 IP_PORT_DEFAULT = 8554
 IP_JPEG_QUALITY = 70
 
+# ---- HLS para el botón nativo de Chromecast («En la red»): un segundo ffmpeg, aparte del
+# MJPEG de siempre (que sigue igual), solo se enciende mientras alguien lo está viendo en una
+# tele -- ver IpServer.hls_start()/_hls_stop()/hls_idle_check(). De momento sin sonido (como las
+# cámaras de red): el receptor de Chromecast por defecto no lo necesita para el vídeo, y mezclar
+# el audio metía riesgo de que ffmpeg se quedara colgado si alguna vez no llega sonido de verdad.
+HLS_SEGMENT_SECONDS = 2
+HLS_LIST_SIZE = 6
+HLS_BITRATE = "2500k"
+HLS_IDLE_SECONDS = 25         # sin pedir ni un trozo en todo este tiempo -> se para solo
+
 
 def ip_size_label(size):
     for lab, s in IP_SIZES:
@@ -1357,6 +1368,8 @@ button:disabled{opacity:.6}
   max-width:320px;background:#20242b;border:1px solid #4a4f58;border-radius:8px;
   padding:10px 14px;font-size:13px;line-height:1.45;color:#ddd;text-align:left;z-index:2}
 #casthelp.show{display:block}
+google-cast-launcher{display:none;width:34px;height:34px;vertical-align:middle;cursor:pointer;
+  --connected-color:#6aa0ff;--disconnected-color:#eee}
 </style></head>
 <body>
 <div id="stage">
@@ -1366,7 +1379,8 @@ button:disabled{opacity:.6}
     <button id="mute">&#128266;</button>
     <input id="vol" type="range" min="0" max="1" step="0.05" value="1">
     <button id="full">&#10021; Pantalla completa</button>
-    <button id="cast">&#128250; Chromecast</button>
+    <button id="castBtn">&#128250; Chromecast</button>
+    <google-cast-launcher id="castLauncher"></google-cast-launcher>
   </div>
   <div id="casthelp">Usa el icono <b>&laquo;Convertir en Chromecast&raquo;</b> de tu propio
     navegador &mdash; cam-ui no necesita nada más, le pasa esta misma pantalla. En Chrome o
@@ -1415,15 +1429,47 @@ document.addEventListener("fullscreenchange", function () {
 document.addEventListener("webkitfullscreenchange", function () {
   full.textContent = inFs() ? "\\u2715 Salir de pantalla completa" : "\\u2721 Pantalla completa";
 });
-var cast = document.getElementById("cast"), casthelp = document.getElementById("casthelp");
-cast.onclick = function (e) {
+var castBtn = document.getElementById("castBtn"), casthelp = document.getElementById("casthelp");
+castBtn.onclick = function (e) {
   e.stopPropagation();
   casthelp.classList.toggle("show");
 };
 document.addEventListener("click", function (e) {
-  if (e.target !== cast && !casthelp.contains(e.target)) { casthelp.classList.remove("show"); }
+  if (e.target !== castBtn && !casthelp.contains(e.target)) { casthelp.classList.remove("show"); }
 });
+// Si el navegador trae de verdad el SDK de Cast (Chrome/Edge con internet), se cambia el botón
+// de ayuda de arriba por el icono nativo de Chromecast -- un clic, sin menús. Si no llega a
+// cargar (sin internet, u otro navegador que no lo trae), se queda tal cual el botón de ayuda
+// de siempre: no hace falta nada más para eso, es lo que ya había.
+window["__onGCastApiAvailable"] = function (isAvailable) {
+  if (!isAvailable || typeof cast === "undefined") { return; }
+  try {
+    var ctx = cast.framework.CastContext.getInstance();
+    ctx.setOptions({
+      receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+      autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+    });
+    document.getElementById("castLauncher").style.display = "inline-block";
+    castBtn.style.display = "none";
+    ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+      function (ev) {
+        var st = ev.sessionState;
+        if (st !== cast.framework.SessionState.SESSION_STARTED &&
+            st !== cast.framework.SessionState.SESSION_RESUMED) {
+          return;
+        }
+        var session = ctx.getCurrentSession();
+        if (!session) { return; }
+        var info = new chrome.cast.media.MediaInfo("__CAM_CAST_URL__", "application/x-mpegURL");
+        info.streamType = chrome.cast.media.StreamType.LIVE;
+        session.loadMedia(new chrome.cast.media.LoadRequest(info)).catch(function () {});
+      });
+  } catch (e) {
+    // sin SDK de verdad disponible pese a todo: se queda el botón de ayuda de siempre
+  }
+};
 </script>
+<script async src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </body></html>
 """.encode("utf-8")
 
@@ -1446,6 +1492,10 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             self._serve_video()
         elif path == "/audio.mp3":
             self._serve_audio()
+        elif path == "/cast.m3u8":
+            self._serve_hls_playlist()
+        elif path.startswith("/cast/"):
+            self._serve_hls_segment(path[len("/cast/"):])
         else:
             try:
                 self.send_response(404)
@@ -1455,12 +1505,82 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_page(self):
         try:
+            owner = self.server.owner
+            ips = _local_ips()
+            host = ips[0] if ips else (self.server.server_address[0] or "127.0.0.1")
+            if host in ("0.0.0.0", ""):
+                host = "127.0.0.1"
+            cast_url = "http://{0}:{1}/cast.m3u8".format(host, owner.port)
+            body = _VIEWER_HTML.replace(b"__CAM_CAST_URL__", cast_url.encode("utf-8"))
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(_VIEWER_HTML)))
+            self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache, private")
             self.end_headers()
-            self.wfile.write(_VIEWER_HTML)
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _serve_hls_playlist(self):
+        """El botón nativo de Chromecast manda al propio Chromecast a pedir esto directamente
+        (no pasa por el navegador) -- si nadie lo había pedido antes, arranca aquí mismo el
+        ffmpeg de HLS y espera un poco a que haya trozos de verdad antes de contestar."""
+        owner = self.server.owner
+        if not owner.hls_start():
+            try:
+                self.send_response(503)
+                self.send_header("Retry-After", "2")
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return
+        owner._hls_ready_ev.wait(10)
+        owner.hls_touch()
+        d = owner._hls_dir
+        play_path = d and os.path.join(d, "cast.m3u8")
+        try:
+            if not play_path or not os.path.isfile(play_path):
+                self.send_response(503)
+                self.send_header("Retry-After", "2")
+                self.end_headers()
+                return
+            with open(play_path, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _serve_hls_segment(self, name):
+        owner = self.server.owner
+        owner.hls_touch()
+        d = owner._hls_dir
+        if not d or not name or "/" in name or "\\" in name or ".." in name:
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except Exception:
+                pass
+            return
+        try:
+            with open(os.path.join(d, name), "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp2t")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except FileNotFoundError:
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except Exception:
+                pass
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
@@ -1561,6 +1681,14 @@ class IpServer:
         self._asrv = None
         self._aclients = []
         self._aclients_lk = threading.Lock()
+        # ---- HLS para Chromecast nativo (aparte del MJPEG de siempre; ver constantes HLS_*) --
+        self._hls_lock = threading.Lock()
+        self._hls_proc = None
+        self._hls_dir = None
+        self._hls_q = None
+        self._hls_gen = 0
+        self._hls_ready_ev = threading.Event()
+        self._hls_last_req = 0.0
 
     @property
     def active(self):
@@ -1774,14 +1902,178 @@ class IpServer:
                 self.errors += 1
                 if self.errors <= 3:
                     log.warning("salida en red: error al codificar:\n%s", traceback.format_exc())
+            # ---- de paso, si hay alguien viéndolo por Chromecast (HLS armado), le pasamos el
+            # mismo fotograma crudo -- sin bloquear nunca esto: si va con retraso, se descarta
+            # (igual que con el audio en _aread) y ya le tocará con el siguiente.
+            q = self._hls_q
+            if q is not None:
+                try:
+                    q.put_nowait(arr.tobytes())
+                except queue.Full:
+                    pass
 
     def _client_delta(self, d):
         with self._lk:
             self.clients = max(0, self.clients + d)
 
+    # ---- HLS / Chromecast nativo ------------------------------------------------------------
+    def hls_touch(self):
+        """Alguien acaba de pedir la lista o un trozo: se sigue necesitando, no apagar por
+        inactividad todavía."""
+        self._hls_last_req = time.time()
+
+    def hls_idle_check(self):
+        """Llamar de vez en cuando (desde _tick de la app): si nadie pide trozos nuevos desde
+        hace rato, es que se dejó de emitir a la tele (o nunca llegó a verse), así que se apaga
+        solo -- si no, ese ffmpeg de más se quedaría encendido para siempre de fondo."""
+        if self._hls_proc is not None and time.time() - self._hls_last_req > HLS_IDLE_SECONDS:
+            log.info("salida en red: HLS de Chromecast parado por inactividad")
+            self._hls_stop()
+
+    def hls_start(self):
+        """Arranca (si no lo estaba ya) un segundo ffmpeg que convierte el mosaico a H.264/HLS
+        para el botón nativo de Chromecast -- el MJPEG de siempre sigue exactamente igual, esto
+        es solo un añadido. Se alimenta de los mismos fotogramas crudos que ya se reciben por el
+        socket (no del MJPEG ya comprimido, para no perder calidad ni CPU recodificando dos
+        veces). Devuelve True si queda en marcha (ya lo estaba, o se acaba de lanzar)."""
+        self.hls_touch()
+        with self._hls_lock:
+            if self._hls_proc is not None and self._hls_proc.poll() is None:
+                return True
+            if not self.active or self.w <= 0 or self.h <= 0:
+                return False
+            self._hls_cleanup_dir()
+            try:
+                self._hls_dir = tempfile.mkdtemp(prefix="camui_hls_")
+            except Exception:
+                log.warning("salida en red: no se pudo crear la carpeta temporal para HLS:\n%s",
+                           traceback.format_exc())
+                return False
+            cmd = [FFMPEG, "-nostdin", "-loglevel", "error",
+                  "-f", "rawvideo", "-pix_fmt", "rgb24",
+                  "-s", "{0}x{1}".format(self.w, self.h), "-r", str(self.fps), "-i", "-",
+                  "-an",
+                  "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                  "-profile:v", "baseline", "-pix_fmt", "yuv420p",
+                  "-force_key_frames", "expr:gte(t,n_forced*{0})".format(HLS_SEGMENT_SECONDS),
+                  "-b:v", HLS_BITRATE, "-maxrate", HLS_BITRATE, "-bufsize", "4000k",
+                  "-f", "hls", "-hls_time", str(HLS_SEGMENT_SECONDS),
+                  "-hls_list_size", str(HLS_LIST_SIZE),
+                  "-hls_flags", "delete_segments+independent_segments+append_list",
+                  "-hls_base_url", "/cast/",
+                  "-hls_segment_filename", "seg_%05d.ts", "cast.m3u8"]
+            try:
+                proc = subprocess.Popen(cmd, cwd=self._hls_dir, stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        creationflags=CREATE_NO_WINDOW)
+            except Exception:
+                log.warning("salida en red: no se pudo lanzar ffmpeg para HLS (Chromecast):\n%s",
+                           traceback.format_exc())
+                self._hls_cleanup_dir()
+                return False
+            self._hls_proc = proc
+            self._hls_q = queue.Queue(maxsize=2)
+            self._hls_ready_ev = threading.Event()
+            self._hls_gen += 1
+            gen = self._hls_gen
+            threading.Thread(target=self._hls_feed, args=(proc, self._hls_q, gen),
+                             daemon=True).start()
+            threading.Thread(target=self._hls_wait_ready, args=(gen,), daemon=True).start()
+            log.info("salida en red: HLS de Chromecast arrancado (%dx%d @%d)",
+                    self.w, self.h, self.fps)
+            return True
+
+    def _hls_feed(self, proc, q, gen):
+        """Pasa cada fotograma crudo a la entrada de ese ffmpeg; si se queda sin aire (CPU lenta)
+        se descartan los que lleguen de más, nunca se bloquea _encode_loop por esto."""
+        try:
+            while gen == self._hls_gen and proc.poll() is None:
+                try:
+                    data = q.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                try:
+                    proc.stdin.write(data)
+                except Exception:
+                    break
+        finally:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+
+    def _hls_wait_ready(self, gen):
+        """Hasta que la lista de reproducción tenga ya un par de trozos de verdad escritos (o
+        se agote el tiempo): así el primer visor no se encuentra con una lista vacía."""
+        t_end = time.time() + 10
+        while gen == self._hls_gen and time.time() < t_end:
+            d = self._hls_dir
+            play_path = d and os.path.join(d, "cast.m3u8")
+            try:
+                if play_path and os.path.isfile(play_path):
+                    with open(play_path, "r", encoding="utf-8", errors="ignore") as f:
+                        txt = f.read()
+                    if txt.count("#EXTINF") >= 2:
+                        self._hls_ready_ev.set()
+                        return
+            except Exception:
+                pass
+            time.sleep(0.25)
+
+    def _hls_stop(self, wait=False):
+        """Para el ffmpeg de HLS (si lo hay) y borra su carpeta temporal. Por defecto no espera
+        -- se limpia en un hilo aparte -- porque normalmente se llama desde hls_idle_check() y
+        no debe retrasar nada. release() sí espera (acotado: como mucho ~1.5s) para que, al
+        apagar «En la red» del todo, no quede un ffmpeg de más de fondo ni a medio cerrar."""
+        with self._hls_lock:
+            self._hls_gen += 1                  # los hilos de la tanda anterior se paran solos
+            proc, self._hls_proc = self._hls_proc, None
+            self._hls_q = None
+            old_dir, self._hls_dir = self._hls_dir, None
+        if proc is None:
+            if old_dir:
+                shutil.rmtree(old_dir, ignore_errors=True)
+            return
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        if wait:
+            self._hls_reap(proc, old_dir, timeout=1.5)
+        else:
+            threading.Thread(target=self._hls_reap, args=(proc, old_dir), daemon=True).start()
+
+    @staticmethod
+    def _hls_reap(proc, old_dir, timeout=5):
+        """Espera (acotado) a que ese ffmpeg termine de verdad -- y si no, lo mata -- antes de
+        borrar su carpeta: borrarla mientras todavía escribe en ella es una carrera que puede
+        dejar restos (shutil.rmtree con ignore_errors se calla el error y listo, sin limpiar)."""
+        try:
+            proc.wait(timeout=timeout)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+        if old_dir:
+            shutil.rmtree(old_dir, ignore_errors=True)
+
+    def _hls_cleanup_dir(self):
+        """Solo para el arranque: por si quedó algo suelto de una tanda anterior que no pasó por
+        _hls_stop() (no debería ocurrir, pero mejor no dejar basura)."""
+        d, self._hls_dir = self._hls_dir, None
+        if d:
+            shutil.rmtree(d, ignore_errors=True)
+
     def release(self):
         """Para el servidor HTTP (los fotogramas que sigan llegando se descartan sin bloquear
         ffmpeg)."""
+        self._hls_stop(wait=True)
         http_srv, self._http = self._http, None
         self._ev.set()
         if http_srv is not None:
@@ -6887,6 +7179,8 @@ class CamApp:
             self._tick_n = (getattr(self, "_tick_n", 0) + 1) % 3
             if self._tick_n == 0 and self.mode != "mini":   # VU a ~10 Hz (cuestan 4 ms cada vez)
                 self._draw_meters()
+            if self._tick_n == 0 and self.ipsrv is not None:
+                self.ipsrv.hls_idle_check()       # apaga solo el ffmpeg de HLS si nadie lo mira
             if self.recording:
                 self._update_timer()
         except Exception as e:          # la UI nunca debe morir por un fallo de dibujo

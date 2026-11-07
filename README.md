@@ -39,6 +39,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   (sin contraseña) y no depende de ffmpeg para servir el vídeo. Botón «Abrir en VLC»: si está
   instalado, lo abre ahí en vez del navegador, y desde el propio menú de VLC (Reproducción →
   Renderizador) se puede enviar a un Chromecast de la misma red sin nada más que configurar.
+  La propia página también trae el icono nativo de Chromecast (un segundo ffmpeg aparte, H.264
+  por HLS, solo mientras se está emitiendo a la tele) y, si el navegador no lo trae integrado,
+  una ayuda explicando cómo hacerlo con el «Convertir en Chromecast» del propio navegador.
 - Se actualiza sola (con tu permiso): avisa si hay una versión nueva, guarda una copia de la
   anterior y puede volver a ella. Botón «🔄 Actualizaciones» o icono de la bandeja; con la
   casilla «actualizar automáticamente al abrir el programa, sin preguntar» ni siquiera hace
@@ -52,8 +55,9 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/geom_test.py` (necesitan ffmpeg en el PATH); `tests/unit_vlc.py` y
-`tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`
+`tests/unit_update.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+este último con libx264 y el muxer hls); `tests/unit_vlc.py` y `tests/unit_viewer_html.py` no
+necesitan ffmpeg. `tests/ui_netcam_edit.py`
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 Si algo falla, adjuntar `camui.log` (se crea junto al script).

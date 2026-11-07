@@ -1,5 +1,17 @@
 # Novedades de cam-ui
 
+## pack 12 — 2026.11.07
+- **El icono de verdad de Chromecast, en la propia página de «En la red».** El botón «📺
+  Chromecast» del pack anterior pasa ahora a ser el icono nativo de Chromecast (el mismo de
+  YouTube) cuando el navegador lo trae integrado (Chrome o Edge, con internet): un clic, eliges
+  la tele, y ya está — sin menús que explicar. Por dentro, cam-ui enciende un segundo ffmpeg
+  aparte (H.264 por HLS, el formato que el Chromecast entiende de fábrica) *solo* mientras se
+  está viendo en la tele; el MJPEG de siempre para el navegador no cambia en nada ni se ve
+  afectado. De momento va sin sonido (como las cámaras de red). Si el navegador no trae ese
+  icono integrado (sin internet, u otro navegador), se queda el botón de ayuda del pack
+  anterior, explicando el «Convertir en Chromecast» de Chrome/Edge — nunca se queda sin nada
+  que hacer.
+
 ## pack 11 — 2026.11.07
 - **Nuevo botón «📺 Chromecast» en la propia página de «En la red».** Quien vea el mosaico desde
   el navegador de otro equipo o móvil ya no tiene que saberlo de antes: el botón explica cómo
