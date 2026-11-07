@@ -78,7 +78,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 12                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 13                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1282,9 +1282,12 @@ IP_JPEG_QUALITY = 70
 
 # ---- HLS para el botón nativo de Chromecast («En la red»): un segundo ffmpeg, aparte del
 # MJPEG de siempre (que sigue igual), solo se enciende mientras alguien lo está viendo en una
-# tele -- ver IpServer.hls_start()/_hls_stop()/hls_idle_check(). De momento sin sonido (como las
-# cámaras de red): el receptor de Chromecast por defecto no lo necesita para el vídeo, y mezclar
-# el audio metía riesgo de que ffmpeg se quedara colgado si alguna vez no llega sonido de verdad.
+# tele -- ver IpServer.hls_start()/_hls_stop()/hls_idle_check(). Sin sonido de verdad (como las
+# cámaras de red): mezclar el micrófono de verdad metía riesgo de que ffmpeg se quedara colgado
+# si alguna vez no llega sonido real. Pero SÍ lleva una pista de audio muda (silencio puro,
+# generado por el propio ffmpeg con «anullsrc», sin depender de ningún micrófono) -- algunos
+# receptores de Chromecast (sobre todo los más antiguos, como el de 1.ª generación) se quedan en
+# blanco, sin avisar de ningún error, ante un HLS que no trae NINGUNA pista de audio.
 HLS_SEGMENT_SECONDS = 2
 HLS_LIST_SIZE = 6
 HLS_BITRATE = "2500k"
@@ -1368,6 +1371,10 @@ button:disabled{opacity:.6}
   max-width:320px;background:#20242b;border:1px solid #4a4f58;border-radius:8px;
   padding:10px 14px;font-size:13px;line-height:1.45;color:#ddd;text-align:left;z-index:2}
 #casthelp.show{display:block}
+#casterr{display:none;position:absolute;left:50%;bottom:64px;transform:translateX(-50%);
+  max-width:320px;background:#4a1f24;border:1px solid #8a3038;border-radius:8px;
+  padding:10px 14px;font-size:13px;line-height:1.45;color:#ffd9dc;text-align:left;z-index:3}
+#casterr.show{display:block}
 google-cast-launcher{display:none;width:34px;height:34px;vertical-align:middle;cursor:pointer;
   --connected-color:#6aa0ff;--disconnected-color:#eee}
 </style></head>
@@ -1387,6 +1394,7 @@ google-cast-launcher{display:none;width:34px;height:34px;vertical-align:middle;c
     Edge: men&uacute; &#8942; &rarr; Guardar y compartir &rarr; Convertir en
     Chromecast&hellip; (puedes fijar el icono en la barra para la próxima vez). Firefox y
     Safari no lo traen integrado.</div>
+  <div id="casterr"></div>
 </div>
 <audio id="a" src="/audio.mp3" preload="none"></audio>
 <script>
@@ -1441,6 +1449,15 @@ document.addEventListener("click", function (e) {
 // de ayuda de arriba por el icono nativo de Chromecast -- un clic, sin menús. Si no llega a
 // cargar (sin internet, u otro navegador que no lo trae), se queda tal cual el botón de ayuda
 // de siempre: no hace falta nada más para eso, es lo que ya había.
+var castErr = document.getElementById("casterr");
+function showCastErr(msg) {
+  castErr.textContent = "Chromecast: " + msg;
+  castErr.classList.add("show");
+  casthelp.classList.remove("show");
+}
+document.addEventListener("click", function (e) {
+  if (!castErr.contains(e.target)) { castErr.classList.remove("show"); }
+});
 window["__onGCastApiAvailable"] = function (isAvailable) {
   if (!isAvailable || typeof cast === "undefined") { return; }
   try {
@@ -1462,7 +1479,21 @@ window["__onGCastApiAvailable"] = function (isAvailable) {
         if (!session) { return; }
         var info = new chrome.cast.media.MediaInfo("__CAM_CAST_URL__", "application/x-mpegURL");
         info.streamType = chrome.cast.media.StreamType.LIVE;
-        session.loadMedia(new chrome.cast.media.LoadRequest(info)).catch(function () {});
+        session.loadMedia(new chrome.cast.media.LoadRequest(info)).then(function () {
+          // la tele aceptó la orden -- de todas formas, si falla DESPUÉS (p. ej. no consigue
+          // reproducir ese formato), que no se quede callado sin más
+          var media = session.getMediaSession();
+          if (!media) { return; }
+          media.addUpdateListener(function (isAlive) {
+            if (!isAlive) { return; }
+            if (media.playerState === chrome.cast.media.PlayerState.IDLE &&
+                media.idleReason === chrome.cast.media.IdleReason.ERROR) {
+              showCastErr("la tele no pudo reproducirlo (fallo al reproducir)");
+            }
+          });
+        }).catch(function (err) {
+          showCastErr("no se pudo empezar a reproducir (" + err + ")");
+        });
       });
   } catch (e) {
     // sin SDK de verdad disponible pese a todo: se queda el botón de ayuda de siempre
@@ -1503,6 +1534,29 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def do_OPTIONS(self):
+        # El propio Chromecast (su receptor «de serie») es quien pide /cast.m3u8 y /cast/*.ts
+        # directamente -- no pasa por el navegador del visor -- y por eso cuentan como petición
+        # «de otro origen» (CORS) a ojos de Google: sin estas cabeceras, la tele puede llegar a
+        # aceptar la orden de reproducir y aun así quedarse sin imagen ni sonido, sin avisar de
+        # ningún error, porque el propio receptor no consigue bajarse ni la lista ni los trozos.
+        path = self.path.split("?", 1)[0]
+        try:
+            if path == "/cast.m3u8" or path.startswith("/cast/"):
+                self.send_response(204)
+                self._send_cors_headers()
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+        except Exception:
+            pass
+
+    def _send_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Range, Content-Type")
+
     def _serve_page(self):
         try:
             owner = self.server.owner
@@ -1530,6 +1584,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             try:
                 self.send_response(503)
                 self.send_header("Retry-After", "2")
+                self._send_cors_headers()
                 self.end_headers()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
@@ -1542,6 +1597,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             if not play_path or not os.path.isfile(play_path):
                 self.send_response(503)
                 self.send_header("Retry-After", "2")
+                self._send_cors_headers()
                 self.end_headers()
                 return
             with open(play_path, "rb") as f:
@@ -1550,6 +1606,8 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/vnd.apple.mpegurl")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(body)))
+            # El propio Chromecast pide esto directamente (CORS) -- ver do_OPTIONS más arriba
+            self._send_cors_headers()
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -1562,6 +1620,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         if not d or not name or "/" in name or "\\" in name or ".." in name:
             try:
                 self.send_response(404)
+                self._send_cors_headers()
                 self.end_headers()
             except Exception:
                 pass
@@ -1573,11 +1632,14 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "video/mp2t")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Content-Length", str(len(body)))
+            # El propio Chromecast pide esto directamente (CORS) -- ver do_OPTIONS más arriba
+            self._send_cors_headers()
             self.end_headers()
             self.wfile.write(body)
         except FileNotFoundError:
             try:
                 self.send_response(404)
+                self._send_cors_headers()
                 self.end_headers()
             except Exception:
                 pass
@@ -1952,11 +2014,15 @@ class IpServer:
             cmd = [FFMPEG, "-nostdin", "-loglevel", "error",
                   "-f", "rawvideo", "-pix_fmt", "rgb24",
                   "-s", "{0}x{1}".format(self.w, self.h), "-r", str(self.fps), "-i", "-",
-                  "-an",
+                  # pista de audio muda (silencio generado por ffmpeg, no un micrófono real) --
+                  # ver el comentario junto a HLS_SEGMENT_SECONDS sobre por qué hace falta
+                  "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                  "-map", "0:v", "-map", "1:a",
                   "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
                   "-profile:v", "baseline", "-pix_fmt", "yuv420p",
                   "-force_key_frames", "expr:gte(t,n_forced*{0})".format(HLS_SEGMENT_SECONDS),
                   "-b:v", HLS_BITRATE, "-maxrate", HLS_BITRATE, "-bufsize", "4000k",
+                  "-c:a", "aac", "-b:a", "64k", "-ar", "44100",
                   "-f", "hls", "-hls_time", str(HLS_SEGMENT_SECONDS),
                   "-hls_list_size", str(HLS_LIST_SIZE),
                   "-hls_flags", "delete_segments+independent_segments+append_list",

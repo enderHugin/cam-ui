@@ -1,5 +1,19 @@
 # Novedades de cam-ui
 
+## pack 13 — 2026.11.07
+- **Arreglado: el icono nativo de Chromecast aceptaba la orden de reproducir pero la tele se
+  quedaba sin imagen, sin avisar de ningún error.** La causa: a los ojos de Google, la tele pide
+  la lista y los trozos de vídeo directamente a cam-ui (no a través del navegador), y eso cuenta
+  como una petición «de otro origen» — sin las cabeceras CORS que ese caso exige, algunos
+  receptores aceptan la orden (de ahí que pareciera que iba a reproducir) pero luego no consiguen
+  bajarse nada, y se quedan así sin decir por qué. Ya van las cabeceras que hacían falta.
+- **También: pista de audio muda añadida al HLS** (algunos Chromecast, sobre todo los más
+  antiguos como el de 1.ª generación, pueden quedarse igual de callados ante un vídeo sin NINGUNA
+  pista de sonido) y **un aviso en pantalla si, aun así, la tele no consigue reproducirlo** — el
+  mismo hueco donde antes aparecía la ayuda del botón, ahora en rojo, con el motivo que de verdad
+  reporta el Chromecast. Si vuelve a fallar, ese mensaje es la pista que hace falta para seguir
+  afinándolo.
+
 ## pack 12 — 2026.11.07
 - **El icono de verdad de Chromecast, en la propia página de «En la red».** El botón «📺
   Chromecast» del pack anterior pasa ahora a ser el icono nativo de Chromecast (el mismo de

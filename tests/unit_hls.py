@@ -67,10 +67,12 @@ print("1) /stream.mjpg sigue funcionando sin que lo toque nada de esto OK")
 #    cliente HLS real
 t0 = time.time()
 body = None
+cors_playlist = None
 while time.time() - t0 < 25:
     try:
         with _get("/cast.m3u8", timeout=12) as r:
             if r.status == 200:
+                cors_playlist = r.headers.get("Access-Control-Allow-Origin")
                 body = r.read().decode("utf-8")
                 break
     except urllib.error.HTTPError:
@@ -82,6 +84,14 @@ n_segs = body.count("#EXTINF")
 assert n_segs >= 2, body
 print("2) /cast.m3u8 arranca el ffmpeg de HLS solo (lazy) y sirve una lista con {0} trozos "
       "tras {1:.1f}s OK".format(n_segs, time.time() - t0))
+
+# 2b) con cabecera CORS: esto lo pide el propio Chromecast directamente, no el navegador del
+#     visor, y Google exige CORS para los formatos adaptativos (HLS/DASH) -- sin esto, la tele
+#     puede aceptar la orden de reproducir y quedarse sin imagen ni sonido, sin avisar de nada,
+#     porque su receptor no consigue bajarse ni la lista ni los trozos
+assert cors_playlist == "*", \
+    "falta (o está mal) la cabecera CORS en /cast.m3u8: {0!r}".format(cors_playlist)
+print("2b) /cast.m3u8 lleva la cabecera CORS que necesita el propio receptor del Chromecast OK")
 
 # 3) las rutas de los trozos cuelgan de /cast/ (gracias a -hls_base_url), no exponen la carpeta
 #    temporal real del sistema de archivos
@@ -95,6 +105,9 @@ seg_file = os.path.join(HERE, "_unit_hls_seg_test.ts")
 with _get(seg_urls[0], timeout=5) as r:
     assert r.status == 200
     assert r.headers.get("Content-Type") == "video/mp2t", r.headers.get("Content-Type")
+    assert r.headers.get("Access-Control-Allow-Origin") == "*", \
+        "falta (o está mal) la cabecera CORS en un trozo .ts: {0!r}".format(
+            r.headers.get("Access-Control-Allow-Origin"))
     data = r.read()
 assert len(data) > 500, len(data)
 assert data[0] == 0x47, "no empieza por el byte de sincronía 0x47 de MPEG-TS: %r" % data[:4]
@@ -109,6 +122,15 @@ assert "h264" in out.stdout and "video" in out.stdout, \
     "ffprobe no ve vídeo H.264 en el trozo descargado: {0} / {1}".format(out.stdout, out.stderr)
 print("4) un trozo descargado es un .ts real con vídeo H.264 de verdad (confirmado por "
       "ffprobe) OK")
+
+# 4b) también lleva su pista de audio (muda, generada por ffmpeg -- ver el comentario junto a
+#     HLS_SEGMENT_SECONDS en camui.py): algunos Chromecast (sobre todo el de 1.ª generación) se
+#     quedan en blanco sin avisar de nada si el HLS no trae NINGUNA pista de audio
+assert "aac" in out.stdout and "audio" in out.stdout, \
+    "ffprobe no ve una pista de audio (muda) en el trozo descargado: {0} / {1}".format(
+        out.stdout, out.stderr)
+print("4b) el trozo también lleva su pista de audio muda (para que la tele no se quede en "
+      "blanco sin avisar) OK")
 
 # 5) sin nadie pidiendo trozos durante un rato, se apaga solo (se fuerza el umbral para no
 #    esperar los HLS_IDLE_SECONDS de verdad)
