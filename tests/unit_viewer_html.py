@@ -217,7 +217,7 @@ try:
     req12 = urllib.request.Request("http://127.0.0.1:{0}/addcam/start".format(PORT), data=b"",
                                     method="POST")
     try:
-        urllib.request.urlopen(req12, timeout=8)
+        urllib.request.urlopen(req12, timeout=20)
         raise SystemExit("«/addcam/start» debería fallar si nadie la enciende de verdad")
     except urllib.error.HTTPError as e:
         assert e.code == 503, e.code
@@ -228,7 +228,11 @@ finally:
 assert remote_q and remote_q[0] is True, \
     "«/addcam/start» debería haber dejado el aviso en phonecam_remote_q para que _tick() lo " \
     "recoja (aquí no hay ninguna CamApp real que lo haga por sí sola)"
-assert 3.0 <= elapsed <= 6.0, \
+# margen generoso (ver _addcam_start): la primera vez que se enciende de verdad hace falta
+# generar un certificado propio nuevo, que puede tardar unos segundos en un PC más lento, así
+# que el margen antes de rendirse es de 15s, no de 4 -- aquí solo se comprueba que espera un
+# rato de verdad (no falla al instante) y que no se queda colgado para siempre
+assert 13.0 <= elapsed <= 17.0, \
     "debería esperar unos segundos de verdad antes de rendirse, no fallar al instante ni " \
     "quedarse colgado ({0:.1f}s)".format(elapsed)
 print("12) «/addcam/start», si nadie la enciende a tiempo, deja de verdad el aviso en la cola "

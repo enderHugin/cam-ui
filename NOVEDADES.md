@@ -1,5 +1,16 @@
 # Novedades de cam-ui
 
+## pack 19 — 2026.11.08
+- **Arreglado: el botón «Añadir cámara del móvil» (pack 18), con esa función apagada, podía
+  acabar en «No se pudo encender. Reintentar» aunque sí se encendiera.** La causa: solo se
+  esperaban 4 segundos antes de rendirse, pero la primera vez que se activa en todo el PC (o
+  si cambió la IP detectada) hace falta generar antes un certificado propio nuevo, y eso puede
+  tardar más de 4 segundos de verdad en un PC más lento — aunque siguiera encendiéndose bien
+  en cuanto terminaba, el aviso ya había llegado. Ahora espera hasta 15 segundos, y si se
+  alarga el botón lo dice («…la primera vez puede tardar un poco») en vez de parecer colgado.
+  - Si ya te pasó esto: pulsar «Reintentar» sin más debería haber funcionado igualmente — el
+    encendido sigue en marcha por detrás aunque la primera petición se rinda antes de verlo.
+
 ## pack 18 — 2026.11.08
 - **El botón «Añadir cámara del móvil» de «En la red» (pack 16) ya no dice «Actívala en
   Ajustes, en el PC» si esa función está apagada: ahora la enciende él solo**, al momento, y

@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 18                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 19                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1484,12 +1484,20 @@ addcam.onclick = function () {
   }
   addcam.disabled = true;
   addcam.textContent = "Encendiendo…";
+  // la primera vez que se enciende en todo el PC (o si cambió de red) hace falta generar un
+  // certificado propio nuevo, y eso sí puede tardar unos segundos de verdad -- si se alarga,
+  // que el botón lo diga, en vez de parecer que se ha quedado colgado sin más
+  var tardando = setTimeout(function () {
+    addcam.textContent = "Encendiendo… (la primera vez puede tardar un poco)";
+  }, 3000);
   fetch("/addcam/start", {method: "POST"}).then(function (r) {
     return r.json();
   }).then(function (data) {
+    clearTimeout(tardando);
     if (!data || !data.url) { throw new Error("sin url"); }
     location.href = data.url;
   }).catch(function () {
+    clearTimeout(tardando);
     addcam.disabled = false;
     addcam.textContent = "No se pudo encender. Reintentar";
     setTimeout(function () { addcam.textContent = addcamLabel; }, 3000);
@@ -1605,12 +1613,16 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         Ajustes», pide aquí que se encienda ella sola. Este hilo (uno por petición, igual que
         el resto de _MjpegHandler) no puede tocar Tk directamente -- solo deja el aviso en
         phonecam_remote_q, que _tick() recoge en el hilo de Tk (mismo mecanismo que
-        _phonecam_q/_phonecam_pair_q) -- y aquí se espera un momento a que ese encendido
-        termine (es solo abrir dos sockets, nunca tarda) para poder devolver ya mismo la
-        dirección real de «/add» a la que el móvil debe ir. El emparejamiento en sí sigue
-        protegido igual que siempre: aunque cualquiera de la wifi pueda encenderla así, el QR
-        para emparejarse solo aparece en la propia pantalla del PC (ver PhoneCamQrDialog), así
-        que sigue haciendo falta estar delante de ella para leerlo."""
+        _phonecam_q/_phonecam_pair_q) -- y aquí se espera a que ese encendido termine para
+        poder devolver ya mismo la dirección real de «/add» a la que el móvil debe ir. Casi
+        siempre es instantáneo (solo abrir dos sockets), PERO la primera vez que se activa en
+        todo el equipo (o si cambia la IP detectada) hace falta generar antes un certificado
+        propio nuevo (clave RSA de verdad, ver _phonecam_ensure_cert) -- eso sí puede tardar
+        unos segundos de verdad en un PC más lento, así que se le da un margen generoso antes
+        de rendirse. El emparejamiento en sí sigue protegido igual que siempre: aunque
+        cualquiera de la wifi pueda encenderla así, el QR para emparejarse solo aparece en la
+        propia pantalla del PC (ver PhoneCamQrDialog), así que sigue haciendo falta estar
+        delante de ella para leerlo."""
         owner = self.server.owner
         q = getattr(owner, "phonecam_remote_q", None)
         phonecam = getattr(owner, "phonecam", None)
@@ -1619,7 +1631,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             return
         if not phonecam.active:
             q.append(True)
-        deadline = time.time() + 4.0
+        deadline = time.time() + 15.0
         while not phonecam.active and time.time() < deadline:
             time.sleep(0.05)
         if not phonecam.active:
