@@ -63,6 +63,8 @@ for _ in range(20):
         break
     time.sleep(0.1)
 assert top.winfo_width() > 1, "la ventana de Actualizaciones no llegó a mostrarse"
+top.focus_force()
+top.update()
 
 for name, btn in [("Buscar de nuevo", dlg.b_check), ("Volver a la versión anterior", dlg.b_back),
                   ("Actualizar y reiniciar", dlg.b_go)]:
@@ -81,7 +83,69 @@ top.update()
 tv1 = dlg.notes.yview()
 assert tv1[1] >= 0.999 and tv1[0] > tv0[0], "la barra de Novedades no llega hasta el final"
 print("2) la barra de desplazamiento de «Novedades» funciona y llega hasta el final -- OK")
+
+# ---------------------------------------------------------------------------------------------
+# 1c) La misma ventana trae una casilla oculta («vigilar sola, sin avisos») que solo debería
+#     verse tras un atajo secreto (Ctrl+Shift+Alt+F12, con la tecla Win pulsada) mientras esta
+#     ventana tenga el foco -- y que, una vez activada, se queda visible (para poder apagarla
+#     sin tener que volver a buscarla), y al apagarla se esconde de nuevo, al instante.
+# ---------------------------------------------------------------------------------------------
+assert not dlg.chk_silent_watch.winfo_ismapped(), \
+    "la casilla de «vigilar sola» no debería verse de entrada, sin el atajo secreto"
+print("3) la casilla oculta de «vigilar sola, sin avisos» empieza invisible, como debe ser OK")
+
+top.event_generate("<Control-Shift-Alt-F12>")
+top.update()
+assert not dlg.chk_silent_watch.winfo_ismapped(), \
+    "el atajo no debería revelar nada sin la tecla Win pulsada también"
+
+top.event_generate("<KeyPress-Super_L>")
+top.event_generate("<Control-Shift-Alt-F12>")
+top.update()
+assert dlg.chk_silent_watch.winfo_ismapped(), \
+    "Ctrl+Shift+Alt+F12 con Win pulsada debería revelar la casilla oculta"
+top.event_generate("<KeyRelease-Super_L>")
+print("4) el atajo secreto (Win + Ctrl+Shift+Alt+F12) revela la casilla oculta -- y sin la "
+      "tecla Win pulsada, no hace nada por sí solo OK")
+
+dlg.var_silent_watch.set(True)
+dlg._silent_watch_toggled()
+assert camui.update_state().get("silent_watch") is True, \
+    "activar la casilla debería guardarse de verdad (persistente)"
+assert dlg.chk_silent_watch.winfo_ismapped(), \
+    "activada, la casilla debería quedarse visible (no esconderse sola)"
+print("5) activar la casilla la guarda de verdad (persistente) y se queda visible OK")
+
+dlg.var_silent_watch.set(False)
+dlg._silent_watch_toggled()
+top.update()
+assert camui.update_state().get("silent_watch") is False
+assert not dlg.chk_silent_watch.winfo_ismapped(), \
+    "al desactivarla debería esconderse de nuevo, sin esperar a cerrar la ventana"
+print("6) desactivar la casilla la guarda como apagada y la esconde de nuevo, al instante OK")
 top.destroy()
+
+# si ya estaba activada de antes (de una sesión anterior), una ventana nueva debe mostrarla sin
+# necesitar el atajo secreto -- si no, quien la activó no podría volver a encontrarla para
+# apagarla
+camui._UPDATE_ST = {"silent_watch": True}
+dlg3 = camui.UpdateDialog(fake_app)
+top3 = dlg3.top
+top3.deiconify()
+for _ in range(20):
+    top3.update_idletasks()
+    top3.update()
+    if top3.winfo_width() > 1:
+        break
+    time.sleep(0.1)
+assert top3.winfo_width() > 1, "la ventana de Actualizaciones no llegó a mostrarse"
+assert dlg3.chk_silent_watch.winfo_ismapped(), \
+    "si ya estaba activada de antes, una ventana nueva debería mostrarla sin el atajo secreto"
+assert dlg3.var_silent_watch.get() is True
+top3.destroy()
+camui._UPDATE_ST = {}
+print("7) si ya estaba activada de antes, una ventana «Actualizaciones» nueva la muestra sin "
+      "necesitar el atajo secreto de nuevo OK")
 
 # ---------------------------------------------------------------------------------------------
 # 2) Lista de cámaras: hacer scroll (rueda del ratón) sobre ella debe mover SOLO la lista, no

@@ -95,8 +95,19 @@ print("3) botón de ayuda + icono nativo de Chromecast están en la página, amb
 
 for frase in ("Convertir en Chromecast", "Firefox", "Safari"):
     assert frase in body, "falta «{0}» en el texto de ayuda del botón Chromecast".format(frase)
+# no solo Firefox/Safari se quedan sin ese icono -- muchos navegadores propios de fábrica
+# (p. ej. el de Xiaomi/MIUI, según lo reportó alguien usándolo de verdad) tampoco lo traen, y
+# el texto anterior no lo decía (daba a entender que "cualquier otro" sí lo tenía); ahora lo
+# dice explícitamente y dejar una alternativa real: cambiar de navegador en el móvil, o
+# hacerlo desde el PC con cam-ui (ya documentado con VLC)
+assert "Xiaomi" in body or "MIUI" in body, \
+    "el texto de ayuda debería avisar de que el navegador propio de algunos móviles (como el " \
+    "de Xiaomi) tampoco trae esa opción, no dar a entender que solo Firefox/Safari se la pierden"
+assert "abre esta misma dirección con Chrome" in body or "VLC" in body, \
+    "el texto de ayuda debería dar una alternativa de verdad si el navegador no lo trae"
 print("4) el texto de ayuda explica el camino (navegador) y avisa de qué navegadores no lo "
-      "traen OK")
+      "traen -- sin dar a entender que solo Firefox/Safari se lo pierden -- con una "
+      "alternativa real si el propio no lo trae OK")
 
 assert 'casthelp.classList.toggle("show")' in body, \
     "el botón de ayuda ya no abre/cierra su ayuda al pulsarlo"

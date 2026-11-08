@@ -80,12 +80,16 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 19                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 20                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
 APP_FILE = os.path.abspath(__file__)
 UPDATE_FILES = ("camui.py",)
+# «vigilar sola, sin avisos» (casilla oculta, ver UpdateDialog): comprobación aparte de la
+# normal (update_auto_check, una vez al abrir, con su propia hora de descanso), para quien
+# quiera ver aplicarse una publicación nueva sin tener que cerrar y abrir cam-ui a mano
+SILENT_WATCH_INTERVAL_MS = 60000
 
 
 def _resolve_tool(name, env_var, default):
@@ -1399,10 +1403,12 @@ google-cast-launcher{display:none;width:34px;height:34px;vertical-align:middle;c
     <button id="addcam">&#128241; A&ntilde;adir c&aacute;mara del m&oacute;vil</button>
   </div>
   <div id="casthelp">Usa el icono <b>&laquo;Convertir en Chromecast&raquo;</b> de tu propio
-    navegador &mdash; cam-ui no necesita nada más, le pasa esta misma pantalla. En Chrome o
-    Edge: men&uacute; &#8942; &rarr; Guardar y compartir &rarr; Convertir en
-    Chromecast&hellip; (puedes fijar el icono en la barra para la próxima vez). Firefox y
-    Safari no lo traen integrado.</div>
+    navegador &mdash; cam-ui no necesita nada más, le pasa esta misma pantalla. Lo traen
+    Chrome y Edge, en el men&uacute; &#8942; (en el PC, dentro de «Guardar y compartir»).
+    <b>Muchos navegadores NO lo traen</b> &mdash; Firefox, Safari, y tambi&eacute;n el propio
+    de algunos m&oacute;viles (como el de Xiaomi/MIUI). Si el tuyo no lo tiene: abre esta
+    misma direcci&oacute;n con Chrome, o hazlo desde el PC con cam-ui (&laquo;Abrir en
+    VLC&raquo; &rarr; Renderizador).</div>
   <div id="casterr"></div>
 </div>
 <audio id="a" src="/audio.mp3" preload="none"></audio>
@@ -4432,8 +4438,55 @@ class UpdateDialog:
                       "sola (con su copia de seguridad de siempre) y el programa se reinicia solo, "
                       "sin ningún aviso que haya que confirmar."
                  ).pack(anchor="w", pady=(2, 0))
+        # --- casilla oculta: vigilar y actualizar sola mientras esté abierto, sin ningún aviso
+        # -- ni siquiera esta ventana -- en cuanto se publique algo nuevo. Pensada para probar
+        # publicaciones seguidas, no para el uso normal: empieza invisible y solo aparece con un
+        # atajo secreto (Ctrl+Shift+Alt+F12, con Win pulsada) mientras esta ventana tenga el
+        # foco; una vez activada se queda visible (para poder apagarla sin tener que buscarla de
+        # nuevo), y al apagarla vuelve a esconderse.
+        self.var_silent_watch = tk.BooleanVar(value=bool(update_state().get("silent_watch")))
+        self.chk_silent_watch = ttk.Checkbutton(
+            frm, text="Vigilar sola, sin avisos: actualizar en cuanto se publique una versión nueva",
+            variable=self.var_silent_watch, command=self._silent_watch_toggled)
+        self.lbl_silent_watch = ttk.Label(
+            frm, style="Muted.TLabel", wraplength=590, justify="left",
+            text="Comprueba cada minuto mientras cam-ui esté abierto (no solo al arrancar). Si "
+                 "hay una versión nueva, la instala y reinicia sola -- sin preguntar nada, sin "
+                 "avisar de que se va a guardar una copia antes, sin abrir siquiera esta "
+                 "ventana. Sigue guardando esa copia igual que siempre, solo que sin decirlo.")
+        if self.var_silent_watch.get():
+            self.chk_silent_watch.pack(anchor="w")
+            self.lbl_silent_watch.pack(anchor="w", pady=(2, 0))
+        self._win_held = False
+        for ks in ("Super_L", "Super_R", "Win_L", "Win_R"):
+            # No todas las plataformas conocen todos estos keysyms (p.ej. X11 no tiene
+            # "Win_L"/"Win_R", solo "Super_L"/"Super_R"); sin el try/except, un bind() con un
+            # keysym que Tcl/Tk no reconoce lanza TclError y se cae toda la ventana.
+            try:
+                top.bind("<KeyPress-{0}>".format(ks), self._win_key_set(True))
+                top.bind("<KeyRelease-{0}>".format(ks), self._win_key_set(False))
+            except tk.TclError:
+                pass
+        top.bind("<Control-Shift-Alt-F12>", self._reveal_silent_watch)
         self._fill_local()
         self._buttons()
+
+    def _win_key_set(self, held):
+        return lambda _e=None: setattr(self, "_win_held", held)
+
+    def _reveal_silent_watch(self, _e=None):
+        if not self._win_held or self.chk_silent_watch.winfo_ismapped():
+            return
+        self.chk_silent_watch.pack(anchor="w")
+        self.lbl_silent_watch.pack(anchor="w", pady=(2, 0))
+
+    def _silent_watch_toggled(self):
+        on = bool(self.var_silent_watch.get())
+        update_state()["silent_watch"] = on
+        update_state_save()
+        if not on:
+            self.chk_silent_watch.pack_forget()
+            self.lbl_silent_watch.pack_forget()
 
     def _fill_local(self):
         loc = update_local_info()
@@ -4738,6 +4791,7 @@ class CamApp:
         root.bind("<Map>", self._on_map, add="+")
         root.after(900, self._tray_boot)
         root.after(12000, self.update_auto_check)
+        root.after(15000, self._silent_watch_tick)
         if self._vcam_cfg.get("on"):
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar
         if self._ip_cfg.get("on"):
@@ -5240,6 +5294,36 @@ class CamApp:
             update_state_save()
         if go:
             self.show_updates(check=False).apply_result(r)
+
+    def _silent_watch_tick(self):
+        """«Vigilar sola, sin avisos» (casilla oculta de UpdateDialog, tras su atajo
+        secreto): comprobación aparte de update_auto_check, repetida mientras el programa
+        esté abierto -- no una sola vez al arrancar. Con esa casilla apagada (el caso de
+        siempre) esto solo se reprograma solo, sin tocar la red para nada."""
+        try:
+            if (update_state().get("silent_watch") and not self.recording and not self.busy
+                    and not os.environ.get("CAMUI_OFFLINE")):
+                self._bg(update_check, self._silent_watch_checked)
+        except Exception:
+            log.error("vigilancia silenciosa de actualizaciones:\n%s", traceback.format_exc())
+        finally:
+            self.root.after(SILENT_WATCH_INTERVAL_MS, self._silent_watch_tick)
+
+    def _silent_watch_checked(self, r):
+        if not r.get("ok") or r.get("state") != "newer" or self.recording:
+            return
+        if not update_state().get("silent_watch"):
+            return                        # se apagó mientras se comprobaba
+        if self.busy:
+            return                        # se reintenta solo en la siguiente vuelta
+        log.info("vigilancia silenciosa: aplicando pack %s sin avisos", r["info"].get("pack"))
+        self._bg(lambda: _update_run(update_apply, r["info"]), self._silent_watch_applied)
+
+    def _silent_watch_applied(self, res):
+        if not res.get("ok"):
+            log.error("vigilancia silenciosa: no se pudo aplicar: %s", res.get("error"))
+            return                        # se reintenta solo en la siguiente vuelta
+        self.update_restart_app()
 
     def update_restart_app(self):
         """Reinicia cam-ui (pasados unos segundos) y cierra este con el guardado de siempre."""

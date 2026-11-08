@@ -1,5 +1,31 @@
 # Novedades de cam-ui
 
+## pack 20 — 2026.11.08
+- **Arreglado: en «En la red», el aviso de Chromecast decía que el navegador del móvil
+  «debe» traer la opción «Convertir en Chromecast», pero muchos navegadores propios de
+  fabricante (como el de Xiaomi/MIUI) no la traen y no hay ninguna opción que dar — el aviso
+  dejaba sin ninguna salida a quien le pasaba justo eso.** Ahora el aviso nombra el caso
+  (Firefox, Safari, y también navegadores de fabricante como el de Xiaomi) y da dos
+  alternativas que sí funcionan: abrir esa misma dirección con Chrome, o hacerlo desde el PC
+  con cam-ui («Abrir en VLC» → Renderizador).
+- **Nuevo: una casilla oculta «vigilar sola, sin avisos» para quien quiera que cam-ui se
+  actualice solo en cuanto salga una versión nueva, sin esperar a cerrar y volver a abrir el
+  programa.** Con el aviso normal («avisarme al abrir») o con «actualizar sola» (pack
+  anterior), cam-ui solo mira si hay algo nuevo una vez, al arrancar. Esta casilla añade un
+  vigilante que sigue mirando cada minuto mientras el programa esté abierto, y si encuentra
+  una versión nueva la instala y reinicia sola — sin preguntar nada, sin avisar siquiera de
+  que se va a guardar una copia antes (se sigue guardando igual que siempre, solo que sin
+  decirlo), y sin abrir la ventana de Actualizaciones para nada.
+  - Por ser algo tan silencioso, está escondida a propósito: no se ve en la ventana
+    «Actualizaciones» a menos que, con esa ventana abierta y con el foco, se pulse
+    **Mayús + Ctrl + Win + Alt + F12**. Una vez que se activa se queda visible (para poder
+    volver a apagarla sin tener que repetir el atajo); al apagarla, se esconde de nuevo al
+    instante.
+  - **Aviso honesto:** la parte de la tecla «Win» del atajo no se ha podido probar en un
+    Windows de verdad desde este entorno (aquí solo hay Linux) — Tk no tiene una forma
+    estándar de reconocer esa tecla igual en todos los sistemas, y Windows puede interceptarla
+    él mismo en ciertos casos. Si el atajo no responde en tu PC, es lo primero a revisar.
+
 ## pack 19 — 2026.11.08
 - **Arreglado: el botón «Añadir cámara del móvil» (pack 18), con esa función apagada, podía
   acabar en «No se pudo encender. Reintentar» aunque sí se encendiera.** La causa: solo se

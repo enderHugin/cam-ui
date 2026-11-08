@@ -274,6 +274,144 @@ finally:
     camui._ask_update_now = old_ask
 print("15) _update_probe_done sin auto_apply: sigue preguntando como antes: OK")
 
+# 16) «vigilar sola, sin avisos» (casilla oculta de UpdateDialog): _silent_watch_checked no
+#     debe tocar _bg para nada salvo que de verdad haya una version mas nueva, la casilla este
+#     activada, y no se este grabando ni ocupado con otra cosa a la vez.
+class _FakeApp2:
+    def __init__(self, silent_watch=True, recording=False, busy=False):
+        self.recording = recording
+        self.busy = busy
+        self.bg_calls = []
+        self.restart_calls = 0
+        self.root = _FakeRoot()
+        camui._UPDATE_ST = {"silent_watch": silent_watch}
+
+    def _bg(self, fn, done):
+        self.bg_calls.append((fn, done))
+
+    def update_restart_app(self):
+        self.restart_calls += 1
+
+    # delegan al metodo real -- hacen falta como atributos de verdad (no solo para llamarlos a
+    # mano desde la prueba) porque _silent_watch_checked/_silent_watch_tick los pasan como
+    # "done"/callback a self._bg, y acceder a self._silent_watch_applied, etc. fallaria si la
+    # clase fake no los tuviera definidos.
+    def _silent_watch_checked(self, r):
+        camui.CamApp._silent_watch_checked(self, r)
+
+    def _silent_watch_applied(self, res):
+        camui.CamApp._silent_watch_applied(self, res)
+
+    def _silent_watch_tick(self):
+        camui.CamApp._silent_watch_tick(self)
+
+
+class _FakeRoot:
+    def __init__(self):
+        self.after_calls = []
+
+    def after(self, ms, fn):
+        self.after_calls.append((ms, fn))
+
+
+r_newer2 = {"ok": True, "state": "newer", "info": {"pack": 123, "version": "1", "notes": ""}}
+r_same2 = {"ok": True, "state": "same", "info": {}}
+r_fail2 = {"ok": False, "error": "red caida"}
+
+for bad_r, why in [(r_same2, "mismo pack (state=same)"), (r_fail2, "ok=False")]:
+    fake = _FakeApp2(silent_watch=True)
+    camui.CamApp._silent_watch_checked(fake, bad_r)
+    assert fake.bg_calls == [], "no debia llamar a _bg con {0}".format(why)
+
+fake = _FakeApp2(silent_watch=True, recording=True)
+camui.CamApp._silent_watch_checked(fake, r_newer2)
+assert fake.bg_calls == [], "no debia aplicar nada mientras se esta grabando"
+
+fake = _FakeApp2(silent_watch=False)
+camui.CamApp._silent_watch_checked(fake, r_newer2)
+assert fake.bg_calls == [], "con la casilla apagada no debia llamar a _bg"
+
+fake = _FakeApp2(silent_watch=True, busy=True)
+camui.CamApp._silent_watch_checked(fake, r_newer2)
+assert fake.bg_calls == [], "ocupado con otra cosa (busy) no debia llamar a _bg"
+print("16) _silent_watch_checked no toca _bg salvo version nueva real, casilla activada, "
+      "y nada mas en marcha a la vez: OK")
+
+# 17) con todo en orden, _silent_watch_checked SI llama a _bg -- y lo que le pasa para
+#     ejecutar en el hilo de fondo (_update_run(update_apply, info)) de verdad instala la
+#     version nueva y guarda una copia de seguridad, igual que los demas caminos de aplicar.
+shutil.rmtree(camui.UPDATE_BACKUPS, ignore_errors=True)
+local_data2 = publish(10, notes="base para la vigilancia silenciosa")
+set_local(10, local_data2)
+remote_data2 = publish(11, notes="novedades silenciosas")
+r17 = camui.update_check()
+assert r17["ok"] and r17["state"] == "newer" and r17["info"]["pack"] == 11, r17
+
+fake = _FakeApp2(silent_watch=True)
+camui.CamApp._silent_watch_checked(fake, r17)
+assert len(fake.bg_calls) == 1, "debia llamar a _bg justo una vez"
+fn17, done17 = fake.bg_calls[0]
+backups_before = len(os.listdir(camui.UPDATE_BACKUPS)) if os.path.isdir(camui.UPDATE_BACKUPS) else 0
+res17 = fn17()                      # lo que de verdad correria en el hilo de fondo
+assert res17.get("ok") is True, "no se aplico de verdad la version nueva: {0}".format(res17)
+assert open(camui.APP_FILE, "rb").read() == remote_data2, "no se instalo de verdad la version nueva"
+backups_after = len(os.listdir(camui.UPDATE_BACKUPS))
+assert backups_after == backups_before + 1, "no se guardo la copia de seguridad de antes"
+print("17) _silent_watch_checked, con todo en orden, llama a _bg una vez -- y lo que le pasa "
+      "de verdad instala la version nueva y guarda su copia de seguridad, como siempre: OK")
+
+# 18) _silent_watch_applied: si la aplicacion salio bien, reinicia solo; si fallo, no reinicia
+#     nada (se reintentara solo en la siguiente vuelta del vigilante, sin avisar de nada).
+fake = _FakeApp2()
+camui.CamApp._silent_watch_applied(fake, res17)
+assert fake.restart_calls == 1, "debia reiniciar solo tras aplicar bien, sin preguntar nada"
+
+fake = _FakeApp2()
+camui.CamApp._silent_watch_applied(fake, {"ok": False, "error": "disco lleno"})
+assert fake.restart_calls == 0, "no debia reiniciar nada si la aplicacion fallo"
+print("18) _silent_watch_applied reinicia solo si de verdad se aplico bien, y no reinicia "
+      "nada si fallo (se reintenta solo, sin avisar): OK")
+
+# 19) _silent_watch_tick se reprograma siempre solo a si mismo (cada SILENT_WATCH_INTERVAL_MS),
+#     tanto con la casilla activada como apagada -- si no, el vigilante se pararia solo tras
+#     la primera vuelta.
+for sw in (True, False):
+    fake = _FakeApp2(silent_watch=sw)
+    camui.CamApp._silent_watch_tick(fake)
+    assert fake.root.after_calls == [(camui.SILENT_WATCH_INTERVAL_MS, fake._silent_watch_tick)], \
+        "no se reprogramo solo (silent_watch={0}): {1}".format(sw, fake.root.after_calls)
+print("19) _silent_watch_tick se reprograma siempre solo, este activada la casilla o no: OK")
+
+# 20) _silent_watch_tick solo toca la red (llama a _bg) si la casilla esta activada, y respeta
+#     las mismas protecciones que el resto del programa: nada de tocar la red mientras se esta
+#     grabando, ni mientras ya hay otra cosa en marcha (busy), ni en modo sin red de las pruebas.
+fake = _FakeApp2(silent_watch=True)
+camui.CamApp._silent_watch_tick(fake)
+assert len(fake.bg_calls) == 1, "con la casilla activada si debia llamar a _bg"
+assert fake.bg_calls[0][1] == fake._silent_watch_checked
+
+fake = _FakeApp2(silent_watch=False)
+camui.CamApp._silent_watch_tick(fake)
+assert fake.bg_calls == [], "con la casilla apagada no debia tocar la red para nada"
+
+fake = _FakeApp2(silent_watch=True, recording=True)
+camui.CamApp._silent_watch_tick(fake)
+assert fake.bg_calls == [], "no debia tocar la red mientras se esta grabando"
+
+fake = _FakeApp2(silent_watch=True, busy=True)
+camui.CamApp._silent_watch_tick(fake)
+assert fake.bg_calls == [], "no debia tocar la red si ya hay otra cosa en marcha (busy)"
+
+os.environ["CAMUI_OFFLINE"] = "1"
+try:
+    fake = _FakeApp2(silent_watch=True)
+    camui.CamApp._silent_watch_tick(fake)
+    assert fake.bg_calls == [], "no debia tocar la red en modo sin red (CAMUI_OFFLINE)"
+finally:
+    del os.environ["CAMUI_OFFLINE"]
+print("20) _silent_watch_tick solo toca la red con la casilla activada, y respeta grabando / "
+      "busy / sin-red igual que el resto del programa: OK")
+
 srv.shutdown()
 other.shutdown()
 shutil.rmtree(WORK, ignore_errors=True)
