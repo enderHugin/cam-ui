@@ -6,6 +6,7 @@ en un navegador de verdad (Chromium vía Playwright) se comprobó a mano al aña
 deja una comprobación ligera, sin esa dependencia extra ni ffmpeg, de que el HTML/CSS/JS
 servidos siguen teniendo las piezas que hacen falta. El propio ffmpeg de HLS (lo que hay detrás
 de /cast.m3u8) se prueba aparte, de verdad, en tests/unit_hls.py."""
+import json
 import os
 import sys
 import time
@@ -118,15 +119,17 @@ print("7) el script del SDK de Cast es «async» (no bloquea la página sin inte
 # 8) el botón «Añadir cámara del móvil» está SIEMPRE a la vista (antes se escondía del todo si
 #    esa función no estaba encendida -- pero entonces, en el móvil, parecía que el botón no
 #    existía); sin ningún PhoneCamHub enlazado (srv.phonecam sigue en None), el hueco de su
-#    dirección se sirve vacío y el propio botón, al pulsarlo, lo dice en vez de navegar a ningún
-#    sitio
+#    dirección se sirve vacío y el propio botón, al pulsarlo, pide por su cuenta que se encienda
+#    («/addcam/start») en vez de solo decir que hay que ir antes a Ajustes a mano
 assert 'id="addcam"' in body, "falta el botón «Añadir cámara del móvil»"
 assert "#addcam{display:none" not in body.replace(" ", ""), \
     "el botón de añadir cámara debería estar siempre a la vista, encendida o no esa función"
 assert 'addCamUrl = "";' in body, \
     "sin ningún móvil que añadir (PhoneCamHub no enlazado), el hueco debería quedar vacío"
-assert "Actívala en Ajustes" in body, \
-    "al pulsarlo sin esa función encendida, debería decirlo en vez de ir a ningún sitio"
+assert "Actívala en Ajustes" not in body, \
+    "ya no debería decir eso: ahora debe encenderla ella sola, sin ir a Ajustes a mano"
+assert '"/addcam/start"' in body, \
+    "al pulsarlo sin esa función encendida, debería pedir que se encienda sola"
 # «mute»/«vol» sí siguen ocultos por una regla de la hoja de estilos hasta que se activan --
 # ocultos por esa regla, no por un estilo en línea: vaciar el estilo en línea (style.display =
 # "") NO la quita -- hace falta un valor de verdad (comprobado con un Chromium real: con "" "
@@ -184,6 +187,94 @@ assert expect_label in err_body, \
     "el enlace del 404 debería decir «{0}», no el genérico «En la red» de antes".format(expect_label)
 print("10) una dirección que no existe aquí da un 404 de verdad (HTML, con enlace a «cam-ui@"
       "<host>»), no un archivo vacío sin Content-Type OK")
+
+# 11) «/addcam/start» (lo que pide el botón «Añadir cámara del móvil» cuando esa función está
+#     apagada) sin ningún PhoneCamHub enlazado no puede encender nada -- debe dar un error claro
+#     (503 con algo de JSON), no un 200 vacío ni un 404 como si la dirección no existiera
+req11 = urllib.request.Request("http://127.0.0.1:{0}/addcam/start".format(PORT), data=b"",
+                                method="POST")
+try:
+    urllib.request.urlopen(req11, timeout=5)
+    raise SystemExit("«/addcam/start» sin ninguna cámara de móvil enlazada debería fallar")
+except urllib.error.HTTPError as e:
+    assert e.code == 503, e.code
+    err11 = json.loads(e.read().decode("utf-8"))
+assert err11.get("error"), "el error debería explicar algo, no venir vacío"
+print("11) «/addcam/start» sin ninguna cámara de móvil enlazada da un error claro (503), no un "
+      "200 vacío ni un 404 OK")
+
+# 12) con un PhoneCamHub de verdad enlazado pero todavía apagado, y sin nadie que atienda
+#     phonecam_remote_q (aquí no hay ninguna CamApp real, solo este IpServer suelto),
+#     «/addcam/start» debe dejar de verdad el aviso en esa cola -- para que quien sí la
+#     atienda (CamApp._tick) lo encuentre -- y, al no encenderse nadie, rendirse con el mismo
+#     error claro del paso 11 tras esperar un rato de verdad, no quedarse colgado para siempre
+hub2 = camui.PhoneCamHub(deque(), deque())
+remote_q = deque()
+srv.phonecam = hub2
+srv.phonecam_remote_q = remote_q
+t0 = time.time()
+try:
+    req12 = urllib.request.Request("http://127.0.0.1:{0}/addcam/start".format(PORT), data=b"",
+                                    method="POST")
+    try:
+        urllib.request.urlopen(req12, timeout=8)
+        raise SystemExit("«/addcam/start» debería fallar si nadie la enciende de verdad")
+    except urllib.error.HTTPError as e:
+        assert e.code == 503, e.code
+    elapsed = time.time() - t0
+finally:
+    srv.phonecam = None
+    srv.phonecam_remote_q = None
+assert remote_q and remote_q[0] is True, \
+    "«/addcam/start» debería haber dejado el aviso en phonecam_remote_q para que _tick() lo " \
+    "recoja (aquí no hay ninguna CamApp real que lo haga por sí sola)"
+assert 3.0 <= elapsed <= 6.0, \
+    "debería esperar unos segundos de verdad antes de rendirse, no fallar al instante ni " \
+    "quedarse colgado ({0:.1f}s)".format(elapsed)
+print("12) «/addcam/start», si nadie la enciende a tiempo, deja de verdad el aviso en la cola "
+      "para quien la atienda y se rinde con un error claro tras esperar un rato (no se queda "
+      "colgado para siempre) OK")
+
+# 13) con ese mismo mecanismo, pero esta vez con «alguien» atendiendo la cola de verdad (un hilo
+#     que hace exactamente lo que hace CamApp._tick() -- encenderla en cuanto llega el aviso --
+#     sin necesitar ninguna CamApp ni Tk para probarlo), «/addcam/start» sí debe acabar
+#     devolviendo la dirección real de «/add», de punta a punta
+PHONECAM_PORT3 = 58405
+hub3 = camui.PhoneCamHub(deque(), deque())
+remote_q3 = deque()
+srv.phonecam = hub3
+srv.phonecam_remote_q = remote_q3
+stop3 = threading.Event()
+
+
+def _fake_tick():
+    while not stop3.is_set():
+        while remote_q3:
+            remote_q3.popleft()
+            if not hub3.active:
+                hub3.start(PHONECAM_PORT3)
+        time.sleep(0.02)
+
+
+th3 = threading.Thread(target=_fake_tick, daemon=True)
+th3.start()
+try:
+    req13 = urllib.request.Request("http://127.0.0.1:{0}/addcam/start".format(PORT), data=b"",
+                                    method="POST")
+    with urllib.request.urlopen(req13, timeout=8) as r:
+        assert r.status == 200
+        body13 = json.loads(r.read().decode("utf-8"))
+finally:
+    stop3.set()
+    th3.join(timeout=2)
+    hub3.stop()
+    srv.phonecam = None
+    srv.phonecam_remote_q = None
+expect_url3 = "https://{0}:{1}/add".format(expect_host, PHONECAM_PORT3)
+assert body13.get("url") == expect_url3, (body13, expect_url3)
+print("13) «/addcam/start», con alguien atendiendo esa cola de verdad (como haría CamApp._tick, "
+      "aunque aquí sin ninguna CamApp ni Tk), sí la enciende y devuelve la dirección real de "
+      "«/add», de punta a punta OK")
 
 stop.set()
 srv.release()

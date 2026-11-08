@@ -1,5 +1,21 @@
 # Novedades de cam-ui
 
+## pack 18 — 2026.11.08
+- **El botón «Añadir cámara del móvil» de «En la red» (pack 16) ya no dice «Actívala en
+  Ajustes, en el PC» si esa función está apagada: ahora la enciende él solo**, al momento, y
+  lleva directo a «/add» — nunca hace falta ir antes a la pestaña Ajustes a mano. Sigue
+  protegido igual que siempre: aunque cualquiera de la wifi pueda encenderla así, emparejar un
+  móvil de verdad sigue haciendo falta ver el QR en la propia pantalla del PC (ver el punto
+  siguiente), así que solo puede hacerlo quien esté delante de ella.
+- **El QR de emparejamiento aparece ahora también en un diálogo flotante, al instante, encima
+  de lo que sea que haya abierto en ese momento** — antes solo se veía dentro de la pestaña
+  «Ajustes»; si no se estaba ya ahí, parecía que pulsar el botón del móvil no había hecho nada.
+  Se cierra solo en cuanto ese móvil se empareja o si nadie lo lee a tiempo, con su propio
+  botón «Cerrar» además.
+- **En «/add», el aviso de arriba («Pidiendo permiso de cámara…», luego «Busca con la cámara
+  el código QR…») oscurecía más de la cuenta la imagen en directo que hay justo debajo** — se
+  ha aligerado para que se vea mejor la cámara mientras se busca el QR.
+
 ## pack 17 — 2026.11.08
 - **Arreglado (en «En la red», viéndolo de verdad desde un Android o un iPad): la barra de
   botones de abajo quedaba cortada o se salía de la pantalla, y en el iPad no se veía ningún

@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 17                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 18                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1472,8 +1472,9 @@ document.addEventListener("click", function (e) {
   if (!castErr.contains(e.target)) { castErr.classList.remove("show"); }
 });
 // botón «Añadir cámara del móvil»: siempre a la vista -- si la función ya está encendida (ver
-// _serve_page), lleva directo a la dirección de «/add»; si no, lo dice, en vez de llevar a una
-// dirección que todavía no existe
+// _serve_page), lleva directo a la dirección de «/add»; si no, le pide al propio PC que se
+// encienda sola (/addcam/start) y, en cuanto está lista, lleva igualmente a esa dirección --
+// nunca hace falta ir antes a Ajustes a mano
 var addcam = document.getElementById("addcam"), addCamUrl = "__PHONECAM_ADD_URL__";
 var addcamLabel = addcam.textContent;
 addcam.onclick = function () {
@@ -1481,8 +1482,18 @@ addcam.onclick = function () {
     location.href = addCamUrl;
     return;
   }
-  addcam.textContent = "Actívala en Ajustes, en el PC";
-  setTimeout(function () { addcam.textContent = addcamLabel; }, 2500);
+  addcam.disabled = true;
+  addcam.textContent = "Encendiendo…";
+  fetch("/addcam/start", {method: "POST"}).then(function (r) {
+    return r.json();
+  }).then(function (data) {
+    if (!data || !data.url) { throw new Error("sin url"); }
+    location.href = data.url;
+  }).catch(function () {
+    addcam.disabled = false;
+    addcam.textContent = "No se pudo encender. Reintentar";
+    setTimeout(function () { addcam.textContent = addcamLabel; }, 3000);
+  });
 };
 window["__onGCastApiAvailable"] = function (isAvailable) {
   if (!isAvailable || typeof cast === "undefined") { return; }
@@ -1560,17 +1571,70 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_404()
 
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/addcam/start":
+            self._addcam_start()
+        else:
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
+    def _this_host(self):
+        ips = _local_ips()
+        host = ips[0] if ips else (self.server.server_address[0] or "127.0.0.1")
+        return "127.0.0.1" if host in ("0.0.0.0", "") else host
+
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode("utf-8")
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _addcam_start(self):
+        """El propio botón «Añadir cámara del móvil» de esta página, cuando «Cámara del
+        móvil» todavía no está encendida en el PC: en vez de decir «actívala a mano en
+        Ajustes», pide aquí que se encienda ella sola. Este hilo (uno por petición, igual que
+        el resto de _MjpegHandler) no puede tocar Tk directamente -- solo deja el aviso en
+        phonecam_remote_q, que _tick() recoge en el hilo de Tk (mismo mecanismo que
+        _phonecam_q/_phonecam_pair_q) -- y aquí se espera un momento a que ese encendido
+        termine (es solo abrir dos sockets, nunca tarda) para poder devolver ya mismo la
+        dirección real de «/add» a la que el móvil debe ir. El emparejamiento en sí sigue
+        protegido igual que siempre: aunque cualquiera de la wifi pueda encenderla así, el QR
+        para emparejarse solo aparece en la propia pantalla del PC (ver PhoneCamQrDialog), así
+        que sigue haciendo falta estar delante de ella para leerlo."""
+        owner = self.server.owner
+        q = getattr(owner, "phonecam_remote_q", None)
+        phonecam = getattr(owner, "phonecam", None)
+        if q is None or phonecam is None:
+            self._send_json(503, {"error": "No disponible."})
+            return
+        if not phonecam.active:
+            q.append(True)
+        deadline = time.time() + 4.0
+        while not phonecam.active and time.time() < deadline:
+            time.sleep(0.05)
+        if not phonecam.active:
+            self._send_json(503, {"error": "No se pudo encender la cámara del móvil."})
+            return
+        url = "https://{0}:{1}/add".format(self._this_host(), phonecam.port)
+        self._send_json(200, {"url": url})
+
     def _send_404(self):
         # antes esto no llevaba ni Content-Type ni cuerpo -- un navegador de móvil (Safari o
         # Chrome en iOS, p. ej. al escribir «/add» aquí por error, pensando en el puerto de la
         # cámara del móvil y no en este) no sabe qué hacer con eso y ofrece «descargar» un
         # archivo vacío con un nombre inventado, en vez de avisar sin más de que esa dirección
         # no existe -- de ahí este HTML mínimo, con enlace de vuelta a «/».
-        ips = _local_ips()
-        host = ips[0] if ips else (self.server.server_address[0] or "127.0.0.1")
-        if host in ("0.0.0.0", ""):
-            host = "127.0.0.1"
-        label = "cam-ui@{0}".format(host)
+        label = "cam-ui@{0}".format(self._this_host())
         body = ("<!doctype html><html><head><meta charset=\"utf-8\">"
                 "<title>cam-ui</title></head><body style=\"background:#000;color:#ddd;"
                 "font-family:system-ui,sans-serif;text-align:center;padding:18vh 16px\">"
@@ -1612,17 +1676,16 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
     def _serve_page(self):
         try:
             owner = self.server.owner
-            ips = _local_ips()
-            host = ips[0] if ips else (self.server.server_address[0] or "127.0.0.1")
-            if host in ("0.0.0.0", ""):
-                host = "127.0.0.1"
+            host = self._this_host()
             cast_url = "http://{0}:{1}/cast.m3u8".format(host, owner.port)
             # un nombre que de verdad dice QUÉ PC es (si hay más de uno en la wifi, "en la red"
             # a secas no distingue nada) -- se usa aquí (título de la pestaña) y en la propia tele
             # al enviar a Chromecast (ver __onGCastApiAvailable, con location.hostname)
             label = "cam-ui@{0}".format(host)
-            # el botón «Añadir cámara del móvil» solo tiene una dirección de verdad a la que ir
-            # si esa función está encendida (si no, el propio botón lo dice en vez de navegar)
+            # el botón «Añadir cámara del móvil» solo trae aquí la dirección final si esa función
+            # ya está encendida; si no, se deja vacío y es el propio botón, al pulsarlo, quien
+            # pide por su cuenta que se encienda sola (ver /addcam/start, _addcam_start) en vez
+            # de decir que hay que ir antes a Ajustes a mano
             phonecam = getattr(owner, "phonecam", None)
             add_url = ("https://{0}:{1}/add".format(host, phonecam.port)
                        if phonecam is not None and phonecam.active else "")
@@ -1801,6 +1864,8 @@ class IpServer:
         self._closed = False
         self.phonecam = None         # PhoneCamHub, si CamApp lo enlaza (ver CamApp.__init__) --
                                       # para el botón «Añadir cámara del móvil» de esta página
+        self.phonecam_remote_q = None   # cola para encenderla sola al pulsar ese botón sin
+                                         # tenerla ya encendida (ver _MjpegHandler._addcam_start)
         # ---- sonido (opcional: solo si hay micrófono en el plan) --------------------------
         self.aport = 0
         self.a_received = self.a_dropped = 0
@@ -2729,7 +2794,8 @@ button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:7px;
        padding:10px 18px;font-size:15px;cursor:pointer}
 button:active{background:#3a3f48}
 #status{position:absolute;top:0;left:0;right:0;padding:10px 14px;font-size:14px;text-align:center;
-        background:linear-gradient(rgba(0,0,0,.65),transparent);color:#ddd}
+        background:linear-gradient(rgba(0,0,0,.32),transparent);color:#ddd;
+        text-shadow:0 1px 3px rgba(0,0,0,.9)}
 #status.err{color:#ffd9dc}
 #status.ok{color:#bdf5c5}
 #retry{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:82%;
@@ -4486,6 +4552,64 @@ def _update_run(fn, *a):
         return {"ok": False, "error": str(e) or e.__class__.__name__}
 
 
+class PhoneCamQrDialog:
+    """Ventanita flotante, siempre encima, con el QR de un emparejamiento nuevo de «Cámara del
+    móvil» (ver CamApp._phonecam_show_pair_qr): aparece sola, al instante, encima de cualquier
+    pestaña que haya abierta en ese momento -- antes el QR solo se veía dentro de la pestaña
+    «Ajustes», así que si no se estaba ya ahí parecía que no había pasado nada. Se cierra sola en
+    cuanto ese móvil se empareja de verdad (CamApp._phonecam_auto_add) o a los
+    PHONECAM_PAIR_TIMEOUT segundos si nadie lo lee a tiempo -- en ambos casos por el mismo camino
+    de siempre, _phonecam_clear_pair_qr(); también con su propio botón «Cerrar», con Esc, o sin
+    más al cerrar la ventana."""
+
+    def __init__(self, parent, photo, url):
+        self.alive = True
+        self.photo = photo             # referencia viva: sin esto Tk se olvida de la imagen
+        top = self.top = tk.Toplevel(parent)
+        top.title("Cámara del móvil")
+        top.configure(bg=PANEL)
+        top.resizable(False, False)
+        try:
+            top.attributes("-topmost", True)
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        top.bind("<Destroy>", lambda e: setattr(self, "alive", False) if e.widget is top else None)
+        frm = ttk.Frame(top, padding=16)
+        frm.pack()
+        ttk.Label(frm, text="Un móvil está esperando", font=("Segoe UI", 12, "bold")).pack()
+        if photo is not None:
+            ttk.Label(frm, image=photo).pack(pady=(10, 10))
+        else:
+            # sin el paquete «qrcode» no hay imagen que mostrar, pero la dirección en texto
+            # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo)
+            ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
+                     justify="left").pack(pady=(10, 10))
+        ttk.Label(frm, text="Apunta con su cámara a este código para añadirlo al mosaico.",
+                 style="Muted.TLabel", wraplength=320, justify="left").pack()
+        ttk.Button(frm, text="Cerrar", command=self.close).pack(pady=(14, 0))
+        try:
+            top.update_idletasks()
+            px, py = parent.winfo_rootx(), parent.winfo_rooty()
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            w, h = top.winfo_width(), top.winfo_height()
+            x = px + max(0, (pw - w) // 2)
+            y = py + max(0, (ph - h) // 2)
+            top.geometry("+{0}+{1}".format(x, y))
+        except Exception:
+            pass
+
+    def close(self):
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+
+
 class CamApp:
     def __init__(self, root):
         self.root = root
@@ -4566,10 +4690,13 @@ class CamApp:
         self._phonecam_cfg = pc
         self._phonecam_q = deque()                           # móviles nuevos de verdad (otro hilo)
         self._phonecam_pair_q = deque()                      # QR de emparejamiento pendiente de mostrar
+        self._phonecam_remote_q = deque()                    # aviso de «enciéndela sola» (otro hilo)
         self.phonecam = PhoneCamHub(self._phonecam_q, self._phonecam_pair_q)  # cámara del móvil
         self.ipsrv.phonecam = self.phonecam    # para el botón «Añadir cámara del móvil» de /
+        self.ipsrv.phonecam_remote_q = self._phonecam_remote_q   # para que ese botón la encienda
         self.phonecam_on = False
         self._phonecam_pair_shown_at = 0.0
+        self._phonecam_qr_dialog = None                      # diálogo flotante del QR (ver más abajo)
         self.startup_on = startup_get()                      # se comprueba de verdad, no se guarda aparte
         try:
             self.eng.startup_time = min(8.0, max(0.5, float(self._cfg.get("startup", 2.5))))
@@ -7836,7 +7963,10 @@ class CamApp:
     def _phonecam_show_pair_qr(self, url):
         """Un móvil llegó a «/add» y ya tiene el permiso de su cámara (ver /add/ready): se
         muestra aquí el QR de esa sesión nueva para que lo lea él mismo, con su propia cámara,
-        sin salir de esa página -- en cuanto lo lea, navega solo a la URL que lleva dentro."""
+        sin salir de esa página -- en cuanto lo lea, navega solo a la URL que lleva dentro. Se
+        muestra en dos sitios a la vez: dentro de la pestaña «Ajustes» (de siempre) y en un
+        diálogo flotante que aparece al instante encima de lo que sea que haya abierto en ese
+        momento (PhoneCamQrDialog) -- así no hace falta estar ya en esa pestaña para verlo."""
         if getattr(self, "lbl_phonecamqr", None) is None or not self.phonecam_on:
             return
         photo = self._phonecam_qr_photo(url)
@@ -7849,6 +7979,21 @@ class CamApp:
             # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo)
             "Un móvil está esperando: abre esto a mano en su navegador: {0}".format(url))
         self._phonecam_pair_shown_at = time.time()
+        self._phonecam_popup_qr(url, photo)
+
+    def _phonecam_popup_qr(self, url, photo):
+        self._phonecam_close_popup_qr()
+        try:
+            self._phonecam_qr_dialog = PhoneCamQrDialog(self.root, photo, url)
+        except Exception as e:
+            log.info("no se pudo abrir el diálogo del QR de la cámara del móvil: %r", e)
+            self._phonecam_qr_dialog = None
+
+    def _phonecam_close_popup_qr(self):
+        dlg = getattr(self, "_phonecam_qr_dialog", None)
+        if dlg is not None:
+            dlg.close()
+        self._phonecam_qr_dialog = None
 
     def _phonecam_clear_pair_qr(self):
         self._phonecam_pair_shown_at = 0.0
@@ -7860,6 +8005,7 @@ class CamApp:
                 text="Accede a {0} desde el navegador del móvil para añadir la cámara de tu "
                      "móvil a la lista de dispositivos.".format(self._phonecam_add_url())
                 if self.phonecam_on else "No está activa.")
+        self._phonecam_close_popup_qr()
 
     def _on_phonecamport_commit(self, *_a):
         if self._loading or not self.phonecam_on:
@@ -8110,6 +8256,16 @@ class CamApp:
                 self._phonecam_auto_add(name, url)
             while self._phonecam_pair_q:
                 self._phonecam_show_pair_qr(self._phonecam_pair_q.popleft())
+            while self._phonecam_remote_q:
+                self._phonecam_remote_q.popleft()
+                # un móvil pidió, desde el botón de «En la red», que se encienda sola -- sin
+                # diálogos que puedan bloquear nada (quiet=True: puede llegar en cualquier
+                # momento, sin que haya nadie delante del PC); si de verdad se encendió, se
+                # guarda como encendida (igual que el interruptor de Ajustes) y se avisa en la
+                # barra de estado, sin bloquear nada, por si hay alguien mirando
+                if not self.phonecam_on and self._phonecam_enable(quiet=True):
+                    self.save_config()
+                    self._set_status("Un móvil encendió «Cámara del móvil» para añadirse.")
             while self._bgq:
                 done, res, gen = self._bgq.popleft()
                 if gen != self._gen:

@@ -6,14 +6,19 @@ ventana, URL del QR reutilizando esa sesión) y el envío de un fotograma real p
 que haría el navegador de un móvil tras leer ese QR con su propia cámara -- y se comprueba que
 la cámara aparece sola en la lista (Treeview), marcada y lista para grabar. El propio JS del
 navegador (jsQR leyendo un QR de verdad en un Chromium real) se valida aparte, con Playwright,
-no aquí. Hace falta un display (Xvfb en Linux: xvfb-run -a python3 tests/ui_phonecam.py), porque
-lo que se comprueba es precisamente la ventana real, no solo la lógica de más abajo."""
+no aquí. También comprueba que el QR de emparejamiento aparece (y se cierra solo) en un diálogo
+flotante aparte, y que el botón «Añadir cámara del móvil» de la página «En la red» enciende
+«Cámara del móvil» por sí sola -- de verdad, con el servidor HTTP real y el bucle normal de la
+ventana -- en vez de decir que hay que ir antes a Ajustes a mano. Hace falta un display (Xvfb en
+Linux: xvfb-run -a python3 tests/ui_phonecam.py), porque lo que se comprueba es precisamente la
+ventana real, no solo la lógica de más abajo."""
 import os
 import io
 import json
 import re
 import ssl
 import sys
+import threading
 import time
 import urllib.request
 
@@ -102,7 +107,14 @@ with urllib.request.urlopen(req_ready, timeout=5, context=ctx) as r:
 assert pump(lambda: app.lbl_phonecamqr.cget("image") != ""), \
     "el QR de emparejamiento nunca apareció en la ventana"
 assert "esperando" in app.lbl_phonecamurl.cget("text").lower()
-print("3) «/add/ready» hace que la ventana muestre un QR de emparejamiento nuevo OK")
+# también debe aparecer, al instante, en un diálogo flotante aparte -- no solo dentro de la
+# pestaña «Ajustes» (que, en una ventana real, podría no ser la que está abierta en ese momento)
+dlg = getattr(app, "_phonecam_qr_dialog", None)
+assert dlg is not None, "el diálogo flotante del QR debería haberse abierto"
+assert dlg.alive and dlg.top.winfo_exists(), \
+    "el diálogo flotante del QR debería ser una ventana real, abierta de verdad"
+print("3) «/add/ready» hace que la ventana muestre un QR de emparejamiento nuevo, también en "
+      "un diálogo flotante aparte OK")
 
 # 4) ese QR lleva dentro una URL de «/cam?t=...&sid=...» -- el móvil la lee con su propia
 #    cámara (eso ya se probó de verdad, con jsQR en un navegador real, aparte de esta prueba) y
@@ -146,7 +158,10 @@ assert app.vdev[label]["spec"].startswith("http://127.0.0.1:")
 assert app.vdev[label].get("phone") is True
 assert pump(lambda: app.lbl_phonecamqr.cget("image") == ""), \
     "el QR de emparejamiento debería retirarse solo en cuanto el móvil se añade"
-print("6) la cámara del móvil se añade sola a app.order, marcada (use=True), y el QR se retira OK")
+assert getattr(app, "_phonecam_qr_dialog", None) is None, \
+    "el diálogo flotante del QR debería cerrarse solo en cuanto el móvil se añade"
+print("6) la cámara del móvil se añade sola a app.order, marcada (use=True), y el QR se retira "
+      "(también el diálogo flotante) OK")
 
 # 7) también aparece en el Treeview de verdad (la lista que ve la persona), marcada con ☑
 row = app.tree.item(label) if label in app.tree.get_children() else None
@@ -169,10 +184,15 @@ req_ready2 = urllib.request.Request(
 with urllib.request.urlopen(req_ready2, timeout=5, context=ctx) as r:
     assert r.status == 200
 assert pump(lambda: app.lbl_phonecamqr.cget("image") != ""), "el segundo QR nunca apareció"
+dlg2 = app._phonecam_qr_dialog
+assert dlg2 is not None and dlg2.alive, "el diálogo flotante del segundo QR debería estar abierto"
 app._phonecam_pair_shown_at = time.time() - camui.PHONECAM_PAIR_TIMEOUT - 1   # como si hiciera rato
 assert pump(lambda: app.lbl_phonecamqr.cget("image") == ""), \
     "el QR caducado debería retirarse solo en el siguiente _tick()"
-print("9) un QR de emparejamiento sin escanear a tiempo se retira solo OK")
+assert not dlg2.alive and app._phonecam_qr_dialog is None, \
+    "el diálogo flotante debería cerrarse solo también al caducar, no solo al emparejar"
+print("9) un QR de emparejamiento sin escanear a tiempo se retira solo (también su diálogo "
+      "flotante) OK")
 
 # 10) desactivar «Cámara del móvil» para el servidor de verdad
 app._phonecam_disable()
@@ -180,5 +200,63 @@ assert not app.phonecam_on and not app.phonecam.active
 assert app.lbl_phonecamurl.cget("text") == "No está activa."
 print("10) «Apagar cámara del móvil» para el servidor de verdad y limpia la etiqueta OK")
 
+# 11) el botón «Añadir cámara del móvil» de la página «En la red» (:8554), con «Cámara del
+#     móvil» todavía apagada (como la pulsaría un móvil que llega ahí por su cuenta): ya no debe
+#     decir «ve a Ajustes, en el PC» -- debe encenderla él mismo, de verdad, y devolver la
+#     dirección real de «/add», todo con el servidor HTTP real de «En la red» y el bucle normal
+#     de la ventana (_tick -> _phonecam_remote_q -> _phonecam_enable)
+assert not app.phonecam_on and not app.phonecam.active
+app.v_ipport.set("58622")
+assert app._ip_enable(), "no se pudo abrir «En la red» de verdad para esta prueba"
+_addcam_result = {}
+
+
+def _post_addcam_start():
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:{0}/addcam/start".format(app.ipsrv.port), data=b"", method="POST")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            _addcam_result["status"] = r.status
+            _addcam_result["body"] = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        _addcam_result["error"] = repr(e)
+
+
+th = threading.Thread(target=_post_addcam_start, daemon=True)
+th.start()
+assert pump(lambda: "status" in _addcam_result or "error" in _addcam_result, timeout=8), \
+    "la petición POST a «/addcam/start» nunca contestó"
+th.join(timeout=1)
+assert "error" not in _addcam_result, _addcam_result.get("error")
+assert _addcam_result["status"] == 200, _addcam_result
+assert app.phonecam_on and app.phonecam.active, \
+    "el propio _tick() debería haber encendido «Cámara del móvil» sola, sin ir a Ajustes"
+assert _addcam_result["body"].get("url") == app._phonecam_add_url(), \
+    (_addcam_result["body"], app._phonecam_add_url())
+print("11) el botón «Añadir cámara del móvil» de «En la red», con esa función todavía apagada, "
+      "la enciende ella sola (sin «ve a Ajustes, en el PC») y devuelve la dirección real de "
+      "«/add» OK")
+
+# 12) ese encendido remoto queda guardado como encendida, igual que si se hubiera tocado el
+#     interruptor de Ajustes a mano -- para que siga encendida la próxima vez que se abra cam-ui
+with open(camui.CONFIG, encoding="utf-8") as f:
+    saved2 = json.load(f)
+assert saved2.get("phonecam", {}).get("on") is True, saved2.get("phonecam")
+print("12) ese encendido remoto se guarda como encendida (persiste igual que el interruptor de "
+      "Ajustes) OK")
+
+# 13) con «Cámara del móvil» ya encendida, ese mismo botón no vuelve a pasar por «/addcam/start»
+#     -- _serve_page ya le da la dirección final de «/add» de antemano (esto ya se prueba sin
+#     Tk, con un IpServer suelto, en tests/unit_viewer_html.py; aquí solo se confirma que, con
+#     la ventana real, esa dirección servida coincide con la de verdad)
+with urllib.request.urlopen("http://127.0.0.1:{0}/".format(app.ipsrv.port), timeout=5) as r:
+    home_body = r.read().decode("utf-8")
+assert 'addCamUrl = "{0}";'.format(app._phonecam_add_url()) in home_body, \
+    "con la cámara del móvil ya encendida, «/» debería servir ya su dirección real de «/add»"
+print("13) con «Cámara del móvil» ya encendida, «/» sirve directamente su dirección real de "
+      "«/add» (sin pasar por «/addcam/start») OK")
+
+app._phonecam_disable()
+app._ip_disable()
 root.destroy()
 print("TODO OK ui_phonecam")

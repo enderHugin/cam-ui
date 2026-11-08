@@ -36,13 +36,15 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 - Cámara del móvil, sin instalar nada: pestaña Ajustes → «Añadir un dispositivo móvil como
   cámara» muestra la dirección fija `/add` para abrir en el navegador del móvil; esa página pide
   permiso de cámara y, en cuanto lo concede, usa esa misma cámara para leer un QR. El QR que debe
-  leer aparece en ese momento en la propia ventana del PC (no antes), así que solo puede
+  leer aparece en ese momento en la propia ventana del PC (en un diálogo flotante, al instante,
+  encima de lo que sea que haya abierto en ese momento — no antes), así que solo puede
   emparejarse quien esté delante del ordenador viendo su pantalla. Al leerlo, el móvil navega solo
   a la página de captura y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un
   certificado propio (aviso de "conexión no privada" la primera vez, normal). De momento solo
   vídeo; no se guarda entre reinicios. Si ya tienes abierta la página de «En la red» (puerto
   distinto, sin certificado) en el móvil, ahí también hay un botón «Añadir cámara del móvil» que
-  lleva directo a esa misma dirección `/add`, sin tener que teclear ni recordar el otro puerto.
+  lleva directo a esa misma dirección `/add`, sin tener que teclear ni recordar el otro puerto —
+  y, si esa función todavía está apagada en el PC, ese mismo botón la enciende él solo.
 - Salida en red: ver (y, si hay micrófono, oír) el mosaico en vivo desde otro PC o móvil de la
   misma wifi con el navegador (menú Modo, botón de la barra, pestaña Ajustes o bandeja), con
   pantalla completa; funciona a la vez que se graba y que la cámara virtual, es solo para ver
