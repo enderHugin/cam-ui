@@ -1,5 +1,25 @@
 # Novedades de cam-ui
 
+## pack 16 — 2026.11.08
+- **Arreglado: pedir «/add» en la dirección equivocada (o cualquier otra que no existe) hacía
+  que Safari o Chrome en el iPhone ofrecieran "descargar" un archivo vacío con un nombre
+  inventado, en vez de avisar sin más de que esa dirección no existe.** La causa: esa respuesta
+  se servía sin ningún `Content-Type` ni cuerpo, y así es como algunos navegadores de móvil
+  tratan una página que no saben interpretar. Ahora da un 404 normal, con su página y un enlace
+  de vuelta.
+  - La confusión más probable que llevaba hasta ahí: «En la red» (ver el mosaico desde el
+    móvil) y «Cámara del móvil» (añadir el móvil como cámara, ver pack 15) usan direcciones con
+    puertos distintos y parecidos (terminan en 4 y en 5) — fácil de mezclar al teclearla a mano.
+  - Para que no haga falta acordarse de ningún puerto nuevo: si la página de «En la red» ya
+    está abierta en el móvil, ahí aparece un botón **«Añadir cámara del móvil»** que lleva
+    directo a la dirección de «/add» correcta, de un toque.
+  - La propia página de «/add» tenía un párrafo largo explicando lo que iba a pasar antes de
+    siquiera tocar nada; se ha quitado, y se deja solo un botón sencillo («Escanear código QR»).
+  - De paso, arreglado otro fallo que llevaba ahí desde antes (en la página de «En la red»): al
+    pulsar «Activar sonido», el icono de silenciar y el control de volumen no llegaban a verse
+    nunca, aunque el sonido sí sonaba — por el mismo motivo de fondo (un valor que no bastaba
+    para contradecir una regla de estilo). Ahora sí aparecen.
+
 ## pack 15 — 2026.11.08
 - **Rehecho: cómo se añade la cámara de un móvil (ver pack 14).** Antes, activarlo dejaba en
   pantalla una dirección fija con un código de sesión de un solo uso, pensada para no adivinarse

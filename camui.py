@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 15                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 16                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1369,6 +1369,7 @@ button:active{background:#3a3f48}
 button:disabled{opacity:.6}
 #mute{display:none;padding:9px 12px}
 #vol{display:none;width:90px;vertical-align:middle;accent-color:#6aa0ff}
+#addcam{display:none}
 #casthelp{display:none;position:absolute;left:50%;bottom:64px;transform:translateX(-50%);
   max-width:320px;background:#20242b;border:1px solid #4a4f58;border-radius:8px;
   padding:10px 14px;font-size:13px;line-height:1.45;color:#ddd;text-align:left;z-index:2}
@@ -1390,6 +1391,7 @@ google-cast-launcher{display:none;width:34px;height:34px;vertical-align:middle;c
     <button id="full">&#10021; Pantalla completa</button>
     <button id="castBtn">&#128250; Chromecast</button>
     <google-cast-launcher id="castLauncher"></google-cast-launcher>
+    <button id="addcam">&#128241; A&ntilde;adir c&aacute;mara del m&oacute;vil</button>
   </div>
   <div id="casthelp">Usa el icono <b>&laquo;Convertir en Chromecast&raquo;</b> de tu propio
     navegador &mdash; cam-ui no necesita nada más, le pasa esta misma pantalla. En Chrome o
@@ -1408,8 +1410,12 @@ function setMuteIcon() {
 snd.onclick = function () {
   a.play().then(function () {
     snd.style.display = "none";
-    mute.style.display = "";
-    vol.style.display = "";
+    // "" no basta: #mute/#vol se ocultan por una regla de la hoja de estilos (#mute{display:
+    // none}), no por un estilo en línea, así que vaciar el estilo en línea no la quita -- hace
+    // falta un valor de verdad que pese más (comprobado con un navegador real, ver el mismo
+    // arreglo en el botón «Añadir cámara del móvil» de más abajo)
+    mute.style.display = "inline-block";
+    vol.style.display = "inline-block";
     setMuteIcon();
   }).catch(function () {
     snd.textContent = "\\u26A0 Sin sonido (reinicia la pagina)";
@@ -1460,6 +1466,14 @@ function showCastErr(msg) {
 document.addEventListener("click", function (e) {
   if (!castErr.contains(e.target)) { castErr.classList.remove("show"); }
 });
+// botón «Añadir cámara del móvil»: solo aparece si la función está encendida (ver _serve_page);
+// lleva a la propia dirección de «/add», con su https de siempre
+var addcam = document.getElementById("addcam"), addCamUrl = "__PHONECAM_ADD_URL__";
+if (addCamUrl) {
+  addcam.style.display = "inline-block";     // "" no quita el "display:none" de la hoja de
+                                              // estilos -- ver el mismo arreglo en «snd.onclick»
+  addcam.onclick = function () { location.href = addCamUrl; };
+}
 window["__onGCastApiAvailable"] = function (isAvailable) {
   if (!isAvailable || typeof cast === "undefined") { return; }
   try {
@@ -1530,11 +1544,28 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         elif path.startswith("/cast/"):
             self._serve_hls_segment(path[len("/cast/"):])
         else:
-            try:
-                self.send_response(404)
-                self.end_headers()
-            except Exception:
-                pass
+            self._send_404()
+
+    def _send_404(self):
+        # antes esto no llevaba ni Content-Type ni cuerpo -- un navegador de móvil (Safari o
+        # Chrome en iOS, p. ej. al escribir «/add» aquí por error, pensando en el puerto de la
+        # cámara del móvil y no en este) no sabe qué hacer con eso y ofrece «descargar» un
+        # archivo vacío con un nombre inventado, en vez de avisar sin más de que esa dirección
+        # no existe -- de ahí este HTML mínimo, con enlace de vuelta a «/».
+        body = ("<!doctype html><html><head><meta charset=\"utf-8\">"
+                "<title>cam-ui</title></head><body style=\"background:#000;color:#ddd;"
+                "font-family:system-ui,sans-serif;text-align:center;padding:18vh 16px\">"
+                "<p>Esta dirección no existe aquí.</p>"
+                "<p><a href=\"/\" style=\"color:#6aa0ff\">Ir a «En la red»</a></p>"
+                "</body></html>").encode("utf-8")
+        try:
+            self.send_response(404)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def do_OPTIONS(self):
         # El propio Chromecast (su receptor «de serie») es quien pide /cast.m3u8 y /cast/*.ts
@@ -1567,7 +1598,13 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             if host in ("0.0.0.0", ""):
                 host = "127.0.0.1"
             cast_url = "http://{0}:{1}/cast.m3u8".format(host, owner.port)
-            body = _VIEWER_HTML.replace(b"__CAM_CAST_URL__", cast_url.encode("utf-8"))
+            # el botón «Añadir cámara del móvil» solo tiene sentido (y solo se muestra, ver JS)
+            # si esa función está encendida de verdad -- si no, el hueco se deja vacío
+            phonecam = getattr(owner, "phonecam", None)
+            add_url = ("https://{0}:{1}/add".format(host, phonecam.port)
+                       if phonecam is not None and phonecam.active else "")
+            body = (_VIEWER_HTML.replace(b"__CAM_CAST_URL__", cast_url.encode("utf-8"))
+                                 .replace(b"__PHONECAM_ADD_URL__", add_url.encode("utf-8")))
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -1738,6 +1775,8 @@ class IpServer:
         self._jpeg = None
         self._jgen = 0
         self._closed = False
+        self.phonecam = None         # PhoneCamHub, si CamApp lo enlaza (ver CamApp.__init__) --
+                                      # para el botón «Añadir cámara del móvil» de esta página
         # ---- sonido (opcional: solo si hay micrófono en el plan) --------------------------
         self.aport = 0
         self.a_received = self.a_dropped = 0
@@ -2677,13 +2716,9 @@ button:active{background:#3a3f48}
 <body>
 <div id="stage">
   <video id="v" autoplay playsinline muted></video>
-  <div id="status">Vamos a a&ntilde;adir la c&aacute;mara de este m&oacute;vil al mosaico de
-    cam-ui.</div>
+  <div id="status">A&ntilde;adir c&aacute;mara del m&oacute;vil</div>
   <div id="big">
-    <div>Al tocar «Escanear» se pedir&aacute; permiso de c&aacute;mara, solo para leer el
-    c&oacute;digo QR que va a aparecer en la ventana de cam-ui, en el ordenador. Apunta con el
-    m&oacute;vil a la pantalla del PC en cuanto se encienda la c&aacute;mara.</div>
-    <button id="start">&#9654;&#65039; Escanear</button>
+    <button id="start">&#128247; Escanear c&oacute;digo QR</button>
   </div>
 </div>
 <script>
@@ -4503,6 +4538,7 @@ class CamApp:
         self._phonecam_q = deque()                           # móviles nuevos de verdad (otro hilo)
         self._phonecam_pair_q = deque()                      # QR de emparejamiento pendiente de mostrar
         self.phonecam = PhoneCamHub(self._phonecam_q, self._phonecam_pair_q)  # cámara del móvil
+        self.ipsrv.phonecam = self.phonecam    # para el botón «Añadir cámara del móvil» de /
         self.phonecam_on = False
         self._phonecam_pair_shown_at = 0.0
         self.startup_on = startup_get()                      # se comprueba de verdad, no se guarda aparte

@@ -11,7 +11,9 @@ import sys
 import time
 import socket
 import threading
+import urllib.error
 import urllib.request
+from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import camui
@@ -38,13 +40,13 @@ def _sender():
 threading.Thread(target=_sender, daemon=True).start()
 time.sleep(0.3)
 
-try:
+
+def _get_root():
     with urllib.request.urlopen("http://127.0.0.1:{0}/".format(PORT), timeout=5) as resp:
-        body = resp.read().decode("utf-8")
-        ctype = resp.headers.get("Content-Type", "")
-finally:
-    stop.set()
-    srv.release()
+        return resp.read().decode("utf-8"), resp.headers.get("Content-Type", "")
+
+
+body, ctype = _get_root()
 
 assert "text/html" in ctype, ctype
 print("1) «/» sirve el HTML del visor (IpServer real, sin mocks) OK")
@@ -63,8 +65,10 @@ expect_host = ips[0] if ips else "127.0.0.1"
 expect_url = "http://{0}:{1}/cast.m3u8".format(expect_host, PORT)
 assert expect_url in body, \
     "la URL de /cast.m3u8 servida no es la esperada ({0})".format(expect_url)
-assert body == raw.replace("__CAM_CAST_URL__", expect_url), \
-    "el resto de la página cambió al rellenar el hueco (debería ser solo ese trozo)"
+# sin ningún PhoneCamHub enlazado (srv.phonecam sigue en None, ver IpServer.__init__), el hueco
+# del botón «Añadir cámara del móvil» se deja vacío -- y el botón, oculto (ver el paso 8 de abajo)
+assert body == raw.replace("__CAM_CAST_URL__", expect_url).replace("__PHONECAM_ADD_URL__", ""), \
+    "el resto de la página cambió al rellenar el hueco (debería ser solo esos dos trozos)"
 print("2) el hueco de la URL de Chromecast se rellena con una dirección real ({0}:{1}) "
       "OK".format(expect_host, PORT))
 
@@ -104,4 +108,67 @@ assert '<script async src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.j
     "página si no hay internet"
 print("7) el script del SDK de Cast es «async» (no bloquea la página sin internet) OK")
 
+# 8) el botón «Añadir cámara del móvil» está en la página, oculto por CSS de entrada -- y, como
+#    este IpServer todavía no tiene ningún PhoneCamHub enlazado (srv.phonecam sigue en None),
+#    el hueco de su dirección se sirve vacío, así que el JS no debería llegar a mostrarlo
+assert 'id="addcam"' in body, "falta el botón «Añadir cámara del móvil»"
+assert "#addcam{display:none" in body.replace(" ", ""), \
+    "el botón de añadir cámara debería empezar oculto"
+assert 'addCamUrl = "";' in body, \
+    "sin ningún móvil que añadir (PhoneCamHub no enlazado), el hueco debería quedar vacío"
+# ocultos por una regla de la hoja de estilos (#mute/#vol/#addcam{display:none}), no por un
+# estilo en línea: vaciar el estilo en línea (style.display = "") NO la quita -- hace falta un
+# valor de verdad (comprobado con un Chromium real: con "" seguían sin verse tras "activarlos").
+# «mute»/«vol» ya se ocultaban así desde antes de hoy; quedó sin notar hasta ahora.
+for nombre, patron_malo, patron_bueno in (
+        ("mute", 'mute.style.display = "";', 'mute.style.display = "inline-block";'),
+        ("vol", 'vol.style.display = "";', 'vol.style.display = "inline-block";'),
+        ("addcam", 'addcam.style.display = "";', 'addcam.style.display = "inline-block";')):
+    assert patron_malo not in body, \
+        "«{0}» seguiría oculto para siempre: vaciar el estilo en línea no basta".format(nombre)
+    assert patron_bueno in body, "falta el valor de verdad que de verdad lo muestra ({0})".format(nombre)
+print("8) el botón «Añadir cámara del móvil» está, oculto, y sin dirección mientras esa función "
+      "no esté encendida -- y, junto con «mute»/«vol», con un valor de display que de verdad "
+      "los muestra (no el \"\" que se quedaba sin efecto) OK")
+
+# 9) con un PhoneCamHub de verdad enlazado y encendido (como hace CamApp.__init__ con
+#    self.ipsrv.phonecam = self.phonecam), «/» rellena ese mismo hueco con la dirección real de
+#    «/add», y el JS la usa para mostrar el botón -- de principio a fin, sin mocks
+PHONECAM_PORT = 58403
+hub = camui.PhoneCamHub(deque(), deque())
+hub.start(port=PHONECAM_PORT)
+try:
+    srv.phonecam = hub
+    body2, _ = _get_root()
+finally:
+    hub.stop()
+    srv.phonecam = None
+expect_add_url = "https://{0}:{1}/add".format(expect_host, PHONECAM_PORT)
+assert expect_add_url in body2, \
+    "la dirección de «/add» servida no es la esperada ({0})".format(expect_add_url)
+assert 'addCamUrl = "{0}";'.format(expect_add_url) in body2, \
+    "el JS no quedó con la dirección real de «/add»"
+print("9) con la cámara del móvil encendida de verdad, «/» lleva al botón su dirección real de "
+      "«/add» ({0}) OK".format(expect_add_url))
+
+# 10) una dirección que no existe en este servidor (como «/add», si alguien la escribe aquí por
+#     confundirla con el puerto de la cámara del móvil -- justo lo que pasó de verdad) ya no se
+#     queda sin Content-Type ni cuerpo: antes, eso hacía que Safari/Chrome en el iPhone ofrecieran
+#     "descargar" un archivo vacío con un nombre inventado, en vez de avisar de que esa dirección
+#     no existe. Ahora da un 404 de verdad, con HTML y un enlace de vuelta.
+try:
+    urllib.request.urlopen("http://127.0.0.1:{0}/add".format(PORT), timeout=5)
+    raise SystemExit("«/add» no existe en este servidor -- debería dar 404")
+except urllib.error.HTTPError as e:
+    assert e.code == 404, e.code
+    assert "text/html" in e.headers.get("Content-Type", ""), \
+        "el 404 debería llevar Content-Type text/html (antes no llevaba ninguno)"
+    err_body = e.read().decode("utf-8")
+assert err_body, "el 404 debería traer algo de HTML, no un cuerpo vacío"
+assert 'href="/"' in err_body, "el 404 debería enlazar de vuelta a «/»"
+print("10) una dirección que no existe aquí da un 404 de verdad (HTML, con enlace a «/»), no un "
+      "archivo vacío sin Content-Type OK")
+
+stop.set()
+srv.release()
 print("TODO OK unit_viewer_html")
