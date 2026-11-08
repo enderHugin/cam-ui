@@ -24,7 +24,12 @@ os.makedirs(HOME, exist_ok=True)
 camui.UPDATE_STATE = os.path.join(HOME, "actualizacion.json")
 camui._UPDATE_ST = {}
 camui.HERE = HOME
-camui.CFG_FILE = os.path.join(HOME, "config.json")
+# OJO: lo que de verdad lee/escribe _read_config()/save_config() es la constante CONFIG, no
+# «CFG_FILE» (ese nombre no existe en camui.py -- fijarlo no aísla nada y esta prueba acaba
+# leyendo/escribiendo el config.json real del proyecto).
+camui.CONFIG = os.path.join(HOME, "config.json")
+if os.path.isfile(camui.CONFIG):            # arranque limpio: sin restos de una ejecución anterior
+    os.remove(camui.CONFIG)
 camui.LOGFILE = os.path.join(HOME, "camui.log")
 
 root = tk.Tk()
@@ -83,6 +88,10 @@ top.destroy()
 #    toda la pestaña -- y la lista debe tener su propia barra de desplazamiento.
 # ---------------------------------------------------------------------------------------------
 app = camui.CamApp(root)
+# sin esto, a los ~900ms CamApp._tray_boot() (al no estar pystray instalado, ni haber ya una
+# respuesta guardada) abre un messagebox.askyesno() de verdad -- un diálogo modal que bajo Xvfb,
+# sin nadie para pulsarlo, se queda colgado para siempre y nunca llega a soltar root.update().
+app._tray_asked = True
 # sin cámaras de verdad en este entorno, la vista previa "siempre activa" de cam-ui no consigue
 # arrancar nunca y _tick() reintenta sola una y otra vez (_on_died -> _start_preview), lo que
 # deja app.busy=True en momentos impredecibles -- esto no es lo que se está probando aquí (ver

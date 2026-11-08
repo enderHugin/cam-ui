@@ -42,8 +42,10 @@ import io
 import re
 import sys
 import json
+import ssl
 import math
 import time
+import secrets
 import argparse
 import queue
 import socket
@@ -77,8 +79,8 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
-APP_VERSION = "2026.11.07"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 13                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
+APP_PACK = 14                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2421,6 +2423,453 @@ def run_diagnostics(ffmpeg, cams, audios, input_fn=None, secs=6, solo_secs=4):
     return "\n".join(L)
 
 
+# ---- Cámara del móvil, por el navegador (sin instalar nada): el móvil abre una página HTTPS
+# que sirve el propio cam-ui, da permiso de cámara y manda fotogramas sueltos (JPEG, uno tras
+# otro -- no un vídeo contenedor como WebM: una foto suelta que se pierde no rompe nada, con
+# una wifi real de por medio es mucho más robusto que depender de un flujo continuo sin huecos).
+# cam-ui los vuelve a publicar en un segundo servidor, este SOLO en 127.0.0.1 (invisible desde
+# la wifi: nadie más que el propio ffmpeg de este equipo puede pedirlo), como si fuera una
+# cámara de red MJPEG de toda la vida -- el resto del programa (mosaico, grabación, el aviso
+# «Sin señal» si se cae…) no sabe ni le importa que el origen sea un móvil y no una app como
+# IP Webcam: es literalmente el mismo camino de siempre (ver _is_net_spec/_net_video_input).
+#
+# El servidor que SÍ mira hacia la wifi (el que sirve la página y recibe las fotos) va por
+# HTTPS con un certificado autofirmado -- no es capricho: los navegadores no dejan usar
+# getUserMedia() (la cámara) desde una página servida por http:// normal salvo que sea
+# "localhost", así que no hay otra forma de que esto funcione desde el móvil. La primera vez
+# el navegador avisará de que la conexión "no es privada" (un clic en Avanzado -> Continuar),
+# pero solo esa vez por aparato mientras el certificado no cambie -- por eso se genera una sola
+# vez y se reutiliza, en vez de uno nuevo cada arranque. Además hace falta saber la dirección
+# exacta (con un token largo al final) para poder entrar: no es un sitio abierto a cualquiera
+# en la wifi que se la encuentre por casualidad, porque aquí sí que añadiría una cámara de
+# verdad al mosaico (a diferencia de «En la red», que solo deja ver).
+PHONECAM_PORT_DEFAULT = 8555
+PHONECAM_FPS = 8                       # de sobra para verlo bien; cuida la batería y la wifi del móvil
+PHONECAM_JPEG_QUALITY = 0.75
+PHONECAM_JPEG_MAX = 4 * 1024 * 1024    # tope de tamaño por fotograma recibido, contra abusos
+PHONECAM_STALE_SECONDS = 8             # sin fotogramas nuevos este tiempo: la cámara se da por caída
+PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan del todo (no acumular)
+PHONECAM_CERT_FILE = os.path.join(HERE, "phonecam_cert.pem")
+PHONECAM_KEY_FILE = os.path.join(HERE, "phonecam_key.pem")
+
+
+def _phonecam_cert_covers(cert_path, ips):
+    """True si el certificado ya guardado cubre (en su SAN) todas las IPs dadas -- si el
+    equipo cambió de red/IP desde que se generó, hay que rehacerlo o el navegador se queja de
+    un fallo distinto (nombre no coincide) en vez del aviso normal de "no privada"."""
+    try:
+        from cryptography import x509
+        with open(cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        have = set(str(ip) for ip in san.get_values_for_type(x509.IPAddress))
+        return all(ip in have for ip in ips)
+    except Exception:
+        return False
+
+
+def _phonecam_ensure_cert():
+    """Certificado autofirmado para la página de la cámara del móvil (hace falta para poder
+    usar getUserMedia() -- ver el comentario de más arriba). Se guarda junto a camui.py y se
+    reutiliza mientras siga cubriendo la IP actual del equipo, para no hacer saltar el aviso
+    de "conexión no privada" del navegador más veces de las necesarias."""
+    import ipaddress
+    ips = [ip for ip in _local_ips() if ip]
+    if (os.path.isfile(PHONECAM_CERT_FILE) and os.path.isfile(PHONECAM_KEY_FILE) and
+            _phonecam_cert_covers(PHONECAM_CERT_FILE, ips)):
+        return PHONECAM_CERT_FILE, PHONECAM_KEY_FILE
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "cam-ui (red local)")])
+    alt_names = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+    for ip in ips:
+        try:
+            alt_names.append(x509.IPAddress(ipaddress.ip_address(ip)))
+        except ValueError:
+            pass
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(alt_names), critical=False)
+            .sign(key, hashes.SHA256()))
+    with open(PHONECAM_KEY_FILE, "wb") as f:
+        f.write(key.private_bytes(serialization.Encoding.PEM,
+                                  serialization.PrivateFormat.TraditionalOpenSSL,
+                                  serialization.NoEncryption()))
+    with open(PHONECAM_CERT_FILE, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    return PHONECAM_CERT_FILE, PHONECAM_KEY_FILE
+
+
+_PHONECAM_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>cam-ui &middot; c&aacute;mara del m&oacute;vil</title>
+<style>
+html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden}
+#stage{position:relative;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#000}
+video{width:100%;height:100%;object-fit:contain;background:#000}
+#bar{position:absolute;left:0;right:0;bottom:0;display:none;gap:10px;justify-content:center;
+     padding:12px;background:linear-gradient(transparent,rgba(0,0,0,.65))}
+button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:7px;
+       padding:10px 18px;font-size:15px;cursor:pointer}
+button:active{background:#3a3f48}
+button:disabled{opacity:.6}
+#status{position:absolute;top:0;left:0;right:0;padding:10px 14px;font-size:14px;text-align:center;
+        background:linear-gradient(rgba(0,0,0,.65),transparent);color:#ddd}
+#status.err{color:#ffd9dc}
+#status.ok{color:#bdf5c5}
+#big{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:82%;
+     text-align:center;font-size:15px;line-height:1.5;background:#20242b;
+     border:1px solid #4a4f58;border-radius:10px;padding:18px 22px}
+#big button{margin-top:14px}
+</style></head>
+<body>
+<div id="stage">
+  <video id="v" autoplay playsinline muted></video>
+  <div id="status">Esta p&aacute;gina convierte la c&aacute;mara de este m&oacute;vil en una
+    c&aacute;mara m&aacute;s del mosaico de cam-ui.</div>
+  <div id="big">
+    <div>Al tocar «Empezar» se pedir&aacute; permiso de c&aacute;mara; en cuanto lo des,
+    aparecer&aacute;s solo en el mosaico de cam-ui, sin tocar nada m&aacute;s all&iacute;.
+    Mant&eacute;n esta p&aacute;gina abierta mientras quieras seguir emitiendo.</div>
+    <button id="start">&#9654;&#65039; Empezar</button>
+  </div>
+  <div id="bar">
+    <button id="flip">&#128260; Cambiar c&aacute;mara</button>
+    <button id="stop">&#9208;&#65039; Detener</button>
+  </div>
+</div>
+<script>
+var sid = "__PHONECAM_SID__";
+var v = document.getElementById("v");
+var statusEl = document.getElementById("status");
+var big = document.getElementById("big");
+var bar = document.getElementById("bar");
+var canvas = document.createElement("canvas");
+var ctx2d = canvas.getContext("2d");
+var stream = null, timer = null, sending = false, facing = "environment", wakeLock = null;
+
+function setStatus(txt, cls) {
+  statusEl.textContent = txt;
+  statusEl.className = cls || "";
+}
+
+function sendFrame() {
+  if (sending || !stream || v.videoWidth === 0) { return; }
+  canvas.width = v.videoWidth;
+  canvas.height = v.videoHeight;
+  ctx2d.drawImage(v, 0, 0, canvas.width, canvas.height);
+  canvas.toBlob(function (blob) {
+    if (!blob) { return; }
+    sending = true;
+    fetch("/cam/ingest/" + sid, {method: "POST", body: blob})
+      .then(function (r) {
+        setStatus(r.ok ? "Enviando a cam-ui ✅" : "cam-ui no aceptó el fotograma (" + r.status + ")",
+                   r.ok ? "ok" : "err");
+      })
+      .catch(function () { setStatus("Sin conexión con cam-ui ahora mismo…", "err"); })
+      .finally(function () { sending = false; });
+  }, "image/jpeg", __PHONECAM_JPEG_QUALITY__);
+}
+
+function startCapture() {
+  navigator.mediaDevices.getUserMedia({
+    video: {facingMode: facing, width: {ideal: 1280}, height: {ideal: 720}}, audio: false
+  }).then(function (s) {
+    stream = s;
+    v.srcObject = s;
+    big.style.display = "none";
+    bar.style.display = "flex";
+    setStatus("Conectado — enviando a cam-ui…", "ok");
+    if (timer) { clearInterval(timer); }
+    timer = setInterval(sendFrame, __PHONECAM_INTERVAL_MS__);
+    if (navigator.wakeLock) {
+      navigator.wakeLock.request("screen").then(function (wl) { wakeLock = wl; }).catch(function () {});
+    }
+  }).catch(function (err) {
+    setStatus("No se pudo usar la cámara: " + err.message, "err");
+  });
+}
+
+function stopCapture() {
+  if (timer) { clearInterval(timer); timer = null; }
+  if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+  if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; }
+  v.srcObject = null;
+  big.style.display = "block";
+  bar.style.display = "none";
+  setStatus("Detenido. Toca «Empezar» para seguir.");
+}
+
+document.getElementById("start").onclick = function () {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus("Este navegador no deja usar la cámara aquí.", "err");
+    return;
+  }
+  startCapture();
+};
+document.getElementById("stop").onclick = stopCapture;
+document.getElementById("flip").onclick = function () {
+  facing = (facing === "environment") ? "user" : "environment";
+  if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); startCapture(); }
+};
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "visible" && stream && !wakeLock && navigator.wakeLock) {
+    navigator.wakeLock.request("screen").then(function (wl) { wakeLock = wl; }).catch(function () {});
+  }
+});
+</script>
+</body></html>
+"""
+_PHONECAM_HTML = _PHONECAM_HTML.replace(
+    "__PHONECAM_INTERVAL_MS__", str(int(round(1000.0 / PHONECAM_FPS)))
+).replace("__PHONECAM_JPEG_QUALITY__", str(PHONECAM_JPEG_QUALITY)).encode("utf-8")
+
+
+class PhoneCamHub:
+    """Recibe, por HTTPS, los fotogramas JPEG que manda el navegador de un móvil (ver
+    _PHONECAM_HTML) y los vuelve a publicar en un segundo servidor -- este solo en 127.0.0.1,
+    invisible desde la wifi -- como si fuera una cámara de red MJPEG de toda la vida. Cada móvil
+    que se conecta a «/cam» (con el token correcto) es una sesión nueva; en cuanto manda su
+    primer fotograma de verdad, se anota en new_cam_q para que CamApp la añada como cámara (eso
+    ocurre en el hilo de Tk, nunca aquí: estos servidores corren en sus propios hilos)."""
+
+    def __init__(self, new_cam_q):
+        self._new_cam_q = new_cam_q
+        self._lk = threading.Lock()
+        self._sessions = {}             # sid -> {"name", "jpeg", "ts", "gen", "announced"}
+        self.token = None
+        self.port = None
+        self._https_srv = None
+        self._local_srv = None
+
+    @property
+    def active(self):
+        return self._https_srv is not None
+
+    @property
+    def local_port(self):
+        return self._local_srv.server_address[1] if self._local_srv is not None else None
+
+    def n_sessions(self):
+        cutoff = time.time() - PHONECAM_STALE_SECONDS
+        with self._lk:
+            return sum(1 for s in self._sessions.values() if s["ts"] and s["ts"] >= cutoff)
+
+    def start(self, port=PHONECAM_PORT_DEFAULT):
+        """Lanza los dos servidores. Devuelve (puerto_https, token). OSError si el puerto
+        (o ninguno de los siguientes 20) está libre."""
+        if self.active:
+            return self.port, self.token
+        cert, key = _phonecam_ensure_cert()
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert, key)
+        self.token = secrets.token_urlsafe(16)
+        with self._lk:
+            self._sessions = {}
+        local_srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _PhoneCamLocalHandler)
+        local_srv.hub = self
+        threading.Thread(target=local_srv.serve_forever, daemon=True).start()
+        https_srv, last_err, p = None, None, int(port)
+        for _ in range(20):
+            try:
+                https_srv = http.server.ThreadingHTTPServer(("0.0.0.0", p), _PhoneCamHandler)
+                break
+            except OSError as e:
+                last_err = e
+                p += 1
+        if https_srv is None:
+            local_srv.shutdown()
+            local_srv.server_close()
+            raise last_err
+        https_srv.socket = ctx.wrap_socket(https_srv.socket, server_side=True)
+        https_srv.hub = self
+        threading.Thread(target=https_srv.serve_forever, daemon=True).start()
+        self._local_srv, self._https_srv, self.port = local_srv, https_srv, p
+        return self.port, self.token
+
+    def stop(self):
+        for srv in (self._https_srv, self._local_srv):
+            if srv is not None:
+                try:
+                    srv.shutdown()
+                    srv.server_close()
+                except Exception:
+                    pass
+        self._https_srv = self._local_srv = self.port = self.token = None
+        with self._lk:
+            self._sessions = {}
+
+    def new_session(self, name):
+        sid = secrets.token_urlsafe(9)
+        with self._lk:
+            used = {s["name"] for s in self._sessions.values()}
+            nm, n = name, 2
+            while nm in used:
+                nm = "{0} #{1}".format(name, n)
+                n += 1
+            self._sessions[sid] = {"name": nm, "jpeg": None, "ts": 0.0, "gen": 0, "announced": False}
+        return sid
+
+    def feed(self, sid, data):
+        """True si se aceptó (sesión válida). La primera vez que una sesión manda un fotograma
+        de verdad, se anota en new_cam_q -- exactamente una vez por sesión."""
+        announce = None
+        with self._lk:
+            s = self._sessions.get(sid)
+            if s is None:
+                return False
+            s["jpeg"], s["ts"], s["gen"] = data, time.time(), s["gen"] + 1
+            if not s["announced"]:
+                s["announced"] = True
+                announce = s["name"]
+        if announce is not None:
+            local_url = "http://127.0.0.1:{0}/phonecam/{1}.mjpg".format(self.local_port, sid)
+            self._new_cam_q.append((announce, local_url))
+        return True
+
+    def latest(self, sid):
+        with self._lk:
+            s = self._sessions.get(sid)
+            return None if s is None else (s["jpeg"], s["gen"], s["ts"])
+
+    def drop_stale(self):
+        """A ratos (como hls_idle_check): olvida del todo las sesiones caducadas hace mucho,
+        para no acumular móviles que se cerraron o cambiaron de wifi hace rato."""
+        cutoff = time.time() - PHONECAM_SESSION_MAX_AGE
+        with self._lk:
+            dead = [sid for sid, s in self._sessions.items() if s["ts"] and s["ts"] < cutoff]
+            for sid in dead:
+                del self._sessions[sid]
+
+
+class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
+    """Servidor HTTPS, en la wifi: sirve la página de captura (solo con el token correcto en
+    «?t=») y recibe los fotogramas que manda el móvil."""
+
+    def log_message(self, *_a):
+        pass
+
+    def do_GET(self):
+        hub = self.server.hub
+        path, _, qs = self.path.partition("?")
+        if path != "/cam":
+            self._send(404, b"", "text/plain")
+            return
+        token = ""
+        for part in qs.split("&"):
+            k, _, v = part.partition("=")
+            if k == "t":
+                token = v
+                break
+        if not hub.token or token != hub.token:
+            self._send(403, "Dirección no válida.".encode("utf-8"),
+                       "text/plain; charset=utf-8")
+            return
+        sid = hub.new_session("Móvil")
+        body = _PHONECAM_HTML.replace(b"__PHONECAM_SID__", sid.encode("ascii"))
+        self._send(200, body, "text/html; charset=utf-8", cache=False)
+
+    def do_POST(self):
+        hub = self.server.hub
+        path = self.path.split("?", 1)[0]
+        if not path.startswith("/cam/ingest/"):
+            self._send(404, b"", "text/plain")
+            return
+        sid = path[len("/cam/ingest/"):]
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = 0
+        if n <= 0 or n > PHONECAM_JPEG_MAX:
+            self._send(413, b"", "text/plain")
+            return
+        try:
+            data = self.rfile.read(n)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        ok = hub.feed(sid, data)
+        self._send(200 if ok else 404, b"", "text/plain")
+
+    def _send(self, code, body, ctype, cache=True):
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            if not cache:
+                self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+
+class _PhoneCamLocalHandler(http.server.BaseHTTPRequestHandler):
+    """Servidor solo en 127.0.0.1 (nunca en la wifi): aquí es donde ffmpeg va a buscar el
+    vídeo de cada móvil conectado, exactamente igual que pediría el de cualquier otra cámara
+    de red (ver _net_video_input) -- por eso basta con servir un MJPEG normal y corriente."""
+
+    def log_message(self, *_a):
+        pass
+
+    def do_GET(self):
+        hub = self.server.hub
+        path = self.path.split("?", 1)[0]
+        if not (path.startswith("/phonecam/") and path.endswith(".mjpg")):
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except Exception:
+                pass
+            return
+        sid = path[len("/phonecam/"):-len(".mjpg")]
+        if hub.latest(sid) is None:          # sesión que no existe (o ya olvidada): 404 de verdad,
+            try:                              # antes de comprometerse a un 200 -- así un ffmpeg
+                self.send_response(404)       # que reintente ve un fallo claro, no un 200 vacío
+                self.end_headers()
+            except Exception:
+                pass
+            return
+        boundary = "camuiphone"
+        try:
+            self.send_response(200)
+            self.send_header("Cache-Control", "no-cache, private")
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=" + boundary)
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        last = None
+        try:
+            while True:
+                r = hub.latest(sid)
+                if r is None:
+                    break
+                jpeg, gen, ts = r
+                if jpeg is None or time.time() - ts > PHONECAM_STALE_SECONDS:
+                    break                              # el móvil dejó de mandar: "Sin señal"
+                if gen == last:
+                    time.sleep(0.05)
+                    continue
+                last = gen
+                self.wfile.write(b"--" + boundary.encode() + b"\r\n")
+                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                self.wfile.write(("Content-Length: " + str(len(jpeg)) + "\r\n\r\n").encode())
+                self.wfile.write(jpeg)
+                self.wfile.write(b"\r\n")
+        except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+            pass
+
+
 class FFmpegEngine:
     def __init__(self, ffmpeg=None):
         self.ffmpeg = ffmpeg or FFMPEG
@@ -3897,6 +4346,11 @@ class CamApp:
         self.ipsrv = IpServer()                              # salida en red (ver desde otro equipo)
         self.eng.ipsrv = self.ipsrv
         self.ipout_on = False
+        pc = self._cfg.get("phonecam") if isinstance(self._cfg.get("phonecam"), dict) else {}
+        self._phonecam_cfg = pc
+        self._phonecam_q = deque()                           # móviles nuevos de verdad (otro hilo)
+        self.phonecam = PhoneCamHub(self._phonecam_q)         # cámara del móvil (por el navegador)
+        self.phonecam_on = False
         self.startup_on = startup_get()                      # se comprueba de verdad, no se guarda aparte
         try:
             self.eng.startup_time = min(8.0, max(0.5, float(self._cfg.get("startup", 2.5))))
@@ -3930,6 +4384,8 @@ class CamApp:
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar
         if self._ip_cfg.get("on"):
             self._ip_enable(quiet=True)
+        if self._phonecam_cfg.get("on"):
+            self._phonecam_enable(quiet=True)
 
     # ------------------------------------------------------------ modos: normal / compacto / mini
     def _cur_geo(self):
@@ -4497,6 +4953,9 @@ class CamApp:
         self.v_ipsize.trace_add("write", self._on_ipsize)
         iport = (self._cfg.get("ipout") or {}).get("port") if isinstance(self._cfg.get("ipout"), dict) else None
         self.v_ipport = t(value=str(iport or IP_PORT_DEFAULT))
+        pport = (self._cfg.get("phonecam") or {}).get("port") \
+            if isinstance(self._cfg.get("phonecam"), dict) else None
+        self.v_phonecamport = t(value=str(pport or PHONECAM_PORT_DEFAULT))
         self.v_avoff = tk.IntVar(value=int(c.get("av_offset", 0)))
         self.v_abuf = tk.IntVar(value=int(c.get("abuf", 50)))
         a = c.get("audio", {})
@@ -5104,6 +5563,33 @@ class CamApp:
                        "solo, sin nada más que instalar aquí. VLC no sabe enviar a AirPlay (solo "
                        "existe como función del propio macOS)."
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        pf = ttk.Labelframe(tab, text="Cámara del móvil (desde su navegador, sin instalar nada)")
+        pf.pack(fill="x", **pad)
+        self.btn_phonecam = ttk.Button(pf, text="📱  Activar cámara del móvil",
+                                       command=self.toggle_phonecam)
+        self.btn_phonecam.grid(row=0, column=0, sticky="w", padx=6, pady=(6, 6))
+        self._live.add(str(self.btn_phonecam))            # se puede apagar mientras se graba
+        ttk.Label(pf, text="Puerto").grid(row=0, column=1, sticky="e", padx=(12, 4))
+        e_pcport = ttk.Entry(pf, textvariable=self.v_phonecamport, width=8)
+        e_pcport.grid(row=0, column=2, sticky="w")
+        e_pcport.bind("<Return>", self._on_phonecamport_commit)
+        e_pcport.bind("<FocusOut>", self._on_phonecamport_commit)
+        self.lbl_phonecamurl = ttk.Label(pf, text="No está activa.", style="Muted.TLabel",
+                                         wraplength=380, justify="left")
+        self.lbl_phonecamurl.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
+        self.lbl_phonecamqr = ttk.Label(pf)
+        self.lbl_phonecamqr.grid(row=2, column=0, padx=6, pady=(2, 4), sticky="w")
+        ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Abre esa dirección (o el código QR) con el navegador del móvil, en la misma "
+                       "wifi, y toca «Empezar»: en cuanto des el permiso de cámara, el móvil aparece "
+                       "solo en el mosaico, como una cámara más, sin tocar nada aquí. La primera vez "
+                       "el navegador avisará de que la conexión «no es privada» -- es normal (es tu "
+                       "propio cam-ui, no hace falta un certificado de verdad para la wifi de casa), "
+                       "toca «Avanzado» y «Continuar»; no volverá a salir mientras no cambie la "
+                       "dirección. De momento solo vídeo, sin el sonido del móvil. La dirección lleva "
+                       "un código largo: solo quien la tenga (o escanee el QR) puede añadirse al "
+                       "mosaico, a diferencia de «En la red» (que es solo para ver)."
+                  ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
         ttk.Label(df, text="Carpeta").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -6352,7 +6838,11 @@ class CamApp:
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
         cfg["ipout"] = {"on": bool(self.ipout_on), "size": list(ip_size_value(self.v_ipsize.get())),
                         "port": self._ip_port()}
-        cfg["net_cams"] = self.net_cams
+        cfg["phonecam"] = {"on": bool(self.phonecam_on), "port": self._phonecam_port()}
+        # las cámaras de móvil se añaden solas cuando el móvil se conecta de verdad (su URL
+        # depende de la sesión en marcha, no sobrevive a cerrar cam-ui) -- no se guardan, para
+        # no dejar entradas "Sin señal" huérfanas la próxima vez que se abra el programa.
+        cfg["net_cams"] = {lab: d for lab, d in self.net_cams.items() if not d.get("phone")}
         try:
             with open(CONFIG, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -7033,6 +7523,140 @@ class CamApp:
         self.ipsrv.release()
         self._ip_enable()
 
+    # ------------------------------------------------------------ cámara del móvil
+    def toggle_phonecam(self, *_a):
+        """Activa / desactiva poder usar la cámara de un móvil (por su navegador) como cámara
+        de red más del mosaico -- ver PhoneCamHub. A diferencia de «En la red», esto no toca el
+        ffmpeg en marcha por sí solo: solo cuando un móvil se conecta de verdad se añade como
+        cámara (ver _phonecam_auto_add), con el mismo mecanismo de siempre para cámaras nuevas."""
+        if self.busy:
+            self._set_status("Un momento…")
+            return
+        if self.phonecam_on:
+            self._phonecam_disable()
+        else:
+            self._phonecam_enable()
+
+    def _phonecam_port(self):
+        try:
+            p = int(self.v_phonecamport.get())
+            if 1024 <= p <= 65535:
+                return p
+        except Exception:
+            pass
+        return PHONECAM_PORT_DEFAULT
+
+    def _phonecam_url(self):
+        ips = _local_ips()
+        host = ips[0] if ips else socket.gethostname()
+        return "https://{0}:{1}/cam?t={2}".format(host, self.phonecam.port, self.phonecam.token)
+
+    def _phonecam_qr_photo(self, url):
+        """Imagen (Tk) del código QR con la dirección, o None si falta el paquete «qrcode»
+        (opcional: sin él solo se pierde el QR, la dirección en texto sigue funcionando igual)."""
+        try:
+            import qrcode
+            img = qrcode.make(url, box_size=4, border=2).convert("RGB")
+            return ImageTk.PhotoImage(img)
+        except Exception as e:
+            log.info("QR de la cámara del móvil no disponible: %r", e)
+            return None
+
+    def _phonecam_enable(self, quiet=False):
+        """Enciende los dos servidores (ver PhoneCamHub). quiet: al arrancar, sin diálogos."""
+        try:
+            self.phonecam.start(self._phonecam_port())
+        except OSError as e:
+            log.error("cámara del móvil: no se pudo abrir: %s", e)
+            self._refresh_buttons()
+            msg = "No se pudo abrir el puerto {0} (¿ya está en uso? prueba con otro en «Ajustes»).".format(
+                self._phonecam_port())
+            if quiet:
+                self._later_status(msg)
+            else:
+                messagebox.showerror("Cámara del móvil", msg + "\n\n{0}".format(str(e).strip()[-300:]))
+            return False
+        except Exception as e:
+            log.error("cámara del móvil: no se pudo activar: %s", e)
+            self._refresh_buttons()
+            if quiet:
+                self._later_status("No se pudo activar la cámara del móvil.")
+            else:
+                messagebox.showerror("Cámara del móvil", "No se pudo activar.\n\n{0}".format(
+                    str(e).strip()[-300:]))
+            return False
+        self.phonecam_on = True
+        self._phonecam_changed(quiet)
+        return True
+
+    def _phonecam_disable(self):
+        if not self.phonecam_on and not self.phonecam.active:
+            return
+        self.phonecam_on = False
+        self.phonecam.stop()
+        self._phonecam_changed(False)
+
+    def _phonecam_changed(self, quiet):
+        self._refresh_buttons()
+        if getattr(self, "lbl_phonecamurl", None) is not None:
+            if self.phonecam_on:
+                url = self._phonecam_url()
+                self.lbl_phonecamurl.config(text="Abre esto en el móvil: " + url)
+                photo = self._phonecam_qr_photo(url)
+                self._phonecam_qr_img = photo              # referencia viva, si no Tk la olvida
+                self.lbl_phonecamqr.config(image=photo or "")
+            else:
+                self.lbl_phonecamurl.config(text="No está activa.")
+                self.lbl_phonecamqr.config(image="")
+                self._phonecam_qr_img = None
+        if quiet:
+            return
+        self.save_config()
+        self._set_status("Cámara del móvil activada." if self.phonecam_on else
+                         "Cámara del móvil desactivada.")
+
+    def _on_phonecamport_commit(self, *_a):
+        if self._loading or not self.phonecam_on:
+            return
+        if self._phonecam_port() == self.phonecam.port:
+            return
+        self.phonecam.stop()
+        self.phonecam_on = False
+        self._phonecam_enable()
+
+    def _phonecam_auto_add(self, name, url):
+        """Un móvil mandó su primer fotograma de verdad (ver PhoneCamHub.feed): se añade solo
+        al mosaico, como cualquier otra cámara de red (mismo camino que «Añadir cámara de
+        red…», ver _net_cam_dialog) -- se llama desde _tick(), ya en el hilo de Tk."""
+        if self.recording or self.busy:
+            # igual que al añadir una cámara de red a mano: no se toca la lista mientras se
+            # graba o hay una operación en curso. El móvil sigue mandando fotogramas aparte (su
+            # sesión no caduca por esto); si se quiere esa conexión en concreto, basta con
+            # recargar la página del móvil cuando termine la grabación.
+            self._set_status("Móvil «{0}» conectado, pero hay que esperar a que termine la "
+                             "grabación para añadirlo al mosaico.".format(name))
+            return
+        label = base = "📱 " + name
+        n = 2
+        while label in self.vdev:
+            label = "{0} #{1}".format(base, n)
+            n += 1
+        cam = {"name": name, "alt": None, "label": label, "spec": url, "net": True, "phone": True}
+        self.net_cams[label] = cam
+        self.vdevs.append(cam)
+        self.vdev[label] = cam
+        self.cams[label] = CamState(label, None, self._cb)
+        self.cams[label].use = True
+        if label not in self.order:
+            self.order.append(label)
+        self.sel = label
+        self._fill_tree()
+        self._bind_detail()
+        self._redraw_map()
+        self._update_info()
+        self._on_change()
+        self._set_status("Móvil «{0}» conectado: añadido al mosaico.".format(name))
+
     # ------------------------------------------------------------ grabación
     def toggle_rec(self):
         if self.busy:
@@ -7208,6 +7832,11 @@ class CamApp:
         if getattr(self, "btn_vlc", None) is not None:
             self.btn_vlc.config(state="disabled" if (b or not ion) else "normal")
         self._ip_var.set(ion)
+        pcon = self.phonecam_on
+        if getattr(self, "btn_phonecam", None) is not None:
+            self.btn_phonecam.config(
+                text="📱  Apagar cámara del móvil" if pcon else "📱  Activar cámara del móvil",
+                style="Accent.TButton" if pcon else "TButton", state="disabled" if b else "normal")
         if getattr(self, "lbl_ip_bar", None) is not None:
             self.lbl_ip_bar.config(text=("🌐 " + self._ip_dual_url()) if ion else "")
         self._tray_update()
@@ -7229,6 +7858,9 @@ class CamApp:
         try:
             if self._tray_q:
                 self._tray_drain()
+            while self._phonecam_q:
+                name, url = self._phonecam_q.popleft()
+                self._phonecam_auto_add(name, url)
             while self._bgq:
                 done, res, gen = self._bgq.popleft()
                 if gen != self._gen:
@@ -7247,6 +7879,8 @@ class CamApp:
                 self._draw_meters()
             if self._tick_n == 0 and self.ipsrv is not None:
                 self.ipsrv.hls_idle_check()       # apaga solo el ffmpeg de HLS si nadie lo mira
+            if self._tick_n == 0 and self.phonecam is not None:
+                self.phonecam.drop_stale()        # olvida sesiones de móvil caducadas hace rato
             if self.recording:
                 self._update_timer()
         except Exception as e:          # la UI nunca debe morir por un fallo de dibujo
@@ -7392,6 +8026,10 @@ class CamApp:
                 pass
             try:
                 self.ipsrv.close()
+            except Exception:
+                pass
+            try:
+                self.phonecam.stop()
             except Exception:
                 pass
             try:

@@ -12,6 +12,7 @@ __pycache__/
 *.log
 config.json
 tests/t/
+tests/_*_home/
 !VERSION
 !.github/
 !.github/**

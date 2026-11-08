@@ -1,6 +1,8 @@
 numpy
 Pillow
+cryptography     # certificado autofirmado para «Cámara del móvil» (HTTPS, hace falta para la cámara)
 # opcionales
 pystray          # icono en la bandeja (modos normal / compacto / mini)
 pyvirtualcam     # cámara virtual para videollamadas (requiere OBS Studio instalado)
 pygrabber        # plan B para listar cámaras si ffmpeg no las detecta
+qrcode           # código QR para «Cámara del móvil» (sin él, solo queda la dirección en texto)

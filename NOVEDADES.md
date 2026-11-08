@@ -1,5 +1,29 @@
 # Novedades de cam-ui
 
+## pack 14 — 2026.11.08
+- **Nuevo: «Cámara del móvil», en Ajustes.** Se puede usar la cámara de un Android como una
+  cámara más del mosaico sin instalar nada en el teléfono: al activarlo, cam-ui muestra una
+  dirección (y, si está instalado el paquete opcional `qrcode`, también un código QR) para abrir
+  en el navegador del móvil. Tras conceder el permiso de cámara, el teléfono empieza a mandar
+  imagen y la cámara **aparece sola** en la lista, ya marcada y lista para grabar — sin tocar
+  nada más en el PC.
+  - Es necesario que el navegador del móvil pida el permiso de cámara por HTTPS (lo exige el
+    propio Android/Chrome), así que cam-ui genera un certificado propio para esa dirección; la
+    primera vez el navegador avisará de que la conexión "no es privada" — es ese certificado
+    propio, no un fallo: en Chrome basta con «Avanzado → Continuar» una sola vez.
+  - Por ahora **solo vídeo** (sin el micrófono del móvil); puede añadirse más adelante sin tener
+    que rehacer lo de ahora.
+  - La dirección lleva un código de un solo uso por sesión: a diferencia de «En la red» (que
+    solo deja ver), esta función puede añadir una cámara de verdad a la grabación, así que la
+    dirección no se adivina a la ligera.
+  - Si el teléfono se queda sin mandar imagen (wifi cortada, navegador cerrado…) la cámara pasa a
+    "Sin señal" como cualquier otra, y vuelve sola si el móvil reconecta. No se guarda entre
+    reinicios de cam-ui (la dirección es de esa sesión), así que hay que volver a abrir el
+    enlace en el móvil cada vez.
+  - Probado de punta a punta con un navegador real (Chromium, con una cámara simulada) y con
+    ffmpeg leyendo la imagen tal cual lee cualquier otra cámara de red; queda pendiente
+    confirmarlo con un Android de verdad.
+
 ## pack 13 — 2026.11.07
 - **Arreglado: el icono nativo de Chromecast aceptaba la orden de reproducir pero la tele se
   quedaba sin imagen, sin avisar de ningún error.** La causa: a los ojos de Google, la tele pide

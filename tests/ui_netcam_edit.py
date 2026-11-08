@@ -20,12 +20,21 @@ os.makedirs(HOME, exist_ok=True)
 camui.UPDATE_STATE = os.path.join(HOME, "actualizacion.json")
 camui._UPDATE_ST = {}
 camui.HERE = HOME
-camui.CFG_FILE = os.path.join(HOME, "config.json")
+# OJO: lo que de verdad lee/escribe _read_config()/save_config() es la constante CONFIG, no
+# «CFG_FILE» (ese nombre no existe en camui.py -- fijarlo no aísla nada y esta prueba acaba
+# leyendo/escribiendo el config.json real del proyecto).
+camui.CONFIG = os.path.join(HOME, "config.json")
+if os.path.isfile(camui.CONFIG):            # arranque limpio: sin restos de una ejecución anterior
+    os.remove(camui.CONFIG)
 camui.LOGFILE = os.path.join(HOME, "camui.log")
 
 root = tk.Tk()
 root.withdraw()
 app = camui.CamApp(root)
+# sin esto, a los ~900ms CamApp._tray_boot() (al no estar pystray instalado, ni haber ya una
+# respuesta guardada) abre un messagebox.askyesno() de verdad -- un diálogo modal que bajo Xvfb,
+# sin nadie para pulsarlo, se queda colgado para siempre y nunca llega a soltar root.update().
+app._tray_asked = True
 # sin cámaras de verdad en este entorno, la vista previa "siempre activa" de cam-ui no consigue
 # arrancar nunca y _tick() reintenta sola una y otra vez (_on_died -> _start_preview), lo que
 # deja app.busy=True en momentos impredecibles -- esto no es lo que se está probando aquí (ver
@@ -148,6 +157,14 @@ assert app.sel == NEW, app.sel
 print("3) guardar con el nombre cambiado: migra el CamState (zoom/color) y order/sel OK")
 
 # 4) doble clic en la columna del CHECKBOX ("#1") no abre nada (solo "#2", el nombre, edita)
+# (el guardado del paso 3 también relanza _refresh_devices() en segundo plano -- como en el
+# paso 2, hay que esperar a que acabe antes de tocar el Treeview, o la fila "Patio" todavía no
+# existe con su etiqueta nueva y bbox() falla con "item not found")
+t0 = time.time()
+while app.busy and time.time() - t0 < 5:
+    root.update()
+    time.sleep(0.05)
+app.tree.update_idletasks()
 tops_before = len(root.winfo_children())
 bbox1 = app.tree.bbox(NEW, "#1")
 x1, y1 = bbox1[0] + bbox1[2] // 2, bbox1[1] + bbox1[3] // 2
