@@ -1,12 +1,17 @@
 """«Cámara del móvil» de verdad, de punta a punta, dentro de la propia app (ver PhoneCamHub y
 CamApp._phonecam_* en camui.py): a diferencia de tests/unit_phonecam.py (que solo prueba el
-servidor), aquí se activa desde la propia CamApp (como el botón «Activar cámara del móvil») y se
-manda un fotograma real por HTTPS, igual que haría el navegador de un móvil -- y se comprueba que
-la cámara aparece sola en la lista (Treeview), marcada y lista para grabar. Hace falta un display
-(Xvfb en Linux: xvfb-run -a python3 tests/ui_phonecam.py), porque lo que se comprueba es
-precisamente la ventana real, no solo la lógica de más abajo."""
+servidor), aquí se activa desde la propia CamApp (como el botón «Añadir un dispositivo móvil
+como cámara») y se simula el emparejamiento por «/add» (POST a «/add/ready», QR mostrado en la
+ventana, URL del QR reutilizando esa sesión) y el envío de un fotograma real por HTTPS, igual
+que haría el navegador de un móvil tras leer ese QR con su propia cámara -- y se comprueba que
+la cámara aparece sola en la lista (Treeview), marcada y lista para grabar. El propio JS del
+navegador (jsQR leyendo un QR de verdad en un Chromium real) se valida aparte, con Playwright,
+no aquí. Hace falta un display (Xvfb en Linux: xvfb-run -a python3 tests/ui_phonecam.py), porque
+lo que se comprueba es precisamente la ventana real, no solo la lógica de más abajo."""
 import os
 import io
+import json
+import re
 import ssl
 import sys
 import time
@@ -62,33 +67,62 @@ def pump(cond, timeout=6):
     return cond()
 
 
-# 1) activar «Cámara del móvil» desde la propia app (como el botón de Ajustes) arranca de
-#    verdad el servidor HTTPS y rellena la etiqueta con la dirección + token
+# 1) activar «Cámara del móvil» desde la propia app (como el botón de Ajustes, ya renombrado a
+#    «Añadir un dispositivo móvil como cámara») arranca de verdad el servidor HTTPS y deja en la
+#    etiqueta las instrucciones con la dirección fija «/add» (sin ningún token: por sí sola no
+#    añade nada, ver el comentario junto a «/add» en _PhoneCamHandler)
 assert not app.phonecam_on and not app.phonecam.active
 app.v_phonecamport.set("58620")
 ok = app._phonecam_enable()
 assert ok and app.phonecam_on and app.phonecam.active
-url = app._phonecam_url()
-assert url.startswith("https://") and "?t=" in url
+add_url = app._phonecam_add_url()
+assert add_url.startswith("https://") and add_url.endswith("/add") and "?" not in add_url
+assert add_url in app.lbl_phonecamurl.cget("text")
 assert "No está activa" not in app.lbl_phonecamurl.cget("text")
 # la URL de verdad usa la IP detectada del equipo (para que un móvil de la wifi la encuentre),
 # pero esta caja de pruebas no siempre deja conectar a su propia IP "pública" vista desde dentro
 # -- no es lo que se está probando aquí (ya se prueba a fondo en unit_phonecam.py), así que esta
-# prueba habla con el mismo servidor por 127.0.0.1, con el mismo token real
-local_url = "https://127.0.0.1:{0}/cam?t={1}".format(app.phonecam.port, app.phonecam.token)
-print("1) «Activar cámara del móvil» (como el botón real) arranca el servidor HTTPS de verdad OK")
-
-# 2) todavía no hay ninguna cámara de móvil en la lista
-assert not any(lab.startswith("📱 ") for lab in app.vdev)
-print("2) sin ningún móvil conectado aún, no hay ninguna cámara «📱» en la lista OK")
-
-# 3) un móvil «de verdad» (HTTPS, token correcto, fotograma real) se conecta -- justo lo que
-#    haría el navegador del móvil tras tocar «Empezar» y conceder el permiso de cámara
+# prueba habla con el mismo servidor por 127.0.0.1, con el mismo token y puerto reales
 ctx = ssl._create_unverified_context()
+print("1) «Añadir un dispositivo móvil como cámara» (como el botón real) arranca el servidor "
+      "HTTPS de verdad y deja la dirección de «/add» en la etiqueta OK")
+
+# 2) todavía no hay ninguna cámara de móvil en la lista, ni ningún QR de emparejamiento
+assert not any(lab.startswith("📱 ") for lab in app.vdev)
+assert app.lbl_phonecamqr.cget("image") == ""
+print("2) sin ningún móvil conectado aún, no hay cámara ni QR de emparejamiento OK")
+
+# 3) el móvil que está en «/add» ya tiene el permiso de su cámara y avisa con un POST a
+#    «/add/ready» -- eso hace que la ventana (por su bucle normal, _tick -> _phonecam_pair_q)
+#    muestre un QR nuevo, y cambie el texto para decir que hay un móvil esperando
+req_ready = urllib.request.Request(
+    "https://127.0.0.1:{0}/add/ready".format(app.phonecam.port), data=b"", method="POST")
+with urllib.request.urlopen(req_ready, timeout=5, context=ctx) as r:
+    assert r.status == 200
+assert pump(lambda: app.lbl_phonecamqr.cget("image") != ""), \
+    "el QR de emparejamiento nunca apareció en la ventana"
+assert "esperando" in app.lbl_phonecamurl.cget("text").lower()
+print("3) «/add/ready» hace que la ventana muestre un QR de emparejamiento nuevo OK")
+
+# 4) ese QR lleva dentro una URL de «/cam?t=...&sid=...» -- el móvil la lee con su propia
+#    cámara (eso ya se probó de verdad, con jsQR en un navegador real, aparte de esta prueba) y
+#    navega solo ahí; aquí se simula ese paso final con la misma URL, hablando por 127.0.0.1.
+# El sid exacto no se guardó al mostrar el QR (CamApp solo necesita la imagen, no el texto), así
+# que se saca directamente de la única sesión de PhoneCamHub que todavía no ha mandado nada.
+with app.phonecam._lk:
+    pending = [sid for sid, s in app.phonecam._sessions.items() if not s["announced"]]
+assert len(pending) == 1, pending
+sid = pending[0]
+local_url = "https://127.0.0.1:{0}/cam?t={1}&sid={2}".format(
+    app.phonecam.port, app.phonecam.token, sid)
 with urllib.request.urlopen(local_url, timeout=5, context=ctx) as r:
     body = r.read().decode("utf-8")
-import re
-sid = re.search(r'var sid = "([^"]+)"', body).group(1)
+sid_in_page = re.search(r'var sid = "([^"]+)"', body).group(1)
+assert sid_in_page == sid, "debería reutilizar el sid del QR, no acuñar uno nuevo"
+print("4) la URL leída del QR reutiliza esa misma sesión (no una nueva) OK")
+
+# 5) el móvil manda su primer fotograma de verdad, por POST (como mandaría el navegador desde
+#    canvas.toBlob, ya en la página de captura de siempre, tras haber navegado solo hasta ahí)
 arr = np.zeros((240, 320, 3), np.uint8)
 arr[:, :, 1] = 180
 buf = io.BytesIO()
@@ -99,39 +133,52 @@ req = urllib.request.Request(
     data=jpeg, method="POST")
 with urllib.request.urlopen(req, timeout=5, context=ctx) as r:
     assert r.status == 200
-print("3) el móvil (de verdad: HTTPS + token + POST de un JPEG) manda su primer fotograma OK")
+print("5) el móvil (de verdad: HTTPS + sid del QR + POST de un JPEG) manda su primer fotograma OK")
 
-# 4) la propia CamApp (por su bucle normal, _tick -> _phonecam_q) la añade sola a la lista,
-#    marcada, lista para grabar -- sin que el usuario haya tocado nada en el PC
+# 6) la propia CamApp (por su bucle normal, _tick -> _phonecam_q) la añade sola a la lista,
+#    marcada, lista para grabar -- sin que el usuario haya tocado nada en el PC -- y el QR de
+#    emparejamiento, ya usado, se retira solo de la ventana
 label = "📱 Móvil"
 assert pump(lambda: label in app.vdev), "la cámara del móvil nunca apareció en app.vdev"
 assert pump(lambda: label in app.order), "la cámara del móvil nunca se marcó/añadió a app.order"
 assert app.cams[label].use is True
 assert app.vdev[label]["spec"].startswith("http://127.0.0.1:")
 assert app.vdev[label].get("phone") is True
-print("4) la cámara del móvil se añade sola a app.order, marcada (use=True) OK")
+assert pump(lambda: app.lbl_phonecamqr.cget("image") == ""), \
+    "el QR de emparejamiento debería retirarse solo en cuanto el móvil se añade"
+print("6) la cámara del móvil se añade sola a app.order, marcada (use=True), y el QR se retira OK")
 
-# 5) también aparece en el Treeview de verdad (la lista que ve la persona), marcada con ☑
+# 7) también aparece en el Treeview de verdad (la lista que ve la persona), marcada con ☑
 row = app.tree.item(label) if label in app.tree.get_children() else None
 assert row is not None, "la cámara del móvil no aparece en la fila del Treeview"
 assert row["values"][0] == "☑", row["values"]
-print("5) también aparece marcada (☑) en la lista real (Treeview) de la ventana OK")
+print("7) también aparece marcada (☑) en la lista real (Treeview) de la ventana OK")
 
-# 6) una cámara de móvil NO se guarda en el config.json (su URL no sobrevive a reiniciar
+# 8) una cámara de móvil NO se guarda en el config.json (su URL no sobrevive a reiniciar
 #    cam-ui -- ver el comentario en save_config): solo las añadidas a mano sí
 app.save_config()
 with open(camui.CONFIG, encoding="utf-8") as f:
-    import json
     saved = json.load(f)
 assert label not in saved.get("net_cams", {}), \
     "la cámara del móvil no debería guardarse en config.json (quedaría huérfana)"
-print("6) save_config() no guarda la cámara del móvil (no sobreviviría a un reinicio) OK")
+print("8) save_config() no guarda la cámara del móvil (no sobreviviría a un reinicio) OK")
 
-# 7) desactivar «Cámara del móvil» para el servidor de verdad
+# 9) un QR de emparejamiento que nadie escanea a tiempo se retira solo (ver PHONECAM_PAIR_TIMEOUT)
+req_ready2 = urllib.request.Request(
+    "https://127.0.0.1:{0}/add/ready".format(app.phonecam.port), data=b"", method="POST")
+with urllib.request.urlopen(req_ready2, timeout=5, context=ctx) as r:
+    assert r.status == 200
+assert pump(lambda: app.lbl_phonecamqr.cget("image") != ""), "el segundo QR nunca apareció"
+app._phonecam_pair_shown_at = time.time() - camui.PHONECAM_PAIR_TIMEOUT - 1   # como si hiciera rato
+assert pump(lambda: app.lbl_phonecamqr.cget("image") == ""), \
+    "el QR caducado debería retirarse solo en el siguiente _tick()"
+print("9) un QR de emparejamiento sin escanear a tiempo se retira solo OK")
+
+# 10) desactivar «Cámara del móvil» para el servidor de verdad
 app._phonecam_disable()
 assert not app.phonecam_on and not app.phonecam.active
 assert app.lbl_phonecamurl.cget("text") == "No está activa."
-print("7) «Apagar cámara del móvil» para el servidor de verdad y limpia la etiqueta OK")
+print("10) «Apagar cámara del móvil» para el servidor de verdad y limpia la etiqueta OK")
 
 root.destroy()
 print("TODO OK ui_phonecam")

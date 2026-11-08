@@ -3,6 +3,7 @@
 !.gitignore
 !camui.py
 !LICENSE
+!LICENSE-jsQR
 !README.md
 !NOVEDADES.md
 !requirements.txt

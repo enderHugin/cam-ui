@@ -33,12 +33,14 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   perder el encuadre ni el color. Si se desconecta (o cualquier otra cámara tarda demasiado en
   responder), no se cae todo el mosaico: queda un aviso «Sin señal: nombre» en su sitio, el resto
   sigue grabando, y se reconecta sola cuando vuelve.
-- Cámara del móvil, sin instalar nada: pestaña Ajustes → «Cámara del móvil» muestra una dirección
-  (y un QR, si está instalado `qrcode`) para abrir en el navegador del Android; tras conceder el
-  permiso de cámara, aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un
-  certificado propio (aviso de "conexión no privada" la primera vez, normal) y una dirección con
-  un código de sesión para que nadie más de la wifi pueda añadir una cámara sin querer. De
-  momento solo vídeo; no se guarda entre reinicios.
+- Cámara del móvil, sin instalar nada: pestaña Ajustes → «Añadir un dispositivo móvil como
+  cámara» muestra la dirección fija `/add` para abrir en el navegador del móvil; esa página pide
+  permiso de cámara y, en cuanto lo concede, usa esa misma cámara para leer un QR. El QR que debe
+  leer aparece en ese momento en la propia ventana del PC (no antes), así que solo puede
+  emparejarse quien esté delante del ordenador viendo su pantalla. Al leerlo, el móvil navega solo
+  a la página de captura y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un
+  certificado propio (aviso de "conexión no privada" la primera vez, normal). De momento solo
+  vídeo; no se guarda entre reinicios.
 - Salida en red: ver (y, si hay micrófono, oír) el mosaico en vivo desde otro PC o móvil de la
   misma wifi con el navegador (menú Modo, botón de la barra, pestaña Ajustes o bandeja), con
   pantalla completa; funciona a la vez que se graba y que la cámara virtual, es solo para ver
@@ -63,8 +65,10 @@ Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardw
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
 `tests/unit_update.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
-del paquete `cryptography` (certificado HTTPS de prueba); `tests/unit_vlc.py` y
+del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
+emparejamiento de «/add»); `tests/unit_vlc.py` y
 `tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`, `tests/ui_phonecam.py`
+(este último también necesita `qrcode`, por el mismo motivo)
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 Si algo falla, adjuntar `camui.log` (se crea junto al script).

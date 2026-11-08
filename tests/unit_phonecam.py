@@ -38,7 +38,8 @@ def _get(url, timeout=5, https=False):
 
 
 q = deque()
-hub = camui.PhoneCamHub(q)
+pair_q = deque()
+hub = camui.PhoneCamHub(q, pair_q)
 port, token = hub.start(port=58610)
 assert hub.active
 print("1) PhoneCamHub arranca de verdad (HTTPS en la wifi + servidor solo en 127.0.0.1) OK")
@@ -94,10 +95,17 @@ print("5) POST a una sesión que no existe -> 404 OK")
 
 # 6) la reexposición local (127.0.0.1, la que usaría ffmpeg) sirve el MISMO JPEG como
 #    multipart/x-mixed-replace -- exactamente el formato que ya se usa en toda la app
+# (read1() hace una sola lectura de lo que ya esté en el buffer -- a veces eso llega partido en
+# más de un paquete y la primera lectura no trae todavía la cabecera entera; se repite unas
+# pocas veces, acumulando, en vez de fiarlo todo a una sola lectura que puede llegar justa)
 with _get(local_url) as r:
     assert "multipart/x-mixed-replace" in r.headers.get("Content-Type", "")
-    data = r.read1(8192)
-    assert b"--camuiphone" in data and b"Content-Type: image/jpeg" in data
+    data = b""
+    for _ in range(20):
+        data += r.read1(8192)
+        if b"--camuiphone" in data and b"Content-Type: image/jpeg" in data:
+            break
+    assert b"--camuiphone" in data and b"Content-Type: image/jpeg" in data, data
 print("6) la reexposición local sirve un MJPEG normal y corriente con el fotograma recibido OK")
 
 # 7) ffmpeg DE VERDAD, leyéndolo como «cámara de red» -- el mismo camino que ya usa cualquier
@@ -148,10 +156,51 @@ except urllib.error.HTTPError as e:
     assert e.code == 404, e.code
 print("9) sesión desconocida en la reexposición local -> 404 de verdad OK")
 
+# 10) «/add» (la dirección fija de emparejamiento) se sirve sin pedir ningún token -- por sí
+#     sola no añade ninguna cámara, así que no hace falta -- y trae jsQR embebido (sin CDN)
+with _get("https://127.0.0.1:{0}/add".format(port), https=True) as r:
+    assert r.status == 200
+    add_body = r.read().decode("utf-8")
+assert "jsQR" in add_body and "/add/ready" in add_body and "getUserMedia" in add_body
+print("10) «/add» se sirve sin ningún token (por sí sola no añade nada) y trae jsQR embebido OK")
+
+# 11) el móvil que está en «/add», en cuanto tiene el permiso de su cámara, avisa con un POST a
+#     «/add/ready» -- eso acuña una sesión nueva (todavía sin ningún fotograma) y la anota en
+#     pair_q con su URL de emparejamiento, para que CamApp la muestre como QR
+assert len(pair_q) == 0
+req_ready = urllib.request.Request(
+    "https://127.0.0.1:{0}/add/ready".format(port), data=b"", method="POST")
+with _get(req_ready, https=True) as r:
+    assert r.status == 200
+assert len(pair_q) == 1, pair_q
+pair_url = pair_q.popleft()
+assert pair_url.startswith("https://") and "/cam?t=" in pair_url and "&sid=" in pair_url
+pair_sid = re.search(r"[?&]sid=([^&]+)", pair_url).group(1)
+print("11) «/add/ready» acuña una sesión nueva y avisa con su URL de emparejamiento (QR) OK")
+
+# 12) esa URL exacta (la que el móvil lee del QR y a la que navega él solo) reutiliza ESE
+#     mismo sid -- no una sesión nueva -- mientras que un sid que no existe (o ya caducó) cae
+#     en el comportamiento de siempre: se acuña una sesión nueva, sin romper nada
+# (esta caja de pruebas no siempre deja conectar a su propia IP "pública" vista desde dentro --
+# no es lo que se está probando aquí, así que se habla con el mismo servidor por 127.0.0.1, con
+# el mismo token y sid reales que llevaba pair_url -- ver el mismo comentario en ui_phonecam.py)
+pair_url_local = "https://127.0.0.1:{0}/cam?t={1}&sid={2}".format(port, token, pair_sid)
+with _get(pair_url_local, https=True) as r:
+    assert r.status == 200
+    body2 = r.read().decode("utf-8")
+assert ('var sid = "' + pair_sid + '"') in body2, \
+    "debería reutilizar el sid de /add/ready, no acuñar uno nuevo"
+with _get("https://127.0.0.1:{0}/cam?t={1}&sid=no-existe".format(port, token), https=True) as r:
+    assert r.status == 200
+    body3 = r.read().decode("utf-8")
+sid_fallback = re.search(r'var sid = "([^"]+)"', body3).group(1)
+assert sid_fallback not in (pair_sid, "no-existe")
+print("12) «/cam?...&sid=» reutiliza esa sesión exacta; con un sid que no existe, acuña una nueva OK")
+
 hub.stop()
 assert not hub.active
 
-# 10) el certificado (autofirmado, para poder usar la cámara desde HTTPS -- ver el comentario
+# 13) el certificado (autofirmado, para poder usar la cámara desde HTTPS -- ver el comentario
 #     junto a PHONECAM_PORT_DEFAULT) se reutiliza mientras siga cubriendo la IP del equipo, y
 #     se regenera solo si esta cambia -- así el aviso de "conexión no privada" del navegador no
 #     sale más veces de las necesarias, pero tampoco se queda con un certificado que ya no vale
@@ -181,6 +230,6 @@ finally:
     for f in (camui.PHONECAM_CERT_FILE, camui.PHONECAM_KEY_FILE):
         if os.path.exists(f):
             os.remove(f)
-print("10) el certificado se reutiliza si la IP sigue cubierta, y se regenera solo si cambia OK")
+print("13) el certificado se reutiliza si la IP sigue cubierta, y se regenera solo si cambia OK")
 
 print("TODO OK unit_phonecam")

@@ -5,4 +5,5 @@ cryptography     # certificado autofirmado para «Cámara del móvil» (HTTPS, h
 pystray          # icono en la bandeja (modos normal / compacto / mini)
 pyvirtualcam     # cámara virtual para videollamadas (requiere OBS Studio instalado)
 pygrabber        # plan B para listar cámaras si ffmpeg no las detecta
-qrcode           # código QR para «Cámara del móvil» (sin él, solo queda la dirección en texto)
+qrcode           # código QR de «Cámara del móvil», tanto el de «/add» como el de cada emparejamiento
+                 # nuevo (sin él, solo queda la dirección en texto, incómoda de teclear a mano)

@@ -1,5 +1,32 @@
 # Novedades de cam-ui
 
+## pack 15 — 2026.11.08
+- **Rehecho: cómo se añade la cámara de un móvil (ver pack 14).** Antes, activarlo dejaba en
+  pantalla una dirección fija con un código de sesión de un solo uso, pensada para no adivinarse
+  a la ligera — pero esa dirección había que escribirla a mano (o leerla de un QR ya mostrado) sin
+  más control que el propio código. Ahora el emparejamiento es en dos pasos:
+  - El botón de Ajustes (ahora «Añadir un dispositivo móvil como cámara») muestra una dirección
+    **fija**, sin ningún código: `http://<ip o nombre del PC>:<puerto>/add`. Por sí sola esa
+    dirección no añade nada: solo abre, en el navegador del móvil, el típico recuadro de lectura
+    de QR (pide permiso de cámara para ello).
+  - En cuanto el navegador concede ese permiso, en la propia ventana del PC aparece un QR nuevo,
+    de un solo uso. El móvil lo lee con su misma cámara (ya en la página de `/add`, sin salir de
+    ella) y, al reconocerlo, navega él solo a la captura — sin teclear nada.
+  - La seguridad ya no depende de un código difícil de adivinar, sino de algo más simple: **hay
+    que estar delante de la pantalla del PC** para ver el QR con el que emparejar. Nadie más en la
+    wifi puede añadirse sin que el propietario lo vea ocurrir.
+  - El QR de emparejamiento se retira solo de la ventana en cuanto el móvil lo lee (la cámara ya
+    apareció en la lista) o, si nadie lo escanea, a los 90 segundos.
+  - La lectura de QR la hace el propio navegador del móvil con una librería (`jsQR`, con su
+    licencia) incluida en cam-ui — sin conexión a internet ni servicios externos, igual que el
+    resto de esta función.
+  - El resto sigue igual que en el pack 14: HTTPS con certificado propio (mismo aviso de "conexión
+    no privada" la primera vez), solo vídeo por ahora, y no se guarda entre reinicios.
+  - Probado de punta a punta con un navegador real (Chromium) leyendo un QR de verdad con una
+    cámara simulada — incluida la propia lectura por `jsQR` y la navegación automática resultante
+    — y con ffmpeg leyendo la imagen final tal cual lee cualquier otra cámara de red; queda
+    pendiente confirmarlo con un Android o un iPhone de verdad.
+
 ## pack 14 — 2026.11.08
 - **Nuevo: «Cámara del móvil», en Ajustes.** Se puede usar la cámara de un Android como una
   cámara más del mosaico sin instalar nada en el teléfono: al activarlo, cam-ui muestra una
