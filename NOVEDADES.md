@@ -1,5 +1,23 @@
 # Novedades de cam-ui
 
+## pack 23 — 2026.11.08
+- **Arreglado: la vista previa de la cámara del PC podía quedarse en negro para siempre, sin
+  ningún error, mientras la barra de estado seguía diciendo tranquilamente «Vista previa en
+  marcha».** La causa: al arrancar, cam-ui solo comprueba que ffmpeg no se haya caído en el
+  primer segundo y medio para darlo por «arrancado» — no que de verdad haya llegado a entregar
+  ni un fotograma. Si una cámara se queda colgada negociando con ffmpeg (sin llegar a fallar
+  del todo, solo sin avanzar — típico de cámaras lentas en iniciar, como el software de una
+  réflex/EOS, o de un atasco con otra cámara del mosaico), el proceso queda vivo para siempre
+  sin producir nada, y el aviso de «ffmpeg se detuvo solo» nunca llega a dispararse porque,
+  técnicamente, no se ha detenido. Ahora, si pasan más de 15 segundos sin recibir ni un
+  fotograma, cam-ui para esa vista previa por su cuenta y avisa con un mensaje claro
+  («Vista previa colgada»), sugiriendo desmarcar cámaras una a una para encontrar cuál es la
+  que se atasca, o pulsar F5 para reintentar. *Importante: no se ha podido reproducir este
+  cuelgue de verdad en un PC con varias cámaras físicas (no hay ninguno disponible para probar
+  en este entorno) — el arreglo está pensado y probado contra el síntoma exacto que se
+  describió (vista previa en negro + estado contradictorio, sin cambios de código deliberados
+  para forzarlo), pero conviene confirmar que esto resuelve el caso real.*
+
 ## pack 22 — 2026.11.08
 - **El instalador de Windows tampoco ponía `cryptography` ni `qrcode`** — el arreglo del pack
   21 cubría a quien ya tenía cam-ui instalado y se había ido actualizando solo, pero quien

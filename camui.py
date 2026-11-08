@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 22                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 23                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2359,6 +2359,15 @@ BUSY_PAT = re.compile(r"could not run graph|already in use|device or resource bu
 MODE_ERR_PAT = re.compile(r"could not set (?:video|audio) options", re.I)
 BUSY_WAITS = (0.8, 1.5, 2.5, 3.5)     # pausa entre intentos (los USB tardan en soltar la cámara)
 RELEASE_GAP = 1.0                      # mínimo entre cerrar ffmpeg y volver a abrir las cámaras
+# FFmpegEngine.start() solo espera 1.6s a que ffmpeg NO se caiga para darlo por arrancado (ver
+# "if p.poll() is None: return True" más abajo) -- eso basta para detectar un fallo inmediato
+# (cámara ocupada, modo rechazado...), pero no para detectar un ffmpeg que se queda colgado sin
+# llegar a entregar ni un fotograma (p.ej. negociando con una cámara lenta en iniciar, como el
+# software de una réflex/EOS, o atascado con otra del mosaico): is_running() solo mira si el
+# proceso sigue vivo, no si de verdad está produciendo algo, así que ese caso se queda sin
+# detectar -- ver CamApp._on_stuck. Generoso a propósito: más vale tarde que un falso aviso con
+# un mosaico de verdad grande que solo tarda en arrancar.
+STUCK_PREVIEW_SECONDS = 15.0
 
 
 def is_mode_error(text):
@@ -4702,6 +4711,7 @@ class CamApp:
         self.order = []
         self.sel = None
         self.previewing = False
+        self._stuck_warned = False     # ver _on_stuck: ffmpeg vivo pero sin entregar ni un fotograma
         self.recording = False
         self.busy = False
         self.rec_path = None
@@ -7530,6 +7540,7 @@ class CamApp:
         self.save_config()
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
         self._slow_warned = set()
+        self._stuck_warned = False     # cada intento nuevo merece su propio plazo (ver _on_stuck)
         self._set_status("Abriendo dispositivos…" if retry == 0 else
                          "Reintentando (los dispositivos tardan en liberarse)… {0}".format(retry))
 
@@ -8452,6 +8463,10 @@ class CamApp:
                 self._refresh_buttons()
             if (self.previewing or self.recording) and not self.busy and not self.eng.is_running():
                 self._on_died()
+            elif (self.previewing and not self.busy and not self._stuck_warned and
+                  self.eng.frame_count == 0 and self.eng._spawn_t and
+                  time.time() - self.eng._spawn_t > STUCK_PREVIEW_SECONDS):
+                self._on_stuck()
             if self.previewing and self.mode != "mini":
                 self._draw_frame()
             self._check_sources()
@@ -8583,6 +8598,33 @@ class CamApp:
             ok, shown, _m = self._finalize(path, final)
             msg += "\n\nEl vídeo parcial está en:\n{0}".format(shown)
         messagebox.showerror("Error", msg)
+
+    def _on_stuck(self):
+        """ffmpeg sigue vivo (is_running() == True, así que _on_died no detecta nada) pero no ha
+        entregado ni un solo fotograma en STUCK_PREVIEW_SECONDS -- _engine_start solo comprueba
+        que no se cayera en 1.6s para darlo por arrancado («Vista previa en marcha»), no que de
+        verdad llegara a producir algo. Suele ser una cámara lenta en iniciar (p.ej. el software
+        de una réflex/EOS) o un atasco negociando con otra del mosaico: ffmpeg se queda colgado
+        sin más, sin avisar de nada. Sin esto, quien lo sufre se queda con la vista previa en
+        negro para siempre, sin ningún error ni forma de saber qué ha pasado (caso real: ver el
+        aviso del usuario, pack 22, "no se ve la vista previa")."""
+        self._stuck_warned = True
+        err = self.eng.last_errors()
+        log.error("vista previa: ffmpeg sigue vivo pero no entregó ningún fotograma en %gs. "
+                 "Últimas líneas:\n%s", STUCK_PREVIEW_SECONDS, err)
+        self.eng.stop()
+        self.previewing = False
+        self.paused = True          # evita reintentar en bucle; F5 para reanudar, igual que _start_preview
+        self._set_idle("No se pudo iniciar: ffmpeg se quedó colgado. Pulsa F5 para reintentar.")
+        msg = ("ffmpeg se quedó colgado al iniciar: llevaba más de {0:g} segundos abierto sin "
+              "llegar a entregar ni un fotograma.\n\nSuele ser una cámara lenta en arrancar "
+              "(por ejemplo, el software de una réflex/EOS) o un atasco con otra cámara del "
+              "mosaico. Prueba a desmarcar cámaras una a una (pestaña Cámaras) hasta encontrar "
+              "cuál lo cuelga, o pulsa F5 para reintentar.").format(STUCK_PREVIEW_SECONDS)
+        if err:
+            msg += ("\n\nÚltimas líneas de ffmpeg (puede no haber ninguna pista útil, si de "
+                   "verdad se quedó colgado sin más):\n" + err)
+        messagebox.showerror("Vista previa colgada", msg)
 
     def on_close(self):
         if self.recording and not messagebox.askyesno(
