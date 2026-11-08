@@ -1,5 +1,18 @@
 # Novedades de cam-ui
 
+## pack 22 — 2026.11.08
+- **El instalador de Windows tampoco ponía `cryptography` ni `qrcode`** — el arreglo del pack
+  21 cubría a quien ya tenía cam-ui instalado y se había ido actualizando solo, pero quien
+  instalara cam-ui *desde cero* con el instalador oficial se iba a encontrar exactamente el
+  mismo problema, porque esos dos paquetes nunca estuvieron en su lista. Ya están añadidos
+  (igual que `pystray`/la cámara virtual: si fallan al instalarse no tira abajo el resto de la
+  instalación, solo avisa — cam-ui ya sabe ofrecer instalarlos después igualmente).
+- **El QR de emparejamiento de «Cámara del móvil», sin el paquete `qrcode`, se quedaba para
+  siempre solo con la dirección en texto** (incómoda de teclear a mano en el móvil), sin forma
+  de arreglarlo desde ahí. Ahora el propio diálogo del QR trae un botón «Instalar «qrcode» para
+  ver el código» — si sale bien, se vuelve a mostrar el mismo QR al momento, esta vez con su
+  imagen real.
+
 ## pack 21 — 2026.11.08
 - **Arreglado: «Cámara del móvil» podía fallar con «No se pudo activar. No module named
   'cryptography'», un mensaje interno de Python que no decía nada útil — y sin ese paquete, el

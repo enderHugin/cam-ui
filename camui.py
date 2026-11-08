@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 21                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 22                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -4627,9 +4627,10 @@ class PhoneCamQrDialog:
     de siempre, _phonecam_clear_pair_qr(); también con su propio botón «Cerrar», con Esc, o sin
     más al cerrar la ventana."""
 
-    def __init__(self, parent, photo, url):
+    def __init__(self, parent, photo, url, on_install_qr=None):
         self.alive = True
         self.photo = photo             # referencia viva: sin esto Tk se olvida de la imagen
+        self.btn_install_qr = None     # solo existe sin «qrcode» -- ver más abajo
         top = self.top = tk.Toplevel(parent)
         top.title("Cámara del móvil")
         top.configure(bg=PANEL)
@@ -4648,9 +4649,16 @@ class PhoneCamQrDialog:
             ttk.Label(frm, image=photo).pack(pady=(10, 10))
         else:
             # sin el paquete «qrcode» no hay imagen que mostrar, pero la dirección en texto
-            # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo)
+            # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo) --
+            # si quien llama sabe cómo instalarlo (CamApp._phonecam_offer_qr_install), se ofrece
+            # aquí mismo un botón para arreglarlo con un clic, en vez de dejarlo así para siempre
             ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
                      justify="left").pack(pady=(10, 10))
+            if on_install_qr is not None:
+                self.btn_install_qr = ttk.Button(
+                    frm, text="Instalar «qrcode» para ver el código",
+                    command=lambda: on_install_qr(url))
+                self.btn_install_qr.pack(pady=(0, 6))
         ttk.Label(frm, text="Apunta con su cámara a este código para añadirlo al mosaico.",
                  style="Muted.TLabel", wraplength=320, justify="left").pack()
         ttk.Button(frm, text="Cerrar", command=self.close).pack(pady=(14, 0))
@@ -5259,6 +5267,18 @@ class CamApp:
                         messagebox.showwarning(
                             "Cámara del móvil", "No se pudo instalar.\n\n{0}\n\n"
                             "Puedes instalarlo a mano:  pip install cryptography".format(msg))
+                elif cmd == "phonecam_qr_installed":
+                    ok, msg, qr_url = arg
+                    if ok:
+                        import importlib
+                        importlib.invalidate_caches()
+                        self._set_status("qrcode instalado.")
+                        self._phonecam_show_pair_qr(qr_url)
+                    else:
+                        self._set_status("No se pudo instalar qrcode.")
+                        messagebox.showwarning(
+                            "Cámara del móvil", "No se pudo instalar.\n\n{0}\n\n"
+                            "Puedes instalarlo a mano:  pip install qrcode".format(msg))
             except Exception:
                 log.error("orden de bandeja %s:\n%s", cmd, traceback.format_exc())
 
@@ -8122,11 +8142,29 @@ class CamApp:
 
     def _phonecam_popup_qr(self, url, photo):
         self._phonecam_close_popup_qr()
+        on_install = None if photo is not None else self._phonecam_offer_qr_install
         try:
-            self._phonecam_qr_dialog = PhoneCamQrDialog(self.root, photo, url)
+            self._phonecam_qr_dialog = PhoneCamQrDialog(self.root, photo, url, on_install)
         except Exception as e:
             log.info("no se pudo abrir el diálogo del QR de la cámara del móvil: %r", e)
             self._phonecam_qr_dialog = None
+
+    def _phonecam_offer_qr_install(self, url):
+        """Botón «Instalar «qrcode»…» del propio diálogo del QR (ver PhoneCamQrDialog), cuando
+        no hay imagen que mostrar por faltar ese paquete -- mismo patrón de pip_install que
+        _phonecam_offer_install. Solo hace falta volver a pedir la imagen y reabrir el mismo
+        diálogo con la misma URL: la sesión de emparejamiento sigue esperando igual."""
+        if messagebox.askyesno(
+                "Cámara del móvil",
+                "Para mostrar el código QR (en vez de la dirección en texto, incómoda de "
+                "teclear a mano) hace falta el paquete «qrcode» (pequeño; se instala con pip y "
+                "necesita internet). No parece estar instalado.\n\n¿Instalarlo ahora?"):
+            self._set_status("Instalando qrcode…")
+
+            def run():
+                ok, msg = pip_install("qrcode")
+                self._tray_q.append(("phonecam_qr_installed", (ok, msg, url)))
+            threading.Thread(target=run, daemon=True).start()
 
     def _phonecam_close_popup_qr(self):
         dlg = getattr(self, "_phonecam_qr_dialog", None)

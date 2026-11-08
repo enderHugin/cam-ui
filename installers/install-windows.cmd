@@ -289,14 +289,23 @@ try {
     if ($rpip2.rc -ne 0) {
         throw ('fallo al instalar numpy/pillow: ' + (($rpip2.out | Where-Object { $_.Trim() } | Select-Object -Last 4) -join ' | '))
     }
-    # opcionales: sin ellos cam-ui funciona igual, solo que sin icono de bandeja / camara virtual --
-    # si fallan (red, antivirus...) no debe tirar abajo el resto de la instalacion, solo avisar
+    # opcionales: sin ellos cam-ui funciona igual, solo que sin icono de bandeja / camara virtual /
+    # camara del movil por el navegador / QR grafico -- si fallan (red, antivirus...) no debe
+    # tirar abajo el resto de la instalacion, solo avisar
     $rpystray = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'pystray')
     if ($rpystray.rc -ne 0) { Say ('no se pudo instalar pystray (opcional; sin el no habra icono de bandeja): ' + (($rpystray.out | Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' | ')) }
     $rpvcam = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'pyvirtualcam')
     if ($rpvcam.rc -ne 0) { Say ('no se pudo instalar pyvirtualcam (opcional; sin el no habra camara virtual): ' + (($rpvcam.out | Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' | ')) }
-    # (sin tildes a proposito en estos dos avisos: el mismo patron que el resto del instalador,
-    # que evita acentos en los textos de consola por si la code page de alguna consola los destroza)
+    # "cryptography" (certificado HTTPS) y "qrcode" (el codigo QR de emparejamiento) le hacian
+    # falta a "Camara del movil" desde que se creo esa funcion, pero no se habian anadido aqui --
+    # sin el primero, esa funcion ni arrancaba (cam-ui ya ofrece instalarlo solo, con un clic, si
+    # hace falta, pero mejor que ya este puesto desde el principio)
+    $rcrypto = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'cryptography')
+    if ($rcrypto.rc -ne 0) { Say ('no se pudo instalar cryptography (opcional; sin el no funcionara "camara del movil" por el navegador): ' + (($rcrypto.out | Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' | ')) }
+    $rqrcode = Run-Native $vpy @('-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '--upgrade', 'qrcode')
+    if ($rqrcode.rc -ne 0) { Say ('no se pudo instalar qrcode (opcional; el emparejamiento de "camara del movil" se vera solo como texto, sin codigo QR): ' + (($rqrcode.out | Where-Object { $_.Trim() } | Select-Object -Last 2) -join ' | ')) }
+    # (sin tildes a proposito en estos avisos: el mismo patron que el resto del instalador, que
+    # evita acentos en los textos de consola por si la code page de alguna consola los destroza)
 
     # ffmpeg (solo si falta: no se vuelve a bajar en cada actualizacion)
     $ffdir = Join-Path $Prog 'bin'

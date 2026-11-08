@@ -256,6 +256,85 @@ assert 'addCamUrl = "{0}";'.format(app._phonecam_add_url()) in home_body, \
 print("13) con «Cámara del móvil» ya encendida, «/» sirve directamente su dirección real de "
       "«/add» (sin pasar por «/addcam/start») OK")
 
+# 14-16) Si falta el paquete «qrcode» (opcional: sin él solo se pierde la imagen del QR, la
+#        dirección en texto sigue valiendo igual -- ver _phonecam_qr_photo), el diálogo flotante
+#        debía dejarte solo con esa dirección en texto, incómoda de teclear a mano, sin ninguna
+#        forma de arreglarlo desde ahí. Ahora, igual que con «cryptography» (ver
+#        tests/unit_phonecam.py), se ofrece un botón para instalarlo con un clic -- y si sale
+#        bien, se vuelve a mostrar el mismo QR, esta vez con su imagen real.
+assert app._ip_enable(), "no se pudo volver a abrir «En la red» de verdad para esta prueba"
+assert app._phonecam_enable(), "no se pudo volver a encender «Cámara del móvil» de verdad"
+
+_qr_calls = {"n": 0}
+_real_qr_photo = app._phonecam_qr_photo
+
+
+def _fake_qr_photo(url):
+    _qr_calls["n"] += 1
+    if _qr_calls["n"] == 1:
+        return None                          # primera vez: como si faltara «qrcode» de verdad
+    return _real_qr_photo(url)               # segunda vez (tras "instalarlo"): la imagen real
+
+
+app._phonecam_qr_photo = _fake_qr_photo
+askyesno_calls = []
+
+
+class _FakeMsgBoxQr:
+    def __init__(self, calls, answer=True):
+        self.calls, self.answer = calls, answer
+
+    def askyesno(self, title, msg):
+        self.calls.append((title, msg))
+        return self.answer
+
+
+pip_calls = []
+
+
+def _fake_pip_install(pkg, timeout=240):
+    pip_calls.append(pkg)
+    return True, ""
+
+
+orig_mb, orig_pip = camui.messagebox, camui.pip_install
+camui.messagebox = _FakeMsgBoxQr(askyesno_calls, answer=True)
+camui.pip_install = _fake_pip_install
+
+try:
+    req_ready3 = urllib.request.Request(
+        "https://127.0.0.1:{0}/add/ready".format(app.phonecam.port), data=b"", method="POST")
+    with urllib.request.urlopen(req_ready3, timeout=5, context=ctx) as r:
+        assert r.status == 200
+    assert pump(lambda: app.lbl_phonecamurl.cget("text").startswith("Un móvil está esperando")), \
+        "el tercer QR (simulando falta de «qrcode») nunca apareció"
+    dlg3 = app._phonecam_qr_dialog
+    assert dlg3 is not None and dlg3.alive
+    assert dlg3.photo is None, "con «qrcode» simulado como ausente no debería haber imagen"
+    assert dlg3.btn_install_qr is not None and dlg3.btn_install_qr.winfo_ismapped(), \
+        "sin imagen debería verse el botón para instalar «qrcode»"
+    print("14) sin «qrcode», el diálogo flotante del QR muestra un botón para instalarlo (en "
+          "vez de dejarte solo con la dirección en texto, para siempre) OK")
+
+    # pulsar ese botón (su propio «command», como haría un clic de verdad)
+    dlg3.btn_install_qr.invoke()
+    assert len(askyesno_calls) == 1 and "qrcode" in askyesno_calls[0][1]
+    assert pump(lambda: pip_calls == ["qrcode"], timeout=4), \
+        "no se llegó a instalar «qrcode» (de mentira) tras aceptar"
+    print("15) al pulsarlo, pregunta y (si se acepta) instala «qrcode» de verdad por ese camino "
+          "(pip_install, en un hilo aparte) OK")
+
+    assert pump(lambda: getattr(app, "_phonecam_qr_dialog", None) is not None and
+                app._phonecam_qr_dialog is not dlg3 and app._phonecam_qr_dialog.photo is not None,
+                timeout=4), \
+        "tras instalar «qrcode», debería reabrirse solo el mismo QR, esta vez con su imagen real"
+    assert not dlg3.alive, "el diálogo de texto debería haberse cerrado al reabrirse con la imagen"
+    print("16) tras instalarlo bien, se reabre solo el mismo QR -- esta vez con su imagen real, "
+          "sin tener que volver a hacer nada OK")
+finally:
+    camui.messagebox, camui.pip_install = orig_mb, orig_pip
+    app._phonecam_qr_photo = _real_qr_photo
+
 app._phonecam_disable()
 app._ip_disable()
 root.destroy()
