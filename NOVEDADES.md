@@ -1,5 +1,18 @@
 # Novedades de cam-ui
 
+## pack 21 — 2026.11.08
+- **Arreglado: «Cámara del móvil» podía fallar con «No se pudo activar. No module named
+  'cryptography'», un mensaje interno de Python que no decía nada útil — y sin ese paquete, el
+  servidor no llegaba a arrancar en absoluto, así que ningún móvil llegaba siquiera al aviso
+  de «conexión no privada», en ningún navegador.** La causa: `cryptography` (el paquete que
+  genera el certificado HTTPS) se añadió como dependencia nueva cuando se creó esta función,
+  pero la auto-actualización de cam-ui solo cambia el programa (`camui.py`), nunca instala
+  paquetes de Python nuevos — así que quien lleva un tiempo actualizándose solo, sin reinstalar
+  cam-ui desde cero, podía quedarse sin él sin enterarse. Ahora, igual que ya pasa con
+  «pystray» o «pyvirtualcam», cam-ui lo detecta y ofrece instalarlo con un clic (necesita
+  internet); si se acepta y sale bien, enciende la función sola a continuación, sin tener que
+  volver a pulsar nada.
+
 ## pack 20 — 2026.11.08
 - **Arreglado: en «En la red», el aviso de Chromecast decía que el navegador del móvil
   «debe» traer la opción «Convertir en Chromecast», pero muchos navegadores propios de

@@ -232,4 +232,134 @@ finally:
             os.remove(f)
 print("13) el certificado se reutiliza si la IP sigue cubierta, y se regenera solo si cambia OK")
 
+# 14-16) Si falta el paquete «cryptography» (hace falta para el certificado HTTPS, ver
+#        _phonecam_ensure_cert más arriba), antes se veía solo el mensaje interno de Python ("No
+#        module named 'cryptography'") y sin ninguna salida -- caso real, reportado por un
+#        usuario con cam-ui actualizado solo (la auto-actualización solo cambia camui.py, nunca
+#        los paquetes de Python, así que un paquete añadido después de instalar cam-ui por
+#        primera vez nunca llega a instalarse solo). Ahora, igual que con pystray/pyvirtualcam
+#        (ver _tray_boot/_vcam_offer_install), se ofrece instalarlo con un clic.
+class _FakePhonecam:
+    def __init__(self, fail_times=1):
+        self.active = False
+        self.port = None
+        self._fail_times = fail_times
+        self._calls = 0
+
+    def start(self, port):
+        self._calls += 1
+        if self._calls <= self._fail_times:
+            raise ModuleNotFoundError("No module named 'cryptography'", name="cryptography")
+        self.active = True
+        self.port = port
+        return self.port, "tok"
+
+
+class _FakeCamApp(camui.CamApp):            # solo para heredar los métodos reales; sin __init__
+    def __init__(self, fail_times=1):
+        self.phonecam = _FakePhonecam(fail_times)
+        self.phonecam_on = False
+        self._tray_q = deque()
+        self.calls = {"status": [], "later_status": [], "askyesno": [], "showwarning": [],
+                      "changed": []}
+
+    def _phonecam_port(self):
+        return 58620
+
+    def _set_status(self, txt):
+        self.calls["status"].append(txt)
+
+    def _later_status(self, txt):
+        self.calls["later_status"].append(txt)       # sin root.after real: se anota sin más
+
+    def _refresh_buttons(self):
+        pass
+
+    def _phonecam_changed(self, quiet):
+        self.calls["changed"].append(quiet)
+
+
+class _FakeMsgBoxPkg:
+    def __init__(self, calls, answer):
+        self._calls, self._answer = calls, answer
+
+    def askyesno(self, title, msg):
+        self._calls["askyesno"].append((title, msg))
+        return self._answer
+
+    def showwarning(self, title, msg):
+        self._calls["showwarning"].append((title, msg))
+
+
+def _patch_phonecam_pkg(answer, pip_ok=True, pip_msg=""):
+    orig_mb, orig_pip = camui.messagebox, camui.pip_install
+
+    def fake_pip_install(pkg, timeout=240):
+        return pip_ok, pip_msg
+
+    def apply(app):
+        camui.messagebox = _FakeMsgBoxPkg(app.calls, answer)
+        camui.pip_install = fake_pip_install
+
+    def restore():
+        camui.messagebox, camui.pip_install = orig_mb, orig_pip
+    return apply, restore
+
+
+# 14) con quiet=True (p.ej. al arrancar, o encendida en remoto por el propio móvil) no debe
+#     preguntar nada -- solo deja un aviso en el estado que, por fin, dice de verdad qué paquete
+#     falta (antes era el mensaje genérico "No se pudo activar la cámara del móvil").
+app14 = _FakeCamApp(fail_times=99)
+apply14, undo14 = _patch_phonecam_pkg(answer=True)
+apply14(app14)
+try:
+    ok = camui.CamApp._phonecam_enable(app14, quiet=True)
+finally:
+    undo14()
+assert ok is False
+assert app14.calls["askyesno"] == [], "con quiet=True no debía preguntar nada"
+assert any("cryptography" in t for t in app14.calls["later_status"]), \
+    "el aviso debería decir qué paquete falta de verdad: {0}".format(app14.calls["later_status"])
+print("14) sin «cryptography», con quiet=True no pregunta nada -- solo avisa en el estado, y "
+      "dice el paquete real que falta (no el mensaje genérico de siempre) OK")
+
+# 15) sin quiet: se ofrece instalarlo; si se dice que no, no se instala nada ni queda encendida
+app15 = _FakeCamApp(fail_times=99)
+apply15, undo15 = _patch_phonecam_pkg(answer=False)
+apply15(app15)
+try:
+    ok = camui.CamApp._phonecam_enable(app15, quiet=False)
+finally:
+    undo15()
+assert ok is False
+assert len(app15.calls["askyesno"]) == 1
+assert "cryptography" in app15.calls["askyesno"][0][1]
+assert app15.phonecam_on is False and not app15.phonecam.active
+print("15) sin «cryptography», sin quiet, ofrece instalarlo -- y si se dice que no, no fuerza "
+      "nada ni queda encendida OK")
+
+# 16) si se acepta instalarlo y la instalación sale bien, cam-ui reintenta sola la activación --
+#     de punta a punta, con un hilo de verdad (igual que pip_install en la vida real) -- y esta
+#     vez (el paquete ya puesto) sí que enciende de verdad, sin tener que volver a pulsar nada.
+app16 = _FakeCamApp(fail_times=1)           # falla la primera vez (como ahora); la segunda, ya no
+apply16, undo16 = _patch_phonecam_pkg(answer=True, pip_ok=True)
+apply16(app16)
+try:
+    ok = camui.CamApp._phonecam_enable(app16, quiet=False)
+    assert ok is False, "la primera vez (sin el paquete) debe fallar todavía"
+    assert len(app16.calls["askyesno"]) == 1
+    for _ in range(100):                    # el hilo de instalar+reintentar corre de verdad aparte
+        if app16._tray_q:
+            camui.CamApp._tray_drain(app16)
+        if app16.phonecam.active:
+            break
+        time.sleep(0.05)
+finally:
+    undo16()
+assert app16.phonecam.active, "tras instalar bien el paquete, debería reintentar sola y encender"
+assert app16.phonecam_on is True
+assert app16.calls["changed"] == [False], "la activación de verdad debe avisar del cambio (no quiet)"
+print("16) tras aceptar instalarlo y salir bien, cam-ui reintenta sola la activación -- sin "
+      "tener que volver a pulsar nada -- y esta vez enciende de verdad OK")
+
 print("TODO OK unit_phonecam")

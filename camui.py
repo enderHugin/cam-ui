@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 20                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 21                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -5248,6 +5248,17 @@ class CamApp:
                     self._set_status("No se pudo instalar pystray.")
                     messagebox.showwarning("pystray", "No se pudo instalar pystray.\n\n{0}\n\n"
                                            "Puedes instalarlo a mano:  pip install pystray".format(msg))
+                elif cmd == "phonecam_pkg_installed":
+                    ok, msg = arg
+                    if ok:
+                        import importlib
+                        importlib.invalidate_caches()
+                        self._phonecam_enable()
+                    else:
+                        self._set_status("No se pudo instalar el paquete para «Cámara del móvil».")
+                        messagebox.showwarning(
+                            "Cámara del móvil", "No se pudo instalar.\n\n{0}\n\n"
+                            "Puedes instalarlo a mano:  pip install cryptography".format(msg))
             except Exception:
                 log.error("orden de bandeja %s:\n%s", cmd, traceback.format_exc())
 
@@ -8027,6 +8038,22 @@ class CamApp:
             else:
                 messagebox.showerror("Cámara del móvil", msg + "\n\n{0}".format(str(e).strip()[-300:]))
             return False
+        except ModuleNotFoundError as e:
+            # «cryptography» (certificado HTTPS, ver _phonecam_ensure_cert) va en requirements.txt
+            # como obligatorio, pero quien instaló cam-ui hace tiempo y desde entonces solo se ha
+            # ido actualizando sola (que solo cambia camui.py, nunca los paquetes de Python) puede
+            # no tenerlo igualmente -- aquí se ofrece instalarlo, en vez de dejar un callejón sin
+            # salida con el nombre interno de un módulo que a quien usa cam-ui no le dice nada.
+            pkg = (getattr(e, "name", None) or "cryptography").split(".")[0]
+            log.error("cámara del móvil: falta el paquete «%s»: %s", pkg, e)
+            self._refresh_buttons()
+            if quiet:
+                self._later_status(
+                    "Cámara del móvil: falta el paquete «{0}» -- ábrela en Ajustes para "
+                    "instalarlo.".format(pkg))
+            else:
+                self._phonecam_offer_install(pkg)
+            return False
         except Exception as e:
             log.error("cámara del móvil: no se pudo activar: %s", e)
             self._refresh_buttons()
@@ -8039,6 +8066,22 @@ class CamApp:
         self.phonecam_on = True
         self._phonecam_changed(quiet)
         return True
+
+    def _phonecam_offer_install(self, pkg="cryptography"):
+        """Mismo patrón que pystray/pyvirtualcam (ver _tray_boot/_vcam_offer_install): pregunta,
+        instala con pip en un hilo aparte, y si sale bien reintenta sola la activación."""
+        if messagebox.askyesno(
+                "Cámara del móvil",
+                "Para esto hace falta el paquete «{0}» (certificado HTTPS; se instala con pip y "
+                "necesita internet). No parece estar instalado -- puede pasar si cam-ui se ha ido "
+                "actualizando solo desde una versión antigua, porque eso solo cambia el programa, "
+                "nunca los paquetes de Python que usa.\n\n¿Instalarlo ahora?".format(pkg)):
+            self._set_status("Instalando {0}…".format(pkg))
+
+            def run():
+                ok, msg = pip_install(pkg)
+                self._tray_q.append(("phonecam_pkg_installed", (ok, msg)))
+            threading.Thread(target=run, daemon=True).start()
 
     def _phonecam_disable(self):
         if not self.phonecam_on and not self.phonecam.active:
