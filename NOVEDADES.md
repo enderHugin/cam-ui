@@ -1,5 +1,31 @@
 # Novedades de cam-ui
 
+## pack 17 — 2026.11.08
+- **Arreglado (en «En la red», viéndolo de verdad desde un Android o un iPad): la barra de
+  botones de abajo quedaba cortada o se salía de la pantalla, y en el iPad no se veía ningún
+  botón.** La causa: `100vh` en el móvil cuenta el hueco de la barra del propio navegador
+  aunque esté oculta en ese momento, así que la barra de cam-ui, pegada "al fondo" de una
+  pantalla más alta de lo que de verdad se ve, quedaba por debajo de lo visible. Ahora usa el
+  alto real visible (`100dvh`), los botones se envuelven en más de una fila si no caben en una
+  sola, y se deja hueco para la barra de gestos/el borde redondeado del propio aparato.
+- **El botón «Añadir cámara del móvil» (pack 16) ahora está siempre a la vista** en «En la
+  red», encendida o no esa función desde el PC — antes se escondía del todo si no lo estaba, y
+  entonces parecía que el botón ni existía. Si no está encendida, el propio botón lo dice al
+  pulsarlo, en vez de llevar a una dirección que todavía no existe.
+- **La página de «/add» ya pide la cámara directamente al cargar**, sin tener que tocar antes
+  el botón de «Escanear». Si el navegador la deniega, o si falla por cualquier otro motivo,
+  aparece un botón de «Reintentar» (ese sí, con un toque, como pide cualquier navegador para
+  volver a preguntar tras una negativa).
+- **Renombrado: "En la red" pasa a ser "cam-ui@‹dirección del PC›"** en los sitios donde ese
+  nombre se ve desde fuera del propio PC — el título de la pestaña del navegador del visor, el
+  enlace de vuelta en la página de «esta dirección no existe», y el nombre que la propia tele
+  mostrará al enviarlo por Chromecast (antes no mandaba ningún nombre). Así, si hay más de un
+  cam-ui en la misma wifi, se distingue cuál es cuál. Dentro de la propia ventana de cam-ui, en
+  el PC, sigue llamándose «En la red» como siempre — esto solo cambia lo que ven otros aparatos.
+  - Lo de la tele por Chromecast no se ha podido comprobar con un Chromecast de verdad (no hay
+    ninguno en este entorno); está hecho con la misma API de metadatos de Google Cast que usa
+    cualquier app, pero queda pendiente de confirmar en un televisor real.
+
 ## pack 16 — 2026.11.08
 - **Arreglado: pedir «/add» en la dirección equivocada (o cualquier otra que no existe) hacía
   que Safari o Chrome en el iPhone ofrecieran "descargar" un archivo vacío con un nombre

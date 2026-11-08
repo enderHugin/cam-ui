@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 16                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 17                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1356,20 +1356,25 @@ def _find_vlc():
 _VIEWER_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>cam-ui &middot; en la red</title>
+<title>__CAM_UI_LABEL__</title>
 <style>
 html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden}
-#stage{position:relative;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#000}
+/* 100vh en el móvil cuenta el hueco de la barra del navegador aunque esté oculta en ese
+   momento -- la barra de abajo (#bar), pegada al fondo de #stage, quedaba por debajo de lo
+   que se ve de verdad. 100dvh (el alto real visible) corrige eso; vh se deja antes como
+   repuesto para un navegador que no conozca dvh todavía. */
+#stage{position:relative;width:100%;height:100vh;height:100dvh;display:flex;align-items:center;
+       justify-content:center;background:#000}
 #v{width:100%;height:100%;object-fit:contain}
-#bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;
-     padding:12px;background:linear-gradient(transparent,rgba(0,0,0,.65))}
+#bar{position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:10px;
+     justify-content:center;padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));
+     background:linear-gradient(transparent,rgba(0,0,0,.65))}
 button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:7px;
        padding:9px 16px;font-size:15px;cursor:pointer}
 button:active{background:#3a3f48}
 button:disabled{opacity:.6}
 #mute{display:none;padding:9px 12px}
 #vol{display:none;width:90px;vertical-align:middle;accent-color:#6aa0ff}
-#addcam{display:none}
 #casthelp{display:none;position:absolute;left:50%;bottom:64px;transform:translateX(-50%);
   max-width:320px;background:#20242b;border:1px solid #4a4f58;border-radius:8px;
   padding:10px 14px;font-size:13px;line-height:1.45;color:#ddd;text-align:left;z-index:2}
@@ -1466,14 +1471,19 @@ function showCastErr(msg) {
 document.addEventListener("click", function (e) {
   if (!castErr.contains(e.target)) { castErr.classList.remove("show"); }
 });
-// botón «Añadir cámara del móvil»: solo aparece si la función está encendida (ver _serve_page);
-// lleva a la propia dirección de «/add», con su https de siempre
+// botón «Añadir cámara del móvil»: siempre a la vista -- si la función ya está encendida (ver
+// _serve_page), lleva directo a la dirección de «/add»; si no, lo dice, en vez de llevar a una
+// dirección que todavía no existe
 var addcam = document.getElementById("addcam"), addCamUrl = "__PHONECAM_ADD_URL__";
-if (addCamUrl) {
-  addcam.style.display = "inline-block";     // "" no quita el "display:none" de la hoja de
-                                              // estilos -- ver el mismo arreglo en «snd.onclick»
-  addcam.onclick = function () { location.href = addCamUrl; };
-}
+var addcamLabel = addcam.textContent;
+addcam.onclick = function () {
+  if (addCamUrl) {
+    location.href = addCamUrl;
+    return;
+  }
+  addcam.textContent = "Actívala en Ajustes, en el PC";
+  setTimeout(function () { addcam.textContent = addcamLabel; }, 2500);
+};
 window["__onGCastApiAvailable"] = function (isAvailable) {
   if (!isAvailable || typeof cast === "undefined") { return; }
   try {
@@ -1495,6 +1505,10 @@ window["__onGCastApiAvailable"] = function (isAvailable) {
         if (!session) { return; }
         var info = new chrome.cast.media.MediaInfo("__CAM_CAST_URL__", "application/x-mpegURL");
         info.streamType = chrome.cast.media.StreamType.LIVE;
+        // para que la propia tele diga DE QUÉ PC es (si hay más de uno en la wifi, "En la red"
+        // a secas no lo decía); location.hostname es el mismo que ya llevaba la propia dirección
+        info.metadata = new chrome.cast.media.GenericMediaMetadata();
+        info.metadata.title = "cam-ui@" + location.hostname;
         session.loadMedia(new chrome.cast.media.LoadRequest(info)).then(function () {
           // la tele aceptó la orden -- de todas formas, si falla DESPUÉS (p. ej. no consigue
           // reproducir ese formato), que no se quede callado sin más
@@ -1552,12 +1566,17 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         # cámara del móvil y no en este) no sabe qué hacer con eso y ofrece «descargar» un
         # archivo vacío con un nombre inventado, en vez de avisar sin más de que esa dirección
         # no existe -- de ahí este HTML mínimo, con enlace de vuelta a «/».
+        ips = _local_ips()
+        host = ips[0] if ips else (self.server.server_address[0] or "127.0.0.1")
+        if host in ("0.0.0.0", ""):
+            host = "127.0.0.1"
+        label = "cam-ui@{0}".format(host)
         body = ("<!doctype html><html><head><meta charset=\"utf-8\">"
                 "<title>cam-ui</title></head><body style=\"background:#000;color:#ddd;"
                 "font-family:system-ui,sans-serif;text-align:center;padding:18vh 16px\">"
                 "<p>Esta dirección no existe aquí.</p>"
-                "<p><a href=\"/\" style=\"color:#6aa0ff\">Ir a «En la red»</a></p>"
-                "</body></html>").encode("utf-8")
+                "<p><a href=\"/\" style=\"color:#6aa0ff\">Ir a «{0}»</a></p>"
+                "</body></html>").format(label).encode("utf-8")
         try:
             self.send_response(404)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1598,12 +1617,17 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             if host in ("0.0.0.0", ""):
                 host = "127.0.0.1"
             cast_url = "http://{0}:{1}/cast.m3u8".format(host, owner.port)
-            # el botón «Añadir cámara del móvil» solo tiene sentido (y solo se muestra, ver JS)
-            # si esa función está encendida de verdad -- si no, el hueco se deja vacío
+            # un nombre que de verdad dice QUÉ PC es (si hay más de uno en la wifi, "en la red"
+            # a secas no distingue nada) -- se usa aquí (título de la pestaña) y en la propia tele
+            # al enviar a Chromecast (ver __onGCastApiAvailable, con location.hostname)
+            label = "cam-ui@{0}".format(host)
+            # el botón «Añadir cámara del móvil» solo tiene una dirección de verdad a la que ir
+            # si esa función está encendida (si no, el propio botón lo dice en vez de navegar)
             phonecam = getattr(owner, "phonecam", None)
             add_url = ("https://{0}:{1}/add".format(host, phonecam.port)
                        if phonecam is not None and phonecam.active else "")
-            body = (_VIEWER_HTML.replace(b"__CAM_CAST_URL__", cast_url.encode("utf-8"))
+            body = (_VIEWER_HTML.replace(b"__CAM_UI_LABEL__", label.encode("utf-8"))
+                                 .replace(b"__CAM_CAST_URL__", cast_url.encode("utf-8"))
                                  .replace(b"__PHONECAM_ADD_URL__", add_url.encode("utf-8")))
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2708,17 +2732,16 @@ button:active{background:#3a3f48}
         background:linear-gradient(rgba(0,0,0,.65),transparent);color:#ddd}
 #status.err{color:#ffd9dc}
 #status.ok{color:#bdf5c5}
-#big{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:82%;
+#retry{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:82%;
      text-align:center;font-size:15px;line-height:1.5;background:#20242b;
      border:1px solid #4a4f58;border-radius:10px;padding:18px 22px}
-#big button{margin-top:14px}
 </style></head>
 <body>
 <div id="stage">
   <video id="v" autoplay playsinline muted></video>
-  <div id="status">A&ntilde;adir c&aacute;mara del m&oacute;vil</div>
-  <div id="big">
-    <button id="start">&#128247; Escanear c&oacute;digo QR</button>
+  <div id="status">Pidiendo permiso de c&aacute;mara&hellip;</div>
+  <div id="retry">
+    <button id="retrybtn">&#128247; Reintentar</button>
   </div>
 </div>
 <script>
@@ -2726,7 +2749,7 @@ __JSQR_JS_PLACEHOLDER__
 (function () {
   var v = document.getElementById("v");
   var statusEl = document.getElementById("status");
-  var big = document.getElementById("big");
+  var retry = document.getElementById("retry");
   var canvas = document.createElement("canvas");
   var ctx2d = canvas.getContext("2d", {willReadFrequently: true});
   var scanning = false, readySent = false, timer = null;
@@ -2753,16 +2776,18 @@ __JSQR_JS_PLACEHOLDER__
     }
   }
 
-  document.getElementById("start").onclick = function () {
+  function startCamera() {
+    retry.style.display = "none";
+    setStatus("Pidiendo permiso de cámara…");
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setStatus("Este navegador no deja usar la cámara aquí.", "err");
+      retry.style.display = "block";
       return;
     }
     navigator.mediaDevices.getUserMedia({
       video: {facingMode: "environment", width: {ideal: 1280}, height: {ideal: 720}}, audio: false
     }).then(function (stream) {
       v.srcObject = stream;
-      big.style.display = "none";
       setStatus("Busca con la cámara el código QR que va a aparecer en el ordenador…", "ok");
       scanning = true;
       timer = setInterval(scanOnce, __PHONECAM_ADD_SCAN_MS__);
@@ -2774,8 +2799,12 @@ __JSQR_JS_PLACEHOLDER__
       }
     }).catch(function (err) {
       setStatus("No se pudo usar la cámara: " + err.message, "err");
+      retry.style.display = "block";
     });
-  };
+  }
+
+  document.getElementById("retrybtn").onclick = startCamera;
+  startCamera();   // se pide directamente al cargar, sin tocar nada antes
 })();
 </script>
 </body></html>
