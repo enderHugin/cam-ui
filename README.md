@@ -33,8 +33,10 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   perder el encuadre ni el color. Si se desconecta (o cualquier otra cámara tarda demasiado en
   responder), no se cae todo el mosaico: queda un aviso «Sin señal: nombre» en su sitio, el resto
   sigue grabando, y se reconecta sola cuando vuelve.
-- Cámara del móvil, sin instalar nada: pestaña Ajustes → «Añadir un dispositivo móvil como
-  cámara» muestra la dirección fija `/add` para abrir en el navegador del móvil; esa página pide
+- Cámara del móvil, sin instalar nada y siempre activa (no hay que encenderla a mano): pestaña
+  Ajustes → «Cámara del móvil» muestra, ya listas, todas las direcciones fijas `/add` de este
+  equipo (una por cada tarjeta de red y el nombre del equipo, cada una clicable para probarla
+  desde este PC) para abrir cualquiera de ellas en el navegador del móvil; esa página pide
   permiso de cámara y, en cuanto lo concede, usa esa misma cámara para leer un QR. El QR que debe
   leer aparece en ese momento en la propia ventana del PC (en un diálogo flotante, al instante,
   encima de lo que sea que haya abierto en ese momento — no antes), así que la primera vez solo
@@ -44,17 +46,18 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   falta que vuelva a pedir el QR). Al leerlo, el móvil navega solo a la página de captura (1080p a
   20 fps) y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un certificado
   propio (aviso de "conexión no privada" la primera vez, normal). En iPhone/iPad hace falta,
-  además, instalar una vez el certificado de cam-ui (botón «Instalar certificado» junto al de
-  añadir cámara, con su propio QR) — sin eso, Safari no deja usar la cámara ahí en absoluto; en
+  además, instalar una vez el certificado de cam-ui (botón «Instalar certificado» en esa misma
+  pestaña, con su propio QR) — sin eso, Safari no deja usar la cámara ahí en absoluto; en
   Android no hace falta. De momento solo vídeo, sin el sonido del móvil. Si ya tienes abierta la
   página de «En la red» (puerto
   distinto, sin certificado) en el móvil, ahí también hay un botón «Añadir cámara del móvil» que
-  lleva directo a esa misma dirección `/add`, sin tener que teclear ni recordar el otro puerto —
-  y, si esa función todavía está apagada en el PC, ese mismo botón la enciende él solo.
+  lleva directo a esa misma dirección `/add`, sin tener que teclear ni recordar el otro puerto.
 - Salida en red: ver (y, si hay micrófono, oír) el mosaico en vivo desde otro PC o móvil de la
   misma wifi con el navegador (menú Modo, botón de la barra, pestaña Ajustes o bandeja), con
   pantalla completa; funciona a la vez que se graba y que la cámara virtual, es solo para ver
-  (sin contraseña) y no depende de ffmpeg para servir el vídeo. Botón «Abrir en VLC»: si está
+  (sin contraseña) y no depende de ffmpeg para servir el vídeo. En Ajustes se ven todas las
+  direcciones donde responde (una por tarjeta de red y el nombre del equipo), cada una clicable
+  para probarla desde este mismo PC. Botón «Abrir en VLC»: si está
   instalado, lo abre ahí en vez del navegador, y desde el propio menú de VLC (Reproducción →
   Renderizador) se puede enviar a un Chromecast de la misma red sin nada más que configurar.
   La propia página también trae el icono nativo de Chromecast (un segundo ffmpeg aparte, H.264

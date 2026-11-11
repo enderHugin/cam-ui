@@ -1,5 +1,26 @@
 # Novedades de cam-ui
 
+## pack 27 — 2026.11.11
+- **«Cámara del móvil» ya no tiene interruptor: siempre está activa.** El botón «Añadir un
+  dispositivo móvil como cámara» de Ajustes desaparece — sin ningún móvil conectado, tenerla
+  activa apenas cuesta nada (solo escucha en su puerto, igual que «En la red»), así que el
+  interruptor solo añadía un paso confuso sin ahorrar recursos de verdad. Ahora, en cuanto se
+  abre cam-ui, ya se puede entrar desde el móvil directamente — sin tener que ir antes a
+  Ajustes a encenderla a mano.
+- **Lista de direcciones más completa, y cada una clicable.** Tanto «Cámara del móvil» como «En
+  la red» mostraban una sola dirección (o varias, pero juntas en una sola línea de texto). Ahora
+  se ven TODAS las direcciones donde puede responder este equipo (una por cada tarjeta de red, y
+  el nombre del equipo al final), cada una en su propia línea y clicable de verdad: un clic la
+  abre en el navegador de este mismo PC, para comprobar rápido que responde — útil si una
+  dirección no funciona desde el móvil (p. ej. una IP de una red virtual) y hay que probar con
+  otra. También se ha hecho clicable la dirección de respaldo que aparece en los diálogos del
+  código QR (de «Cámara del móvil» y del certificado para iPhone/iPad) cuando falta el paquete
+  «qrcode» y no hay imagen que mostrar.
+- Sigue pendiente, de un aviso anterior: revisar si la variación de resolución de una cámara de
+  red puede deberse también a sincronía/fps inestables (no solo al tamaño en píxeles, ya resuelto
+  en el pack 26), y añadir una prueba de red antes de integrar la ingesta de un dispositivo nuevo
+  — se tendrá en cuenta al trabajar el sonido del móvil/iPad, todavía sin implementar.
+
 ## pack 26 — 2026.11.11
 - **Arreglado: una cámara de red (el móvil, otro PC encadenado por «En la red», una app tipo IP
   Webcam...) podía dejar el mosaico reiniciándose solo sin parar, como atascado.** La causa:

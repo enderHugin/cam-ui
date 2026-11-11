@@ -221,6 +221,7 @@ import types
 fake = types.SimpleNamespace(ipsrv=types.SimpleNamespace(port=8554), ipout_on=True, recording=False)
 fake._ip_primary_url = lambda: camui.CamApp._ip_primary_url(fake)
 fake._ip_dual_url = lambda: camui.CamApp._ip_dual_url(fake)
+fake._ip_url_list = lambda port: camui.CamApp._ip_url_list(fake, port)
 
 urls = camui.CamApp._ip_urls(fake, 8554)
 assert socket.gethostname() in urls, urls               # el nombre del equipo, como alternativa a la IP

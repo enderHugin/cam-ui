@@ -75,25 +75,63 @@ def pump(cond, timeout=6):
     return cond()
 
 
-# 1) activar «Cámara del móvil» desde la propia app (como el botón de Ajustes, ya renombrado a
-#    «Añadir un dispositivo móvil como cámara») arranca de verdad el servidor HTTPS y deja en la
-#    etiqueta las instrucciones con la dirección fija «/add» (sin ningún token: por sí sola no
-#    añade nada, ver el comentario junto a «/add» en _PhoneCamHandler)
-assert not app.phonecam_on and not app.phonecam.active
+def frame_texts(frame):
+    """Textos de todas las etiquetas hijas de un frm_* (la lista de direcciones/avisos de
+    «Cámara del móvil» o «En la red», ya sin el antiguo lbl_* de una sola línea -- ver
+    CamApp._set_link_list)."""
+    return [w.cget("text") for w in frame.winfo_children()]
+
+
+def click(label):
+    """Simula un clic de verdad sobre una etiqueta clicable (misma vía que usaría Tk con el
+    ratón: dispara su <Button-1>, no llama directamente a ningún método de Python)."""
+    label.event_generate("<Button-1>", x=1, y=1)
+    root.update()
+
+
+# 1) «Cámara del móvil» arranca siempre activa, sin ningún interruptor que pulsar (pedido
+#    explícito del usuario: sin ningún móvil conectado apenas consume recursos -- solo escucha
+#    en el puerto -- así que no hay motivo para tener que encenderla a mano cada vez).
+assert app.phonecam_on and app.phonecam.active, \
+    "«Cámara del móvil» debería arrancar siempre activa, sin ningún interruptor en la UI"
+# se apaga y se vuelve a encender en un puerto fijo, para que el resto de esta prueba (sid,
+# tokens, etc.) no dependa del puerto que le tocara al azar al arrancar -- ver
+# _on_phonecamport_commit, que hace exactamente este mismo apagar+encender al cambiar el puerto
+app._phonecam_disable()
 app.v_phonecamport.set("58620")
 ok = app._phonecam_enable()
 assert ok and app.phonecam_on and app.phonecam.active
 add_url = app._phonecam_add_url()
 assert add_url.startswith("https://") and add_url.endswith("/add") and "?" not in add_url
-assert add_url in app.lbl_phonecamurl.cget("text")
-assert "No está activa" not in app.lbl_phonecamurl.cget("text")
+texts1 = frame_texts(app.frm_phonecamurl)
+assert add_url in texts1, (add_url, texts1)
+assert "No está activa." not in texts1
+# la lista debe ser exhaustiva (pedido explícito: "una lista mas exhaustiva de hostnames / ips"),
+# no solo la primera IP adivinada -- al menos tantas direcciones como _phonecam_add_url_list()
+assert len(app._phonecam_add_url_list()) >= 2, \
+    "debería haber, como mínimo, una IP y el nombre del equipo"
+assert texts1[1:] == app._phonecam_add_url_list(), (texts1, app._phonecam_add_url_list())
+# y cada una debe ser clicable de verdad: un clic sobre la etiqueta de "add_url" abre ese mismo
+# enlace en el navegador (webbrowser.open), no solo mostrarlo como texto suelto
+browser_calls = []
+orig_webbrowser_open = camui.webbrowser.open
+camui.webbrowser.open = lambda u: browser_calls.append(u)
+try:
+    lbl_add_url = [w for w in app.frm_phonecamurl.winfo_children()
+                   if w.cget("text") == add_url][0]
+    click(lbl_add_url)
+    assert browser_calls == [add_url], \
+        "el clic sobre la dirección debería abrirla de verdad con webbrowser.open"
+finally:
+    camui.webbrowser.open = orig_webbrowser_open
 # la URL de verdad usa la IP detectada del equipo (para que un móvil de la wifi la encuentre),
 # pero esta caja de pruebas no siempre deja conectar a su propia IP "pública" vista desde dentro
 # -- no es lo que se está probando aquí (ya se prueba a fondo en unit_phonecam.py), así que esta
 # prueba habla con el mismo servidor por 127.0.0.1, con el mismo token y puerto reales
 ctx = ssl._create_unverified_context()
-print("1) «Añadir un dispositivo móvil como cámara» (como el botón real) arranca el servidor "
-      "HTTPS de verdad y deja la dirección de «/add» en la etiqueta OK")
+print("1) «Cámara del móvil» arranca siempre activa (sin interruptor), muestra una lista "
+      "exhaustiva de direcciones de «/add» y cada una es clicable de verdad (abre en el "
+      "navegador) OK")
 
 # 2) todavía no hay ninguna cámara de móvil en la lista, ni ningún QR de emparejamiento
 assert not any(lab.startswith("📱 ") for lab in app.vdev)
@@ -109,7 +147,7 @@ with urllib.request.urlopen(req_ready, timeout=5, context=ctx) as r:
     assert r.status == 200
 assert pump(lambda: app.lbl_phonecamqr.cget("image") != ""), \
     "el QR de emparejamiento nunca apareció en la ventana"
-assert "esperando" in app.lbl_phonecamurl.cget("text").lower()
+assert any("esperando" in t.lower() for t in frame_texts(app.frm_phonecamurl))
 # también debe aparecer, al instante, en un diálogo flotante aparte -- no solo dentro de la
 # pestaña «Ajustes» (que, en una ventana real, podría no ser la que está abierta en ese momento)
 dlg = getattr(app, "_phonecam_qr_dialog", None)
@@ -197,11 +235,14 @@ assert not dlg2.alive and app._phonecam_qr_dialog is None, \
 print("9) un QR de emparejamiento sin escanear a tiempo se retira solo (también su diálogo "
       "flotante) OK")
 
-# 10) desactivar «Cámara del móvil» para el servidor de verdad
+# 10) desactivar «Cámara del móvil» para el servidor de verdad (ya no hay botón en la UI para
+#     esto -- se apaga sola si hiciera falta, p.ej. al cambiar el puerto; aquí se llama
+#     directamente, como haría _on_phonecamport_commit)
 app._phonecam_disable()
 assert not app.phonecam_on and not app.phonecam.active
-assert app.lbl_phonecamurl.cget("text") == "No está activa."
-print("10) «Apagar cámara del móvil» para el servidor de verdad y limpia la etiqueta OK")
+assert frame_texts(app.frm_phonecamurl) == ["No está activa."]
+print("10) desactivar «Cámara del móvil» para el servidor de verdad limpia la lista de "
+      "direcciones OK")
 
 # 11) el botón «Añadir cámara del móvil» de la página «En la red» (:8554), con «Cámara del
 #     móvil» todavía apagada (como la pulsaría un móvil que llega ahí por su cuenta): ya no debe
@@ -240,13 +281,15 @@ print("11) el botón «Añadir cámara del móvil» de «En la red», con esa fu
       "la enciende ella sola (sin «ve a Ajustes, en el PC») y devuelve la dirección real de "
       "«/add» OK")
 
-# 12) ese encendido remoto queda guardado como encendida, igual que si se hubiera tocado el
-#     interruptor de Ajustes a mano -- para que siga encendida la próxima vez que se abra cam-ui
+# 12) «Cámara del móvil» ya no tiene ningún interruptor que guardar (siempre está activa): lo
+#     único que persiste config.json de ella es el puerto -- ni ese encendido remoto, ni
+#     cualquier otro, deja ya ningún «on» en el archivo.
 with open(camui.CONFIG, encoding="utf-8") as f:
     saved2 = json.load(f)
-assert saved2.get("phonecam", {}).get("on") is True, saved2.get("phonecam")
-print("12) ese encendido remoto se guarda como encendida (persiste igual que el interruptor de "
-      "Ajustes) OK")
+assert "on" not in saved2.get("phonecam", {}), saved2.get("phonecam")
+assert saved2.get("phonecam", {}).get("port") == app._phonecam_port(), saved2.get("phonecam")
+print("12) config.json ya no guarda ningún «on» de «Cámara del móvil» -- solo el puerto, porque "
+      "siempre está activa OK")
 
 # 13) con «Cámara del móvil» ya encendida, ese mismo botón no vuelve a pasar por «/addcam/start»
 #     -- _serve_page ya le da la dirección final de «/add» de antemano (esto ya se prueba sin
@@ -258,6 +301,27 @@ assert 'addCamUrl = "{0}";'.format(app._phonecam_add_url()) in home_body, \
     "con la cámara del móvil ya encendida, «/» debería servir ya su dirección real de «/add»"
 print("13) con «Cámara del móvil» ya encendida, «/» sirve directamente su dirección real de "
       "«/add» (sin pasar por «/addcam/start») OK")
+
+# 13b) «En la red», con el mismo tratamiento que «Cámara del móvil»: lista exhaustiva de
+#      direcciones (no solo la primera IP adivinada) y cada una clicable de verdad.
+texts_ip = frame_texts(app.frm_ipurl)
+assert texts_ip and texts_ip[0] == "Disponible en:", texts_ip
+ip_url_list = app._ip_url_list(app.ipsrv.port)
+assert len(ip_url_list) >= 2, "debería haber, como mínimo, una IP y el nombre del equipo"
+assert texts_ip[1:] == ip_url_list, (texts_ip, ip_url_list)
+browser_calls_ip = []
+orig_webbrowser_open_ip = camui.webbrowser.open
+camui.webbrowser.open = lambda u: browser_calls_ip.append(u)
+try:
+    lbl_last_ip_url = [w for w in app.frm_ipurl.winfo_children()
+                       if w.cget("text") == ip_url_list[-1]][0]
+    click(lbl_last_ip_url)
+    assert browser_calls_ip == [ip_url_list[-1]], \
+        "el clic sobre una dirección de «En la red» debería abrirla de verdad con webbrowser.open"
+finally:
+    camui.webbrowser.open = orig_webbrowser_open_ip
+print("13b) «En la red» también muestra la lista exhaustiva de direcciones, cada una clicable "
+      "de verdad OK")
 
 # 14-16) Si falta el paquete «qrcode» (opcional: sin él solo se pierde la imagen del QR, la
 #        dirección en texto sigue valiendo igual -- ver _phonecam_qr_photo), el diálogo flotante
@@ -309,7 +373,8 @@ try:
         "https://127.0.0.1:{0}/add/ready".format(app.phonecam.port), data=b"", method="POST")
     with urllib.request.urlopen(req_ready3, timeout=5, context=ctx) as r:
         assert r.status == 200
-    assert pump(lambda: app.lbl_phonecamurl.cget("text").startswith("Un móvil está esperando")), \
+    assert pump(lambda: any(t.startswith("Un móvil está esperando")
+                            for t in frame_texts(app.frm_phonecamurl))), \
         "el tercer QR (simulando falta de «qrcode») nunca apareció"
     dlg3 = app._phonecam_qr_dialog
     assert dlg3 is not None and dlg3.alive

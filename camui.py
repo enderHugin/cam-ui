@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 26                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 27                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -4990,8 +4990,10 @@ class PhoneCamQrDialog:
             # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo) --
             # si quien llama sabe cómo instalarlo (CamApp._phonecam_offer_qr_install), se ofrece
             # aquí mismo un botón para arreglarlo con un clic, en vez de dejarlo así para siempre
-            ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
-                     justify="left").pack(pady=(10, 10))
+            lbl_url = ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
+                                justify="left", cursor="hand2")
+            lbl_url.pack(pady=(10, 10))
+            lbl_url.bind("<Button-1>", lambda e: webbrowser.open(url))
             if on_install_qr is not None:
                 self.btn_install_qr = ttk.Button(
                     frm, text="Instalar «qrcode» para ver el código",
@@ -5054,8 +5056,10 @@ class PhoneCamCertDialog:
         else:
             # sin el paquete «qrcode» no hay imagen que mostrar, pero la dirección en texto
             # sigue valiendo igual (se puede teclear a mano), y aquí mismo se ofrece instalarlo
-            ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
-                     justify="left").pack(pady=(10, 10))
+            lbl_url = ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
+                                justify="left", cursor="hand2")
+            lbl_url.pack(pady=(10, 10))
+            lbl_url.bind("<Button-1>", lambda e: webbrowser.open(url))
             if on_install_qr is not None:
                 self.btn_install_qr = ttk.Button(
                     frm, text="Instalar «qrcode» para ver el código",
@@ -5289,8 +5293,7 @@ class CamApp:
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar
         if self._ip_cfg.get("on"):
             self._ip_enable(quiet=True)
-        if self._phonecam_cfg.get("on"):
-            self._phonecam_enable(quiet=True)
+        self._phonecam_enable(quiet=True)   # siempre activa: sin coste real si no hay móvil conectado
 
     # ------------------------------------------------------------ modos: normal / compacto / mini
     def _cur_geo(self):
@@ -6514,9 +6517,9 @@ class CamApp:
         e_ipport.grid(row=1, column=1, sticky="w")
         e_ipport.bind("<Return>", self._on_ipport_commit)
         e_ipport.bind("<FocusOut>", self._on_ipport_commit)
-        self.lbl_ipurl = ttk.Label(nf, text="No está activa.", style="Muted.TLabel",
-                                   wraplength=380, justify="left")
-        self.lbl_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
+        self.frm_ipurl = ttk.Frame(nf)
+        self.frm_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
+        self._set_link_list(self.frm_ipurl, "No está activa.", [])
         ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
                   text="Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
                        "(wifi) para ver el mosaico en directo, con pantalla completa; también en la "
@@ -6535,30 +6538,27 @@ class CamApp:
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
         pf = ttk.Labelframe(tab, text="Cámara del móvil (desde su navegador, sin instalar nada)")
         pf.pack(fill="x", **pad)
-        self.btn_phonecam = ttk.Button(pf, text="📱  Añadir un dispositivo móvil como cámara",
-                                       command=self.toggle_phonecam)
-        self.btn_phonecam.grid(row=0, column=0, sticky="w", padx=6, pady=(6, 6))
-        self._live.add(str(self.btn_phonecam))            # se puede apagar mientras se graba
-        ttk.Label(pf, text="Puerto").grid(row=0, column=1, sticky="e", padx=(12, 4))
+        ttk.Label(pf, text="Puerto").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
         e_pcport = ttk.Entry(pf, textvariable=self.v_phonecamport, width=8)
-        e_pcport.grid(row=0, column=2, sticky="w")
+        e_pcport.grid(row=0, column=1, sticky="w")
         e_pcport.bind("<Return>", self._on_phonecamport_commit)
         e_pcport.bind("<FocusOut>", self._on_phonecamport_commit)
-        self.lbl_phonecamurl = ttk.Label(pf, text="No está activa.", style="Muted.TLabel",
-                                         wraplength=380, justify="left")
-        self.lbl_phonecamurl.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
+        self.frm_phonecamurl = ttk.Frame(pf)
+        self.frm_phonecamurl.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
+        self._set_link_list(self.frm_phonecamurl, "No está activa.", [])
         self.lbl_phonecamqr = ttk.Label(pf)
         self.lbl_phonecamqr.grid(row=2, column=0, padx=6, pady=(2, 4), sticky="w")
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Al activarla, entra en el móvil a la dirección que te indique (algo como "
-                       "https://192.168.1.50:8555/add) y toca «Escanear»: en cuanto dé el permiso de "
+                  text="Siempre activa: entra en el móvil a cualquiera de las direcciones de abajo "
+                       "(con «/add» al final) y toca «Escanear»: en cuanto dé el permiso de "
                        "cámara, aquí mismo aparecerá un código QR para que lo lea con la propia cámara "
                        "del móvil -- en cuanto lo lea, se añade solo al mosaico, sin tocar nada más "
                        "aquí. La primera vez el navegador avisará de que la conexión «no es privada» "
                        "-- es normal (es tu propio cam-ui, no un sitio de verdad), toca «Avanzado» y "
                        "«Continuar». De momento solo vídeo, sin el sonido del móvil. Tener que ver el "
                        "QR en la pantalla del PC es lo que de verdad protege esto: nadie en la wifi "
-                       "puede añadirse sin estar delante del ordenador."
+                       "puede añadirse sin estar delante del ordenador. Sin ningún móvil conectado no "
+                       "consume apenas recursos (solo escucha en el puerto, igual que «En la red»)."
                   ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         self.btn_phonecam_cert = ttk.Button(
             pf, text="📲  Instalar certificado (solo iPhone/iPad)",
@@ -7840,7 +7840,7 @@ class CamApp:
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
         cfg["ipout"] = {"on": bool(self.ipout_on), "size": list(ip_size_value(self.v_ipsize.get())),
                         "port": self._ip_port()}
-        cfg["phonecam"] = {"on": bool(self.phonecam_on), "port": self._phonecam_port()}
+        cfg["phonecam"] = {"port": self._phonecam_port()}   # siempre activa: no hace falta guardar "on"
         # las cámaras de móvil se añaden solas cuando el móvil se conecta de verdad (su URL
         # depende de la sesión en marcha, no sobrevive a cerrar cam-ui) -- no se guardan, para
         # no dejar entradas "Sin señal" huérfanas la próxima vez que se abra el programa.
@@ -8381,17 +8381,52 @@ class CamApp:
             pass
         return IP_PORT_DEFAULT
 
-    def _ip_urls(self, port):
-        """Todas las direcciones donde probar, ya en formato URL: primero la(s) IP de este
-        equipo (lo más fiable, también desde el móvil) y al final el nombre del equipo (más
-        fácil de recordar; funciona en muchas redes Windows sin más, pero no siempre desde
-        un móvil)."""
+    def _ip_url_list(self, port):
+        """Todas las direcciones donde probar, ya en formato URL, como lista suelta (una por
+        tarjeta de red de este equipo, lo más fiable también desde el móvil, y al final el
+        nombre del equipo -- más fácil de recordar; funciona en muchas redes Windows sin más,
+        pero no siempre desde un móvil). Ver _ip_urls() para la versión en un solo texto."""
         ips = _local_ips()
         urls = ["http://{0}:{1}/".format(ip, port) for ip in ips]
         if not urls:
             urls = ["http://(la IP de este equipo):{0}/".format(port)]
         urls.append("http://{0}:{1}/".format(socket.gethostname(), port))
-        return ", ".join(urls)
+        return urls
+
+    def _ip_urls(self, port):
+        """Todas las direcciones donde probar, unidas en un solo texto (para la bandeja y el
+        aviso del estado; en Ajustes cada una se muestra aparte, como enlace clicable -- ver
+        _ip_url_list y _set_link_list)."""
+        return ", ".join(self._ip_url_list(port))
+
+    def _set_link_list(self, frame, intro, urls):
+        """Rellena «frame» (un ttk.Frame vacío, en el sitio de la antigua etiqueta de una sola
+        línea) con, si se da «intro», una línea de texto normal, y debajo una línea por cada
+        dirección de «urls», cada una de verdad clicable: la abre en el navegador de este mismo
+        equipo (para comprobar rápido que responde), con el cursor de mano al pasar por encima --
+        igual que ya hacía la dirección de la barra de estado (ver _open_ip_url). Con «urls»
+        vacío solo se ve «intro» (p.ej. «No está activa.»)."""
+        for w in frame.winfo_children():
+            w.destroy()
+        row = 0
+        if intro:
+            ttk.Label(frame, text=intro, style="Muted.TLabel", wraplength=380,
+                      justify="left").grid(row=row, column=0, sticky="w")
+            row += 1
+        for url in urls:
+            lbl = ttk.Label(frame, text=url, style="Muted.TLabel", cursor="hand2")
+            lbl.grid(row=row, column=0, sticky="w")
+            lbl.bind("<Button-1>", lambda e, u=url: self._open_url(u))
+            row += 1
+
+    def _open_url(self, url):
+        """Clic en cualquier dirección clicable de la interfaz: la abre en el navegador
+        predeterminado de este mismo equipo, para comprobar rápido que responde."""
+        try:
+            webbrowser.open(url)
+            self._set_status("Abriendo en el navegador: {0}".format(url))
+        except Exception:
+            pass
 
     def _ip_primary_url(self):
         """Una sola dirección (la mejor suposición: la IP, o el nombre si no hay IP) para copiar
@@ -8415,12 +8450,7 @@ class CamApp:
         (de este mismo equipo, para comprobar rápido que funciona)."""
         if not self.ipout_on:
             return
-        url = self._ip_primary_url()
-        try:
-            webbrowser.open(url)
-            self._set_status("Abriendo en el navegador: {0}".format(url))
-        except Exception:
-            pass
+        self._open_url(self._ip_primary_url())
 
     def _open_in_vlc(self, *_a):
         """Abre el vídeo de «En la red» directamente en VLC (si está instalado), en vez del
@@ -8492,9 +8522,12 @@ class CamApp:
     def _ip_changed(self, msg, quiet):
         self._refresh_buttons()
         self._tray_update(menu=True)
-        if getattr(self, "lbl_ipurl", None) is not None:
-            self.lbl_ipurl.config(text=("Disponible en: " + self._ip_urls(self.ipsrv.port))
-                                  if self.ipout_on else "No está activa.")
+        if getattr(self, "frm_ipurl", None) is not None:
+            if self.ipout_on:
+                self._set_link_list(self.frm_ipurl, "Disponible en:",
+                                    self._ip_url_list(self.ipsrv.port))
+            else:
+                self._set_link_list(self.frm_ipurl, "No está activa.", [])
         if quiet:
             return                         # al arrancar: la primera vista previa ya la incluye
         self.save_config()
@@ -8527,19 +8560,6 @@ class CamApp:
         self._ip_enable()
 
     # ------------------------------------------------------------ cámara del móvil
-    def toggle_phonecam(self, *_a):
-        """Activa / desactiva poder usar la cámara de un móvil (por su navegador) como cámara
-        de red más del mosaico -- ver PhoneCamHub. A diferencia de «En la red», esto no toca el
-        ffmpeg en marcha por sí solo: solo cuando un móvil se conecta de verdad se añade como
-        cámara (ver _phonecam_auto_add), con el mismo mecanismo de siempre para cámaras nuevas."""
-        if self.busy:
-            self._set_status("Un momento…")
-            return
-        if self.phonecam_on:
-            self._phonecam_disable()
-        else:
-            self._phonecam_enable()
-
     def _phonecam_port(self):
         try:
             p = int(self.v_phonecamport.get())
@@ -8562,6 +8582,17 @@ class CamApp:
         ips = _local_ips()
         host = ips[0] if ips else socket.gethostname()
         return "https://{0}:{1}/add".format(host, self.phonecam.port)
+
+    def _phonecam_add_url_list(self):
+        """Todas las direcciones de «/add», una por cada IP de este equipo (y al final el
+        nombre del equipo), para que se vean todas en Ajustes -- no solo la primera que se
+        adivina -- igual que ya se hace en «En la red» (ver _ip_url_list)."""
+        ips = _local_ips()
+        urls = ["https://{0}:{1}/add".format(ip, self.phonecam.port) for ip in ips]
+        if not urls:
+            urls = ["https://(la IP de este equipo):{0}/add".format(self.phonecam.port)]
+        urls.append("https://{0}:{1}/add".format(socket.gethostname(), self.phonecam.port))
+        return urls
 
     def _phonecam_cert_url(self):
         """Dirección HTTP normal (sin cifrar a propósito -- ver el comentario junto a
@@ -8650,7 +8681,7 @@ class CamApp:
 
     def _phonecam_changed(self, quiet):
         self._refresh_buttons()
-        self._phonecam_clear_pair_qr()          # también deja lbl_phonecamurl en su texto normal
+        self._phonecam_clear_pair_qr()          # también deja frm_phonecamurl en su texto normal
         if quiet:
             return
         self.save_config()
@@ -8669,12 +8700,15 @@ class CamApp:
         photo = self._phonecam_qr_photo(url)
         self._phonecam_qr_img = photo                  # referencia viva, si no Tk la olvida
         self.lbl_phonecamqr.config(image=photo or "")
-        self.lbl_phonecamurl.config(
-            text="Un móvil está esperando: apunta su cámara a este código."
-            if photo is not None else
+        if photo is not None:
+            self._set_link_list(self.frm_phonecamurl,
+                                "Un móvil está esperando: apunta su cámara a este código.", [])
+        else:
             # sin el paquete «qrcode» no hay imagen que mostrar, pero la dirección en texto
-            # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo)
-            "Un móvil está esperando: abre esto a mano en su navegador: {0}".format(url))
+            # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo) --
+            # y, ya que aparece, que sea clicable también aquí mismo, por si se quiere probar
+            self._set_link_list(self.frm_phonecamurl,
+                                "Un móvil está esperando: abre esto a mano en su navegador:", [url])
         self._phonecam_pair_shown_at = time.time()
         self._phonecam_popup_qr(url, photo)
 
@@ -8768,11 +8802,15 @@ class CamApp:
         if getattr(self, "lbl_phonecamqr", None) is not None:
             self.lbl_phonecamqr.config(image="")
         self._phonecam_qr_img = None
-        if getattr(self, "lbl_phonecamurl", None) is not None:
-            self.lbl_phonecamurl.config(
-                text="Accede a {0} desde el navegador del móvil para añadir la cámara de tu "
-                     "móvil a la lista de dispositivos.".format(self._phonecam_add_url())
-                if self.phonecam_on else "No está activa.")
+        if getattr(self, "frm_phonecamurl", None) is not None:
+            if self.phonecam_on:
+                self._set_link_list(
+                    self.frm_phonecamurl,
+                    "Accede a cualquiera de estas direcciones desde el navegador del móvil "
+                    "para añadir la cámara de tu móvil a la lista de dispositivos:",
+                    self._phonecam_add_url_list())
+            else:
+                self._set_link_list(self.frm_phonecamurl, "No está activa.", [])
         self._phonecam_close_popup_qr()
 
     def _on_phonecamport_commit(self, *_a):
@@ -8993,11 +9031,6 @@ class CamApp:
         if getattr(self, "btn_vlc", None) is not None:
             self.btn_vlc.config(state="disabled" if (b or not ion) else "normal")
         self._ip_var.set(ion)
-        pcon = self.phonecam_on
-        if getattr(self, "btn_phonecam", None) is not None:
-            self.btn_phonecam.config(
-                text="📱  Apagar cámara del móvil" if pcon else "📱  Añadir un dispositivo móvil como cámara",
-                style="Accent.TButton" if pcon else "TButton", state="disabled" if b else "normal")
         if getattr(self, "lbl_ip_bar", None) is not None:
             self.lbl_ip_bar.config(text=("🌐 " + self._ip_dual_url()) if ion else "")
         self._tray_update()

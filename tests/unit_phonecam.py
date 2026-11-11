@@ -594,4 +594,22 @@ print("19) de punta a punta por HTTP real: «/cam» acuña y guarda el secreto d
       "secreto que no existe cae a {\"ok\": false}, uno ya conocido no cambia solo, y tras "
       "«olvidarlo» deja de servir al instante OK")
 
+# 20) la lista exhaustiva de direcciones de «/add» (pedido explícito del usuario: "una lista mas
+#     exhaustiva de hostnames / ips") -- una por cada IP real de este equipo, más el nombre del
+#     equipo al final, igual que _ip_url_list() ya hace para "En la red"; y _phonecam_add_url()
+#     (la dirección única que de verdad se manda en «/addcam/start», ver unit_viewer_html.py)
+#     sigue siendo, tal cual, la primera de esa misma lista -- la mejor suposición.
+app20 = _FakeCamApp()
+app20.phonecam.port = 58699
+ips20 = camui._local_ips()
+urls20 = camui.CamApp._phonecam_add_url_list(app20)
+assert len(urls20) == (len(ips20) if ips20 else 1) + 1, (urls20, ips20)
+assert all(u.startswith("https://") and u.endswith(":58699/add") for u in urls20), urls20
+assert urls20[-1] == "https://{0}:58699/add".format(camui.socket.gethostname()), urls20
+assert urls20[0] == camui.CamApp._phonecam_add_url(app20), \
+    (urls20[0], camui.CamApp._phonecam_add_url(app20))
+print("20) la lista de direcciones de «/add» es exhaustiva (una por IP real + el nombre del "
+      "equipo), y la primera coincide con _phonecam_add_url() (la que de verdad se usa en "
+      "«/addcam/start») OK")
+
 print("TODO OK unit_phonecam")
