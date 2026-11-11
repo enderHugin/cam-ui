@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 23                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 24                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2607,6 +2607,16 @@ PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan d
 PHONECAM_PAIR_TIMEOUT = 90             # sin escanear este QR de emparejamiento en este tiempo, se retira solo
 PHONECAM_CERT_FILE = os.path.join(HERE, "phonecam_cert.pem")
 PHONECAM_KEY_FILE = os.path.join(HERE, "phonecam_key.pem")
+# CA local (ver _phonecam_ensure_ca): firma el certificado de arriba en vez de que se firme a sí
+# mismo -- eso es lo único que permite que un iPhone/iPad llegue a confiar en él de verdad (ver
+# el comentario junto a PhoneCamCertDialog). Se genera una sola vez y, a diferencia del
+# certificado de arriba, nunca se regenera sola (si cambiara, cualquiera que ya la hubiera
+# instalado en un móvil tendría que repetirlo -- por eso se guarda aparte y para siempre).
+PHONECAM_CA_CERT_FILE = os.path.join(HERE, "phonecam_ca_cert.pem")
+PHONECAM_CA_KEY_FILE = os.path.join(HERE, "phonecam_ca_key.pem")
+PHONECAM_CA_DAYS = 3650        # la CA no tiene límite de validez según Apple -- solo el de abajo
+PHONECAM_LEAF_DAYS = 800       # <= 825 días: lo que exige iOS 13+/macOS 10.15+ en un cert de servidor
+                                # (soporte.apple.com/103769), o Safari deja de confiar en él sin más
 
 
 def _phonecam_cert_covers(cert_path, ips):
@@ -2624,21 +2634,92 @@ def _phonecam_cert_covers(cert_path, ips):
         return False
 
 
-def _phonecam_ensure_cert():
-    """Certificado autofirmado para la página de la cámara del móvil (hace falta para poder
-    usar getUserMedia() -- ver el comentario de más arriba). Se guarda junto a camui.py y se
-    reutiliza mientras siga cubriendo la IP actual del equipo, para no hacer saltar el aviso
-    de "conexión no privada" del navegador más veces de las necesarias."""
-    import ipaddress
-    ips = [ip for ip in _local_ips() if ip]
-    if (os.path.isfile(PHONECAM_CERT_FILE) and os.path.isfile(PHONECAM_KEY_FILE) and
-            _phonecam_cert_covers(PHONECAM_CERT_FILE, ips)):
-        return PHONECAM_CERT_FILE, PHONECAM_KEY_FILE
+def _phonecam_cert_fresh(cert_path, days_left=60):
+    """True si al certificado ya guardado todavía le quedan más de «days_left» días de vida --
+    con PHONECAM_LEAF_DAYS (800) de margen no debería hacer falta casi nunca en la práctica, pero
+    sin esto un cam-ui que llevara meses sin reiniciarse (o sin cambiar de IP) se quedaría con un
+    certificado caducado para siempre, y con él vuelve justo el mismo problema que esto arregla."""
+    try:
+        from cryptography import x509
+        with open(cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        try:
+            exp = cert.not_valid_after_utc                 # cryptography >= 42
+        except AttributeError:
+            exp = cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)  # versiones anteriores
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return (exp - now) > datetime.timedelta(days=days_left)
+    except Exception:
+        return False
+
+
+def _phonecam_ensure_ca():
+    """La CA local de cam-ui (ver el comentario junto a PHONECAM_CA_CERT_FILE): se reutiliza
+    para siempre si ya existe y se puede leer -- solo se genera una nueva si falta o está
+    dañada (entonces, quien ya la hubiera instalado en un iPhone/iPad tendría que reinstalarla,
+    pero es la única opción razonable frente a dejar «Cámara del móvil» rota del todo)."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID
+    if os.path.isfile(PHONECAM_CA_CERT_FILE) and os.path.isfile(PHONECAM_CA_KEY_FILE):
+        try:
+            with open(PHONECAM_CA_KEY_FILE, "rb") as f:
+                key = serialization.load_pem_private_key(f.read(), password=None)
+            with open(PHONECAM_CA_CERT_FILE, "rb") as f:
+                cert = x509.load_pem_x509_certificate(f.read())
+            return cert, key
+        except Exception as e:
+            log.warning("CA de «Cámara del móvil» dañada o ilegible, se genera una nueva (%r) "
+                       "-- quien ya la hubiera instalado en un iPhone/iPad tendrá que repetirlo", e)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "cam-ui (red local)"),
+                      x509.NameAttribute(NameOID.ORGANIZATION_NAME, "cam-ui")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=PHONECAM_CA_DAYS))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(x509.KeyUsage(
+                digital_signature=False, content_commitment=False, key_encipherment=False,
+                data_encipherment=False, key_agreement=False, key_cert_sign=True, crl_sign=True,
+                encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                          critical=False)
+            .sign(key, hashes.SHA256()))
+    with open(PHONECAM_CA_KEY_FILE, "wb") as f:
+        f.write(key.private_bytes(serialization.Encoding.PEM,
+                                  serialization.PrivateFormat.TraditionalOpenSSL,
+                                  serialization.NoEncryption()))
+    with open(PHONECAM_CA_CERT_FILE, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    return cert, key
 
+
+def _phonecam_ensure_cert():
+    """Certificado para la página de la cámara del móvil (hace falta para poder usar
+    getUserMedia() -- ver el comentario de más arriba), firmado por la CA local de cam-ui (ver
+    _phonecam_ensure_ca) en vez de autofirmado -- eso es lo que permite instalar esa CA una vez
+    en un iPhone/iPad (ver PhoneCamCertDialog) y que Safari confíe en esto de verdad, no solo
+    "lo acepto esta vez". Se guarda junto a camui.py y se reutiliza mientras siga cubriendo la
+    IP actual del equipo y no esté a punto de caducar, para no hacer saltar el aviso de
+    "conexión no privada" del navegador (en Android/Chrome, que no necesita la CA instalada)
+    más veces de las necesarias."""
+    import ipaddress
+    ips = [ip for ip in _local_ips() if ip]
+    if (os.path.isfile(PHONECAM_CERT_FILE) and os.path.isfile(PHONECAM_KEY_FILE) and
+            _phonecam_cert_covers(PHONECAM_CERT_FILE, ips) and
+            _phonecam_cert_fresh(PHONECAM_CERT_FILE)):
+        return PHONECAM_CERT_FILE, PHONECAM_KEY_FILE
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+
+    ca_cert, ca_key = _phonecam_ensure_ca()
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "cam-ui (red local)")])
     alt_names = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
@@ -2649,13 +2730,21 @@ def _phonecam_ensure_cert():
             pass
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (x509.CertificateBuilder()
-            .subject_name(name).issuer_name(name)
+            .subject_name(name).issuer_name(ca_cert.subject)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=3650))
+            .not_valid_after(now + datetime.timedelta(days=PHONECAM_LEAF_DAYS))
             .add_extension(x509.SubjectAlternativeName(alt_names), critical=False)
-            .sign(key, hashes.SHA256()))
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(
+                digital_signature=True, content_commitment=False, key_encipherment=True,
+                data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False,
+                encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                          critical=False)
+            .sign(ca_key, hashes.SHA256()))
     with open(PHONECAM_KEY_FILE, "wb") as f:
         f.write(key.private_bytes(serialization.Encoding.PEM,
                                   serialization.PrivateFormat.TraditionalOpenSSL,
@@ -2928,6 +3017,7 @@ class PhoneCamHub:
         self.port = None
         self._https_srv = None
         self._local_srv = None
+        self._cert_srv = None           # HTTP normal (sin cifrar): ver _PhoneCamCertHandler
 
     @property
     def active(self):
@@ -2936,6 +3026,10 @@ class PhoneCamHub:
     @property
     def local_port(self):
         return self._local_srv.server_address[1] if self._local_srv is not None else None
+
+    @property
+    def cert_port(self):
+        return self._cert_srv.server_address[1] if self._cert_srv is not None else None
 
     def n_sessions(self):
         cutoff = time.time() - PHONECAM_STALE_SECONDS
@@ -2971,18 +3065,29 @@ class PhoneCamHub:
         https_srv.socket = ctx.wrap_socket(https_srv.socket, server_side=True)
         https_srv.hub = self
         threading.Thread(target=https_srv.serve_forever, daemon=True).start()
-        self._local_srv, self._https_srv, self.port = local_srv, https_srv, p
+        # servidor aparte, en HTTP normal (sin cifrar) y visible en la wifi: solo sirve la CA
+        # local de cam-ui para que un iPhone/iPad pueda instalarla como perfil de confianza (ver
+        # PhoneCamCertDialog) -- tiene que ser HTTP sin más, nunca HTTPS, porque antes de
+        # instalar esa CA el propio certificado de arriba todavía no es de fiar para el
+        # dispositivo: es el mismo problema del huevo y la gallina que resuelve mitmproxy con
+        # su "http://mitm.it". No es sensible (una CA es pública por diseño; su clave privada
+        # nunca sale de aquí), así que no hace falta ningún token para llegar a ella.
+        cert_srv = http.server.ThreadingHTTPServer(("0.0.0.0", 0), _PhoneCamCertHandler)
+        cert_srv.hub = self
+        threading.Thread(target=cert_srv.serve_forever, daemon=True).start()
+        self._local_srv, self._https_srv, self._cert_srv, self.port = (
+            local_srv, https_srv, cert_srv, p)
         return self.port, self.token
 
     def stop(self):
-        for srv in (self._https_srv, self._local_srv):
+        for srv in (self._https_srv, self._local_srv, self._cert_srv):
             if srv is not None:
                 try:
                     srv.shutdown()
                     srv.server_close()
                 except Exception:
                     pass
-        self._https_srv = self._local_srv = self.port = self.token = None
+        self._https_srv = self._local_srv = self._cert_srv = self.port = self.token = None
         with self._lk:
             self._sessions = {}
 
@@ -3176,6 +3281,87 @@ class _PhoneCamLocalHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(jpeg)
                 self.wfile.write(b"\r\n")
         except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+            pass
+
+
+_PHONECAM_CERT_PAGE = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Certificado de cam-ui</title>
+<style>
+body{background:#16181c;color:#e8e8e8;font:16px/1.5 -apple-system,"Segoe UI",sans-serif;
+    max-width:460px;margin:32px auto;padding:0 20px}
+h1{font-size:20px}
+a.btn{display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;
+      padding:10px 18px;border-radius:8px;font-weight:600;margin:12px 0}
+.muted{color:#8d949e;font-size:14px}
+ol{padding-left:20px}
+li{margin-bottom:10px}
+</style></head>
+<body>
+<h1>Certificado de cam-ui</h1>
+<p>Esto hace falta <strong>solo en iPhone/iPad</strong> para que Safari deje usar la cámara del
+móvil con «Cámara del móvil». <strong>En Android no hace falta nada de esto</strong> -- con
+«Avanzado → Continuar» en el aviso del navegador ya funciona.</p>
+<p><a class="btn" href="/certificado">⬇ Instalar certificado</a></p>
+<ol>
+<li>Toca el enlace de arriba y luego «Permitir» / «Instalar». Puede avisar de que el perfil «no
+está firmado» o que su autenticidad «no se puede verificar» -- es normal aquí: lo genera tu
+propio ordenador, no hace falta que lo firme nadie más. Sigue con «Instalar» (puede pedirlo dos
+veces).</li>
+<li>Ve a Ajustes → General → Información → Confianza de certificados, y activa el interruptor
+junto a «cam-ui (red local)».</li>
+</ol>
+<p class="muted">Con esto hecho una sola vez, no hace falta repetirlo -- ni aunque el ordenador
+cambie de red.</p>
+</body></html>
+"""
+_PHONECAM_CERT_PAGE = _PHONECAM_CERT_PAGE.encode("utf-8")
+
+
+class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
+    """Servidor HTTP normal (sin cifrar) y visible en la wifi, aparte del de arriba: sirve la CA
+    local de cam-ui para que un iPhone/iPad pueda instalarla como perfil de confianza (ver el
+    comentario junto a PhoneCamHub.start y PhoneCamCertDialog, más abajo). Tiene que ser HTTP
+    normal a propósito -- antes de instalar esa CA, el certificado HTTPS de siempre todavía no es
+    de fiar para el dispositivo, así que servir esto por HTTPS sería el mismo problema que
+    intenta resolver (el huevo y la gallina); mitmproxy resuelve esto exactamente igual, con su
+    «http://mitm.it»."""
+
+    def log_message(self, *_a):
+        pass
+
+    def do_GET(self):
+        hub = self.server.hub
+        path = self.path.split("?", 1)[0]
+        if path == "/certificado":
+            try:
+                from cryptography import x509
+                from cryptography.hazmat.primitives.serialization import Encoding
+                with open(PHONECAM_CA_CERT_FILE, "rb") as f:
+                    pem = f.read()
+                der = x509.load_pem_x509_certificate(pem).public_bytes(Encoding.DER)
+            except Exception:
+                self._send(404, b"", "text/plain")
+                return
+            # application/x-x509-ca-cert: el tipo que hace que Safari, al descargarlo, ofrezca
+            # "Instalar perfil" en vez de un archivo suelto cualquiera (mismo tipo que usa
+            # mitmproxy para esto mismo, ver mitmproxy/addons/onboardingapp)
+            self._send(200, der, "application/x-x509-ca-cert", cache=False)
+            return
+        self._send(200, _PHONECAM_CERT_PAGE, "text/html; charset=utf-8", cache=False)
+
+    def _send(self, code, body, ctype, cache=True):
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            if not cache:
+                self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
 
@@ -4692,6 +4878,74 @@ class PhoneCamQrDialog:
             pass
 
 
+class PhoneCamCertDialog:
+    """Ventanita flotante con el QR (o la dirección, si falta «qrcode») para instalar en un
+    iPhone/iPad el certificado de confianza de cam-ui (ver CamApp._phonecam_show_cert_dialog).
+    Solo hace falta en iOS/iPadOS: WebKit no deja usar la cámara (getUserMedia) a través de un
+    certificado autofirmado normal, por mucho que ya se haya aceptado el aviso de «conexión no
+    privada» -- eso basta para ver la página, pero no para la cámara (caso real, reportado por
+    un usuario: la página cargaba bien, pero la cámara fallaba sin pedir permiso siquiera).
+    Android/Chrome no tiene esa restricción, así que ahí no hace falta nada de esto."""
+
+    def __init__(self, parent, photo, url, on_install_qr=None):
+        self.alive = True
+        self.photo = photo
+        self.btn_install_qr = None
+        top = self.top = tk.Toplevel(parent)
+        top.title("Certificado para iPhone/iPad")
+        top.configure(bg=PANEL)
+        top.resizable(False, False)
+        try:
+            top.attributes("-topmost", True)
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        top.bind("<Destroy>", lambda e: setattr(self, "alive", False) if e.widget is top else None)
+        frm = ttk.Frame(top, padding=16)
+        frm.pack()
+        ttk.Label(frm, text="Solo hace falta en iPhone/iPad",
+                 font=("Segoe UI", 12, "bold")).pack()
+        if photo is not None:
+            ttk.Label(frm, image=photo).pack(pady=(10, 10))
+        else:
+            # sin el paquete «qrcode» no hay imagen que mostrar, pero la dirección en texto
+            # sigue valiendo igual (se puede teclear a mano), y aquí mismo se ofrece instalarlo
+            ttk.Label(frm, text=url, style="Muted.TLabel", wraplength=320,
+                     justify="left").pack(pady=(10, 10))
+            if on_install_qr is not None:
+                self.btn_install_qr = ttk.Button(
+                    frm, text="Instalar «qrcode» para ver el código",
+                    command=lambda: on_install_qr(url))
+                self.btn_install_qr.pack(pady=(0, 6))
+        ttk.Label(frm, style="Muted.TLabel", wraplength=320, justify="left",
+                 text="En Android no hace falta nada de esto (con «Avanzado → Continuar» en el "
+                      "aviso del navegador ya funciona). En iPhone/iPad: apunta con la Cámara a "
+                      "este código y sigue las instrucciones de esa página -- solo hay que "
+                      "hacerlo una vez, no hace falta repetirlo."
+                 ).pack(pady=(4, 0))
+        ttk.Button(frm, text="Cerrar", command=self.close).pack(pady=(14, 0))
+        try:
+            top.update_idletasks()
+            px, py = parent.winfo_rootx(), parent.winfo_rooty()
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            w, h = top.winfo_width(), top.winfo_height()
+            x = px + max(0, (pw - w) // 2)
+            y = py + max(0, (ph - h) // 2)
+            top.geometry("+{0}+{1}".format(x, y))
+        except Exception:
+            pass
+
+    def close(self):
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+
+
 class CamApp:
     def __init__(self, root):
         self.root = root
@@ -4780,6 +5034,7 @@ class CamApp:
         self.phonecam_on = False
         self._phonecam_pair_shown_at = 0.0
         self._phonecam_qr_dialog = None                      # diálogo flotante del QR (ver más abajo)
+        self._phonecam_cert_dialog = None                     # diálogo del certificado (iPhone/iPad)
         self.startup_on = startup_get()                      # se comprueba de verdad, no se guarda aparte
         try:
             self.eng.startup_time = min(8.0, max(0.5, float(self._cfg.get("startup", 2.5))))
@@ -5288,6 +5543,18 @@ class CamApp:
                         self._set_status("No se pudo instalar qrcode.")
                         messagebox.showwarning(
                             "Cámara del móvil", "No se pudo instalar.\n\n{0}\n\n"
+                            "Puedes instalarlo a mano:  pip install qrcode".format(msg))
+                elif cmd == "phonecam_cert_qr_installed":
+                    ok, msg, _cert_url = arg
+                    if ok:
+                        import importlib
+                        importlib.invalidate_caches()
+                        self._set_status("qrcode instalado.")
+                        self._phonecam_show_cert_dialog()
+                    else:
+                        self._set_status("No se pudo instalar qrcode.")
+                        messagebox.showwarning(
+                            "Certificado para iPhone/iPad", "No se pudo instalar.\n\n{0}\n\n"
                             "Puedes instalarlo a mano:  pip install qrcode".format(msg))
             except Exception:
                 log.error("orden de bandeja %s:\n%s", cmd, traceback.format_exc())
@@ -6073,6 +6340,17 @@ class CamApp:
                        "QR en la pantalla del PC es lo que de verdad protege esto: nadie en la wifi "
                        "puede añadirse sin estar delante del ordenador."
                   ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
+        self.btn_phonecam_cert = ttk.Button(
+            pf, text="📲  Instalar certificado (solo iPhone/iPad)",
+            command=self._phonecam_show_cert_dialog)
+        self.btn_phonecam_cert.grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+        self._live.add(str(self.btn_phonecam_cert))       # no toca nada de la grabación en marcha
+        ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="En iPhone/iPad hace falta un paso más (botón de arriba, solo una vez): "
+                       "Safari no deja usar la cámara ahí sin él, por mucho que se acepte el "
+                       "aviso de «conexión no privada» -- eso basta para ver la página, pero no "
+                       "para la cámara. En Android no hace falta nada de esto."
+                  ).grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
         ttk.Label(df, text="Carpeta").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -8044,6 +8322,14 @@ class CamApp:
         host = ips[0] if ips else socket.gethostname()
         return "https://{0}:{1}/add".format(host, self.phonecam.port)
 
+    def _phonecam_cert_url(self):
+        """Dirección HTTP normal (sin cifrar a propósito -- ver el comentario junto a
+        _PhoneCamCertHandler) donde instalar, solo en iPhone/iPad, el certificado de confianza
+        de cam-ui. Solo existe mientras «Cámara del móvil» está activa."""
+        ips = _local_ips()
+        host = ips[0] if ips else socket.gethostname()
+        return "http://{0}:{1}/".format(host, self.phonecam.cert_port)
+
     def _phonecam_qr_photo(self, url):
         """Imagen (Tk) del código QR con la dirección, o None si falta el paquete «qrcode»
         (opcional: sin él solo se pierde el QR, la dirección en texto sigue funcionando igual)."""
@@ -8182,6 +8468,45 @@ class CamApp:
         if dlg is not None:
             dlg.close()
         self._phonecam_qr_dialog = None
+
+    def _phonecam_show_cert_dialog(self):
+        """Botón «Instalar certificado (solo iPhone/iPad)» de Ajustes: abre PhoneCamCertDialog
+        con el QR (o la dirección en texto) para instalarlo. Hace falta que «Cámara del móvil»
+        esté encendida, porque el certificado que se instala es el de _PhoneCamCertHandler, que
+        corre junto al resto de servidores de PhoneCamHub (ver PhoneCamHub.start)."""
+        if not self.phonecam_on or not self.phonecam.active:
+            messagebox.showinfo(
+                "Certificado para iPhone/iPad",
+                "Primero activa «Cámara del móvil» (botón de arriba) -- este certificado se "
+                "sirve junto con ella.")
+            return
+        url = self._phonecam_cert_url()
+        photo = self._phonecam_qr_photo(url)
+        self._phonecam_cert_qr_img = photo              # referencia viva, si no Tk la olvida
+        dlg = getattr(self, "_phonecam_cert_dialog", None)
+        if dlg is not None:
+            dlg.close()
+        on_install = None if photo is not None else self._phonecam_offer_cert_qr_install
+        try:
+            self._phonecam_cert_dialog = PhoneCamCertDialog(self.root, photo, url, on_install)
+        except Exception as e:
+            log.info("no se pudo abrir el diálogo del certificado para iPhone/iPad: %r", e)
+            self._phonecam_cert_dialog = None
+
+    def _phonecam_offer_cert_qr_install(self, url):
+        """Mismo patrón que _phonecam_offer_qr_install, pero para el QR del certificado: al
+        terminar, en vez de reabrir el emparejamiento, reabre este mismo diálogo."""
+        if messagebox.askyesno(
+                "Certificado para iPhone/iPad",
+                "Para mostrar el código QR (en vez de la dirección en texto, incómoda de "
+                "teclear a mano) hace falta el paquete «qrcode» (pequeño; se instala con pip y "
+                "necesita internet). No parece estar instalado.\n\n¿Instalarlo ahora?"):
+            self._set_status("Instalando qrcode…")
+
+            def run():
+                ok, msg = pip_install("qrcode")
+                self._tray_q.append(("phonecam_cert_qr_installed", (ok, msg, url)))
+            threading.Thread(target=run, daemon=True).start()
 
     def _phonecam_clear_pair_qr(self):
         self._phonecam_pair_shown_at = 0.0

@@ -43,6 +43,8 @@ camui.CONFIG = os.path.join(HOME, "config.json")
 camui.LOGFILE = os.path.join(HOME, "camui.log")
 camui.PHONECAM_CERT_FILE = os.path.join(HOME, "phonecam_cert.pem")
 camui.PHONECAM_KEY_FILE = os.path.join(HOME, "phonecam_key.pem")
+camui.PHONECAM_CA_CERT_FILE = os.path.join(HOME, "phonecam_ca_cert.pem")
+camui.PHONECAM_CA_KEY_FILE = os.path.join(HOME, "phonecam_ca_key.pem")
 if os.path.isfile(camui.CONFIG):            # arranque limpio: sin restos de una ejecución anterior
     os.remove(camui.CONFIG)                 # (_phonecam_enable guarda "on": true de verdad)
 
@@ -334,6 +336,120 @@ try:
 finally:
     camui.messagebox, camui.pip_install = orig_mb, orig_pip
     app._phonecam_qr_photo = _real_qr_photo
+
+# 17-20) el certificado para iPhone/iPad (ver PhoneCamCertDialog / _PhoneCamCertHandler): con
+#        «Cámara del móvil» activa, el botón «Instalar certificado (solo iPhone/iPad)» de
+#        Ajustes abre un diálogo flotante de verdad con su propio QR, que apunta a un servidor
+#        HTTP real (sin cifrar, aparte del de HTTPS) que de verdad sirve la CA local de cam-ui.
+assert app.phonecam_on and app.phonecam.active, \
+    "«Cámara del móvil» debería seguir encendida tras los pasos anteriores"
+app.btn_phonecam_cert.invoke()
+dlg_cert = app._phonecam_cert_dialog
+assert dlg_cert is not None and dlg_cert.alive, \
+    "el botón del certificado debería abrir un diálogo flotante de verdad"
+assert dlg_cert.photo is not None, "con «qrcode» instalado de verdad, debería verse su imagen"
+cert_url = app._phonecam_cert_url()
+assert cert_url.startswith("http://") and not cert_url.startswith("https://"), \
+    "la dirección del certificado tiene que ser HTTP normal, nunca HTTPS (huevo y gallina)"
+assert str(app.phonecam.cert_port) in cert_url
+# igual que el resto de esta prueba habla con PhoneCamHub por 127.0.0.1 en vez de la IP "pública"
+# detectada (no siempre alcanzable desde dentro de esta caja), aquí también -- no es lo que se
+# prueba aquí (la IP de verdad ya se prueba sola, en unit_phonecam.py)
+with urllib.request.urlopen(
+        "http://127.0.0.1:{0}/".format(app.phonecam.cert_port), timeout=5) as r:
+    landing_body = r.read().decode("utf-8")
+assert "Instalar certificado" in landing_body and "/certificado" in landing_body
+dlg_cert.close()
+print("17) «Instalar certificado (solo iPhone/iPad)» abre un diálogo real con su propio QR, que "
+      "apunta de verdad a la página del certificado (servida por HTTP normal, visible en la "
+      "wifi) OK")
+
+# 18) con «Cámara del móvil» apagada, ese mismo botón no debe abrir ningún diálogo de "
+#     certificado (no hay ningún servidor del que sacar su dirección) -- debe avisar, con
+#     claridad, de que hace falta encenderla antes.
+app._phonecam_disable()
+assert not app.phonecam_on and not app.phonecam.active
+info_calls = []
+
+
+class _FakeMsgBoxInfo:
+    def showinfo(self, title, msg):
+        info_calls.append((title, msg))
+
+
+orig_mb2 = camui.messagebox
+camui.messagebox = _FakeMsgBoxInfo()
+try:
+    app.btn_phonecam_cert.invoke()
+finally:
+    camui.messagebox = orig_mb2
+assert len(info_calls) == 1 and "Cámara del móvil" in info_calls[0][1]
+assert app._phonecam_cert_dialog is None or not app._phonecam_cert_dialog.alive, \
+    "sin «Cámara del móvil» encendida no debería quedar ningún diálogo de certificado abierto"
+print("18) con «Cámara del móvil» apagada, el botón del certificado avisa de que hay que "
+      "encenderla antes -- sin abrir ningún diálogo (no habría de dónde sacar su dirección) OK")
+
+# 19-20) sin «qrcode» (simulado, igual que en 14-16 con el QR de emparejamiento): el diálogo cae
+#        a la dirección en texto con un botón para instalarlo -- y, tras instalarlo, se reabre
+#        solo con la imagen real.
+assert app._phonecam_enable(), "no se pudo volver a encender «Cámara del móvil» de verdad"
+_qr_calls2 = {"n": 0}
+
+
+def _fake_qr_photo2(url):
+    _qr_calls2["n"] += 1
+    if _qr_calls2["n"] == 1:
+        return None
+    return _real_qr_photo(url)
+
+
+app._phonecam_qr_photo = _fake_qr_photo2
+askyesno_calls2, pip_calls2 = [], []
+
+
+class _FakeMsgBoxCert:
+    def __init__(self):
+        self.calls = askyesno_calls2
+
+    def askyesno(self, title, msg):
+        self.calls.append((title, msg))
+        return True
+
+
+def _fake_pip_install2(pkg, timeout=240):
+    pip_calls2.append(pkg)
+    return True, ""
+
+
+orig_mb3, orig_pip2 = camui.messagebox, camui.pip_install
+camui.messagebox, camui.pip_install = _FakeMsgBoxCert(), _fake_pip_install2
+try:
+    app.btn_phonecam_cert.invoke()
+    dlg_cert2 = app._phonecam_cert_dialog
+    assert dlg_cert2 is not None and dlg_cert2.alive
+    assert dlg_cert2.photo is None, "con «qrcode» simulado como ausente no debería haber imagen"
+    assert dlg_cert2.btn_install_qr is not None and dlg_cert2.btn_install_qr.winfo_ismapped(), \
+        "sin imagen debería verse el botón para instalar «qrcode»"
+    print("19) sin «qrcode», el diálogo del certificado también cae a la dirección en texto con "
+          "un botón para instalarlo (mismo mecanismo que el QR de emparejamiento) OK")
+
+    dlg_cert2.btn_install_qr.invoke()
+    assert len(askyesno_calls2) == 1 and "qrcode" in askyesno_calls2[0][1]
+    assert pump(lambda: pip_calls2 == ["qrcode"], timeout=4), \
+        "no se llegó a instalar «qrcode» (de mentira) tras aceptar"
+    assert pump(lambda: getattr(app, "_phonecam_cert_dialog", None) is not None and
+                app._phonecam_cert_dialog is not dlg_cert2 and
+                app._phonecam_cert_dialog.photo is not None, timeout=4), \
+        "tras instalar «qrcode», debería reabrirse solo el mismo diálogo, con su imagen real"
+    assert not dlg_cert2.alive, "el diálogo de texto debería haberse cerrado al reabrirse"
+    print("20) al pulsarlo, instala «qrcode» de verdad por ese camino y reabre solo el mismo "
+          "diálogo del certificado -- esta vez con su imagen real OK")
+finally:
+    camui.messagebox, camui.pip_install = orig_mb3, orig_pip2
+    app._phonecam_qr_photo = _real_qr_photo
+    dlg = getattr(app, "_phonecam_cert_dialog", None)
+    if dlg is not None:
+        dlg.close()
 
 app._phonecam_disable()
 app._ip_disable()

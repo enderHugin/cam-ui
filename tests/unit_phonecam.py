@@ -200,23 +200,30 @@ print("12) «/cam?...&sid=» reutiliza esa sesión exacta; con un sid que no exi
 hub.stop()
 assert not hub.active
 
-# 13) el certificado (autofirmado, para poder usar la cámara desde HTTPS -- ver el comentario
-#     junto a PHONECAM_PORT_DEFAULT) se reutiliza mientras siga cubriendo la IP del equipo, y
-#     se regenera solo si esta cambia -- así el aviso de "conexión no privada" del navegador no
-#     sale más veces de las necesarias, pero tampoco se queda con un certificado que ya no vale
+# 13) el certificado (firmado por la CA local de cam-ui, para poder usar la cámara desde HTTPS
+#     -- ver el comentario junto a PHONECAM_PORT_DEFAULT) se reutiliza mientras siga cubriendo
+#     la IP del equipo, y se regenera solo si esta cambia -- así el aviso de "conexión no
+#     privada" del navegador no sale más veces de las necesarias, pero tampoco se queda con un
+#     certificado que ya no vale
 camui.PHONECAM_CERT_FILE = os.path.join(HERE, "_unit_phonecam_cert.pem")
 camui.PHONECAM_KEY_FILE = os.path.join(HERE, "_unit_phonecam_key.pem")
-for f in (camui.PHONECAM_CERT_FILE, camui.PHONECAM_KEY_FILE):
+camui.PHONECAM_CA_CERT_FILE = os.path.join(HERE, "_unit_phonecam_ca_cert.pem")
+camui.PHONECAM_CA_KEY_FILE = os.path.join(HERE, "_unit_phonecam_ca_key.pem")
+_phonecam_pem_files = (camui.PHONECAM_CERT_FILE, camui.PHONECAM_KEY_FILE,
+                       camui.PHONECAM_CA_CERT_FILE, camui.PHONECAM_CA_KEY_FILE)
+for f in _phonecam_pem_files:
     if os.path.exists(f):
         os.remove(f)
 try:
     cert1, key1 = camui._phonecam_ensure_cert()
     mtime1 = os.path.getmtime(cert1)
+    ca_bytes1 = open(camui.PHONECAM_CA_CERT_FILE, "rb").read()
     cert2, _ = camui._phonecam_ensure_cert()
     assert os.path.getmtime(cert2) == mtime1, "no debería regenerarlo con la misma IP"
     ips = [ip for ip in camui._local_ips() if ip]
     assert camui._phonecam_cert_covers(cert1, ips)
     assert not camui._phonecam_cert_covers(cert1, ["203.0.113.77"])
+    assert camui._phonecam_cert_fresh(cert1), "un certificado recién creado debería estar fresco"
     time.sleep(1.1)                    # para que el mtime cambie de verdad si se regenera
     orig = camui._local_ips
     camui._local_ips = lambda: ["203.0.113.77"]
@@ -226,11 +233,130 @@ try:
         camui._local_ips = orig
     assert os.path.getmtime(cert3) != mtime1, "debería regenerarlo al cambiar de IP"
     assert camui._phonecam_cert_covers(cert3, ["203.0.113.77"])
+    assert open(camui.PHONECAM_CA_CERT_FILE, "rb").read() == ca_bytes1, \
+        "la CA no debería regenerarse nunca solo por un cambio de IP"
 finally:
-    for f in (camui.PHONECAM_CERT_FILE, camui.PHONECAM_KEY_FILE):
+    for f in _phonecam_pem_files:
         if os.path.exists(f):
             os.remove(f)
-print("13) el certificado se reutiliza si la IP sigue cubierta, y se regenera solo si cambia OK")
+print("13) el certificado se reutiliza si la IP sigue cubierta, y se regenera solo si cambia -- "
+      "sin tocar la CA, que es la que habría que reinstalar en un iPhone/iPad si cambiara OK")
+
+# 13b) el certificado de cada IP ya NO está autofirmado: lo firma la CA local de cam-ui (ver
+#      _phonecam_ensure_ca), con las extensiones que exige Apple para confiar en él en
+#      iOS13+/macOS 10.15+ (soporte.apple.com/103769) una vez esa CA se instala en el
+#      dispositivo -- sin esto, por mucho que se instalara la CA, Safari lo seguiría rechazando
+#      por motivos distintos (p.ej. validez demasiado larga, o sin «serverAuth» en el EKU).
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes as _hashes
+from cryptography.hazmat.primitives.asymmetric import padding as _rsa_padding
+from cryptography.x509.oid import ExtendedKeyUsageOID
+
+for f in _phonecam_pem_files:
+    if os.path.exists(f):
+        os.remove(f)
+try:
+    cert_path, key_path = camui._phonecam_ensure_cert()
+    with open(cert_path, "rb") as f:
+        leaf = x509.load_pem_x509_certificate(f.read())
+    with open(camui.PHONECAM_CA_CERT_FILE, "rb") as f:
+        ca_cert = x509.load_pem_x509_certificate(f.read())
+    assert leaf.issuer == ca_cert.subject and leaf.subject != leaf.issuer, \
+        "el cert de cada IP debe estar firmado por la CA, no autofirmado"
+    ca_cert.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes,
+                                _rsa_padding.PKCS1v15(), leaf.signature_hash_algorithm)
+    ca_bc = ca_cert.extensions.get_extension_for_class(x509.BasicConstraints).value
+    leaf_bc = leaf.extensions.get_extension_for_class(x509.BasicConstraints).value
+    assert ca_bc.ca is True and leaf_bc.ca is False, \
+        "la CA debe poder firmar certificados; el de cada IP, no (si no, también sería una CA)"
+    eku = leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    assert ExtendedKeyUsageOID.SERVER_AUTH in list(eku), \
+        "sin «serverAuth» en el EKU, Safari lo rechaza igual aunque la CA esté instalada"
+    try:
+        exp, nvb = leaf.not_valid_after_utc, leaf.not_valid_before_utc           # cryptography >= 42
+    except AttributeError:
+        exp, nvb = leaf.not_valid_after, leaf.not_valid_before                   # versiones anteriores
+    assert (exp - nvb).days <= 825, \
+        "más de 825 días de validez y Safari deja de confiar en él, aunque la CA sea de fiar"
+    assert leaf.public_key().key_size >= 2048 and ca_cert.public_key().key_size >= 2048
+finally:
+    for f in _phonecam_pem_files:
+        if os.path.exists(f):
+            os.remove(f)
+print("13b) el certificado de cada IP está firmado de verdad por la CA local (no autofirmado), "
+      "con «serverAuth» en el EKU y <= 825 días de validez -- los requisitos reales de Apple "
+      "para que Safari confíe en él tras instalar esa CA OK")
+
+# 13c) con la CA de verdad instalada como único certificado de confianza (así es como queda un
+#      iPhone/iPad tras los 2 pasos de PhoneCamCertDialog), un cliente TLS de verdad completa el
+#      saludo con el servidor HTTPS real de PhoneCamHub -- y, sin instalarla, lo rechaza (si
+#      esto último fallara, el "arreglo" no protegería nada: cualquiera confiaría en cam-ui).
+import ssl as _ssl
+
+for f in _phonecam_pem_files:
+    if os.path.exists(f):
+        os.remove(f)
+try:
+    hub13c = camui.PhoneCamHub(deque(), deque())
+    port13c, _tok = hub13c.start(58630)
+    try:
+        ctx_trusts_ca = _ssl.create_default_context(cafile=camui.PHONECAM_CA_CERT_FILE)
+        with urllib.request.urlopen("https://127.0.0.1:{0}/add".format(port13c), timeout=5,
+                                    context=ctx_trusts_ca) as r:
+            assert r.status == 200
+        ctx_no_ca = _ssl.create_default_context()
+        try:
+            urllib.request.urlopen("https://127.0.0.1:{0}/add".format(port13c), timeout=5,
+                                   context=ctx_no_ca)
+            raise AssertionError("sin confiar en la CA, el saludo TLS no debería completarse")
+        except urllib.error.URLError:
+            pass
+    finally:
+        hub13c.stop()
+finally:
+    for f in _phonecam_pem_files:
+        if os.path.exists(f):
+            os.remove(f)
+print("13c) un cliente TLS de verdad que solo confía en la CA local completa el saludo con el "
+      "servidor HTTPS real; uno que no confía en ella, no -- la cadena de confianza funciona de "
+      "verdad, no solo sobre el papel OK")
+
+# 13d) la CA se sirve de verdad por el tercer servidor de PhoneCamHub, en HTTP normal (sin
+#      cifrar a propósito -- ver el comentario junto a _PhoneCamCertHandler) y visible en la
+#      wifi (no solo en 127.0.0.1, a diferencia del re-publicado MJPEG): con el tipo correcto
+#      (application/x-x509-ca-cert) para que Safari, al descargarlo, ofrezca "Instalar perfil"
+#      en vez de un archivo suelto cualquiera.
+for f in _phonecam_pem_files:
+    if os.path.exists(f):
+        os.remove(f)
+try:
+    hub13d = camui.PhoneCamHub(deque(), deque())
+    hub13d.start(58631)
+    try:
+        assert hub13d.cert_port and hub13d.cert_port != hub13d.local_port
+        with urllib.request.urlopen(
+                "http://127.0.0.1:{0}/".format(hub13d.cert_port), timeout=5) as r:
+            landing = r.read().decode("utf-8")
+            assert r.status == 200 and "text/html" in r.headers.get("Content-Type", "")
+        assert "iPhone/iPad" in landing and "/certificado" in landing
+        with urllib.request.urlopen(
+                "http://127.0.0.1:{0}/certificado".format(hub13d.cert_port), timeout=5) as r:
+            der = r.read()
+            assert r.headers.get("Content-Type") == "application/x-x509-ca-cert"
+        served = x509.load_der_x509_certificate(der)
+        with open(camui.PHONECAM_CA_CERT_FILE, "rb") as f:
+            on_disk = x509.load_pem_x509_certificate(f.read())
+        assert served.fingerprint(_hashes.SHA256()) == on_disk.fingerprint(_hashes.SHA256()), \
+            "lo que se descarga debe ser exactamente la misma CA que firma los certificados"
+    finally:
+        hub13d.stop()
+finally:
+    for f in _phonecam_pem_files:
+        if os.path.exists(f):
+            os.remove(f)
+print("13d) la CA se sirve de verdad por HTTP normal (sin cifrar, visible en la wifi, puerto "
+      "aparte del de 127.0.0.1), con el tipo exacto que hace que Safari ofrezca instalarla como "
+      "perfil, y es byte a byte la misma que firma los certificados OK")
 
 # 14-16) Si falta el paquete «cryptography» (hace falta para el certificado HTTPS, ver
 #        _phonecam_ensure_cert más arriba), antes se veía solo el mensaje interno de Python ("No

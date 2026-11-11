@@ -1,5 +1,16 @@
 # Novedades de cam-ui
 
+## pack 24 — 2026.11.11
+- **Arreglado: en iPhone/iPad, «Cámara del móvil» no dejaba usar la cámara en absoluto** (ni
+  siquiera llegaba a pedir el permiso). La causa: Safari/WebKit, a diferencia de Chrome en
+  Android, no deja usar la cámara (getUserMedia) a través de un certificado autofirmado normal,
+  por mucho que se acepte el aviso de «conexión no privada» -- eso basta para ver la página,
+  pero no para la cámara. Ahora cam-ui genera su propio certificado raíz (CA) una sola vez, y en
+  Ajustes → Cámara del móvil hay un botón nuevo, «Instalar certificado (solo iPhone/iPad)», con
+  su propio código QR: solo hace falta instalarlo una vez en el iPhone/iPad (Ajustes → General →
+  Información → Confianza de certificados) y, desde entonces, la cámara del móvil funciona ahí
+  igual que en Android. En Android no cambia nada, no hace falta tocar esto.
+
 ## pack 23 — 2026.11.08
 - **Arreglado: la vista previa de la cámara del PC podía quedarse en negro para siempre, sin
   ningún error, mientras la barra de estado seguía diciendo tranquilamente «Vista previa en
