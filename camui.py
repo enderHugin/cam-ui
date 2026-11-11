@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 25                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 26                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -782,6 +782,18 @@ def _src_matches_tile(cam, cw, ch):
     if int(cam.get("rot", 0)) % 180 == 90:
         a = 1.0 / a
     return abs(a / (cw / float(ch)) - 1.0) < 0.03
+
+
+def _same_shape(a, b):
+    """True si dos tamaños (ancho, alto) tienen prácticamente el mismo aspecto (<3%, la misma
+    tolerancia que _src_matches_tile) -- aunque los píxeles exactos no coincidan. Una cámara de
+    red (el móvil, otro PC encadenado, una app tipo IP Webcam...) puede anunciar un tamaño
+    ligeramente distinto de una conexión a otra (redondeo de bloque del propio códec MJPEG,
+    getUserMedia con «ideal» en vez de un tamaño exacto, etc.) sin que de verdad haya cambiado
+    nada que afecte al mosaico -- ver _check_sources, que usa esto para no reiniciar por esto."""
+    if not a or not b or not a[0] or not a[1] or not b[0] or not b[1]:
+        return False
+    return abs((a[0] / float(a[1])) / (b[0] / float(b[1])) - 1.0) < 0.03
 
 
 def video_chain(i, cam, cw, ch, fps, clock, t0):
@@ -6708,7 +6720,10 @@ class CamApp:
                        "/stream.mjpg (algo como http://192.168.1.50:8554/stream.mjpg) -- para "
                        "encadenar varios equipos. El otro aparato y este ordenador deben estar "
                        "en la misma red wifi, y el otro PC debe tener «En la red» activada. Solo "
-                       "vídeo, sin audio."
+                       "vídeo, sin audio. Si esta cámara va lenta o a tirones: aquí no se puede "
+                       "elegir la resolución con la que llega, pero si el origen es otro PC con "
+                       "cam-ui, en SU Ajustes → «En la red» → tamaño se puede bajar la que manda "
+                       "-- pesa menos de recibir aquí sin tocar nada en este equipo."
                   ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 10))
         err = ttk.Label(frm, text="", foreground="#ff6b6b", background=BG)
         err.grid(row=3, column=0, columnspan=2, sticky="w")
@@ -7686,7 +7701,13 @@ class CamApp:
             self.lbl_mode_now.config(text=txt)
 
     def _check_sources(self):
-        """ffmpeg informa del tamaño real de cada cámara; si no era el supuesto, se recoloca."""
+        """ffmpeg informa del tamaño real de cada cámara; si no era el supuesto, se recoloca.
+        Si solo cambian unos pocos píxeles sin cambiar la forma (ver _same_shape -- típico de una
+        cámara de red: el móvil, otro PC encadenado, una app tipo IP Webcam... cada conexión
+        puede anunciar un tamaño ligerísimamente distinto, por redondeo del propio códec), se
+        guarda el dato pero NO se reinicia el mosaico por eso -- antes sí, y si ese jitter se
+        repetía en cada reconexión, el mosaico se quedaba reiniciándose solo sin parar nunca
+        ("Ajustando el mosaico al formato real de las cámaras…" todo el rato, sin asentarse)."""
         if not (self.previewing or self.recording) or self.eng.frame_count == 0:
             return
         sizes = self.eng.in_sizes
@@ -7704,8 +7725,9 @@ class CamApp:
             sz, cs = sizes.get(idx), self.cams.get(lab)
             if sz and cs is not None and cs.src != sz:
                 known_by_mode = mode_size(cs.mode.get()) is not None
+                jitter = cs.src is not None and _same_shape(cs.src, sz)
                 cs.src = sz
-                if not known_by_mode:
+                if not known_by_mode and not jitter:
                     changed = True
         if changed:
             log.info("formatos de cámara detectados: %s", sizes)

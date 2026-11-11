@@ -1,5 +1,27 @@
 # Novedades de cam-ui
 
+## pack 26 — 2026.11.11
+- **Arreglado: una cámara de red (el móvil, otro PC encadenado por «En la red», una app tipo IP
+  Webcam...) podía dejar el mosaico reiniciándose solo sin parar, como atascado.** La causa:
+  cada vez que ffmpeg informaba del tamaño real de esa cámara, cam-ui lo comparaba píxel a
+  píxel contra el que ya conocía y, si no coincidía EXACTO, reiniciaba todo el mosaico para
+  encajarlo de nuevo -- pero una cámara de red puede anunciar un tamaño ligerísimamente distinto
+  de una reconexión a otra (redondeo del propio códec MJPEG, un navegador pidiendo una
+  resolución "ideal" en vez de una exacta...) sin que de verdad cambie nada que afecte al
+  mosaico. Si ese jitter se repetía en cada reconexión, el mosaico no llegaba nunca a
+  asentarse: se quedaba todo el rato "Ajustando el mosaico al formato real de las cámaras…",
+  sin responder a nada mientras tanto. Ahora solo se reinicia si la FORMA de verdad cambia (más
+  de un 3%, lo mismo que ya se usaba para encajar sin franjas) -- un cambio real (p. ej. girar
+  el móvil de apaisado a vertical) sigue reajustando el mosaico como siempre.
+- El diálogo de «Añadir/editar cámara de red» avisa ahora de que, si el origen es otro PC con
+  cam-ui y va lento, se puede bajar la resolución que manda desde Ajustes → «En la red» → tamaño
+  de ESE otro PC (no hay forma de pedirle a una cámara de red cualquiera que mande menos
+  resolución desde aquí).
+- *Como siempre: sin un segundo PC ni un móvil reales en wifi para reproducir el síntoma exacto
+  tal cual se describió, esto se ha verificado contra la causa real identificada en el código
+  (con pruebas que fallan de verdad sin el arreglo y pasan con él) -- conviene confirmar que
+  esto resuelve el caso real.*
+
 ## pack 25 — 2026.11.11
 - **Más fluido y con mejor resolución**: la cámara del móvil ahora pide 1080p (antes 720p) a
   20 fps (antes 8), con algo más de calidad de imagen. Es seguro subirlo así porque el propio

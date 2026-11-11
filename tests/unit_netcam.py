@@ -331,4 +331,91 @@ assert app10c.calls["finalize"] == [("/tmp/_fake10.mp4", "/tmp/_fake10_final.mp4
 print("10) _on_died: reintenta sola en vista previa si identifica la cámara, pero nunca si "
       "se estaba grabando (sin Tk) OK")
 
+# 11) _check_sources/_same_shape: una cámara de red (el móvil, otro PC encadenado, una app tipo
+#     IP Webcam...) puede anunciar un tamaño ligerísimamente distinto de una reconexión a otra
+#     (redondeo del propio códec MJPEG, getUserMedia con «ideal» en vez de un tamaño exacto...)
+#     sin que de verdad cambie nada que afecte al mosaico -- eso NO debe reiniciarlo (antes sí,
+#     y si el jitter se repetía en cada reconexión el mosaico se quedaba reiniciándose solo sin
+#     parar nunca: el síntoma real reportado, "se queda intentando encajar el problema").
+assert camui._same_shape((1920, 1080), (1918, 1078))      # mismo aspecto, 2 px de diferencia
+assert camui._same_shape((640, 480), (640, 480))
+assert not camui._same_shape((1920, 1080), (1080, 1920))  # girada 90°: de verdad otra forma
+assert not camui._same_shape((1920, 1080), (640, 480))    # de verdad otra forma (4:3 vs 16:9)
+assert not camui._same_shape(None, (640, 480)) and not camui._same_shape((640, 480), None)
+print("11a) _same_shape: tolera el redondeo de una cámara de red entre reconexiones, pero "
+      "distingue una forma de verdad distinta OK")
+
+
+class _FakeMode:
+    def get(self):
+        return "Auto"
+
+
+class _FakeCamState11:
+    def __init__(self, src=None):
+        self.src = src
+        self.mode = _FakeMode()
+
+
+class _FakeEng11:
+    def __init__(self, sizes, fps=None):
+        self.in_sizes = sizes
+        self.in_fps = fps or {}
+        self.frame_count = 1
+
+
+class _FakeApp11(camui.CamApp):           # solo para heredar _check_sources; no se llama a __init__
+    def __init__(self, cams, sizes):
+        self.eng = _FakeEng11(sizes)
+        self.cams = cams
+        self._run_labels = list(cams.keys())
+        self.previewing, self.recording, self.editing = True, False, False
+        self._slow_warned = set()
+        self.calls = {"status": [], "save": 0, "on_change": 0, "restart": 0}
+
+    def _set_status(self, txt):
+        self.calls["status"].append(txt)
+
+    def save_config(self):
+        self.calls["save"] += 1
+
+    def _on_change(self, *_a):
+        self.calls["on_change"] += 1
+
+    def _schedule_restart(self, *a, **kw):
+        self.calls["restart"] += 1
+
+
+# 11b) tamaño nuevo que solo difiere por el redondeo (misma forma): se guarda el dato real, pero
+#      NO se reinicia el mosaico por eso
+cs11b = _FakeCamState11(src=(1920, 1080))
+app11b = _FakeApp11({"🌐 Móvil": cs11b}, {0: (1918, 1078)})
+app11b._check_sources()
+assert cs11b.src == (1918, 1078), "debe guardar el tamaño real, aunque no reinicie por él"
+assert app11b.calls["on_change"] == 0 and app11b.calls["save"] == 0, \
+    "un jitter de redondeo (misma forma) no debería reiniciar el mosaico"
+print("11b) una cámara de red que solo varía por redondeo (misma forma) ya NO reinicia el "
+      "mosaico sin parar OK")
+
+# 11c) primera vez que se detecta el tamaño real (cs.src todavía None): SÍ debe ajustar el
+#      mosaico -- no es jitter, es la primera noticia real de la forma de esa cámara
+cs11c = _FakeCamState11(src=None)
+app11c = _FakeApp11({"🌐 Móvil": cs11c}, {0: (1920, 1080)})
+app11c._check_sources()
+assert cs11c.src == (1920, 1080)
+assert app11c.calls["on_change"] == 1 and app11c.calls["save"] == 1, \
+    "la primera detección real de la forma sí debe ajustar el mosaico"
+print("11c) la primera detección real de la forma de una cámara (antes desconocida) sigue "
+      "ajustando el mosaico, como siempre OK")
+
+# 11d) un cambio de forma de verdad (p. ej. el móvil gira de apaisado a vertical) sí debe
+#      reiniciar -- la tolerancia no debe tragarse un cambio real
+cs11d = _FakeCamState11(src=(1920, 1080))
+app11d = _FakeApp11({"🌐 Móvil": cs11d}, {0: (1080, 1920)})
+app11d._check_sources()
+assert cs11d.src == (1080, 1920)
+assert app11d.calls["on_change"] == 1, "un cambio de forma real (girar el móvil) sí debe reajustar"
+print("11d) un cambio de forma de verdad (girar el móvil) sigue reajustando el mosaico, "
+      "como siempre -- la tolerancia no se traga esto OK")
+
 print("TODO OK unit_netcam")
