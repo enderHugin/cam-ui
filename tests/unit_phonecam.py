@@ -9,6 +9,7 @@ import io
 import re
 import sys
 import ssl
+import json
 import time
 import threading
 import subprocess
@@ -487,5 +488,110 @@ assert app16.phonecam_on is True
 assert app16.calls["changed"] == [False], "la activación de verdad debe avisar del cambio (no quiet)"
 print("16) tras aceptar instalarlo y salir bien, cam-ui reintenta sola la activación -- sin "
       "tener que volver a pulsar nada -- y esta vez enciende de verdad OK")
+
+# 17) más fluido y con mejor resolución (pedido explícito del usuario): no basta con subir la
+#     constante si no llega hasta la etiqueta <video> real que usa el móvil para grabar.
+assert camui.PHONECAM_FPS == 20 and camui.PHONECAM_JPEG_QUALITY == 0.82
+assert camui.PHONECAM_JPEG_MAX == 6 * 1024 * 1024
+assert b"width: {ideal: 1920}" in camui._PHONECAM_HTML
+assert b"height: {ideal: 1080}" in camui._PHONECAM_HTML
+assert b"frameRate: {ideal: 20}" in camui._PHONECAM_HTML
+assert b"audio: false" in camui._PHONECAM_HTML
+print("17) más fluido y con mejor resolución: 1920x1080 a 20fps llega de verdad hasta la página "
+      "que carga el móvil, no solo a la constante OK")
+
+# 18) los móviles ya emparejados antes se guardan de verdad en disco (PHONECAM_DEVICES_FILE,
+#     aparte de config.json a propósito -- ver el comentario junto a la constante), y
+#     sobreviven a "reiniciar" PhoneCamHub (una instancia nueva, como tras apagar/encender la
+#     función o cerrar cam-ui del todo) -- "olvidar" uno lo borra también de verdad.
+camui.PHONECAM_DEVICES_FILE = os.path.join(HERE, "_unit_phonecam_devices.json")
+if os.path.exists(camui.PHONECAM_DEVICES_FILE):
+    os.remove(camui.PHONECAM_DEVICES_FILE)
+try:
+    hub18a = camui.PhoneCamHub(deque(), deque())
+    assert hub18a.known_device("no-existe") is None
+    hub18a.add_device("secreto-1", "iPhone de Ana")
+    assert hub18a.known_device("secreto-1")["name"] == "iPhone de Ana"
+    hub18b = camui.PhoneCamHub(deque(), deque())        # otra instancia -- "tras reiniciar"
+    info = hub18b.known_device("secreto-1")
+    assert info is not None and info["name"] == "iPhone de Ana", \
+        "debe sobrevivir a una instancia nueva de PhoneCamHub, no solo quedarse en memoria"
+    names = [d.get("name") for _secret, d in hub18b.list_devices()]
+    assert "iPhone de Ana" in names
+    assert hub18b.forget_device("secreto-1") is True
+    assert hub18b.known_device("secreto-1") is None
+    assert hub18b.forget_device("secreto-1") is False, \
+        "ya no está: la segunda vez no hay nada que olvidar"
+finally:
+    if os.path.exists(camui.PHONECAM_DEVICES_FILE):
+        os.remove(camui.PHONECAM_DEVICES_FILE)
+print("18) los móviles ya emparejados se guardan de verdad en disco, sobreviven a una "
+      "«PhoneCamHub» nueva (como tras reiniciar) y «olvidar» uno los borra de verdad, no solo "
+      "en memoria OK")
+
+# 19) de punta a punta por HTTP real: «/cam» sin «dev» (primera vez, recién leído el QR) acuña un
+#     secreto nuevo, lo persiste YA MISMO y lo manda dentro de la propia página; con ese secreto,
+#     «/add/reconnect» (lo que hace el script de «/add» cuando ya lo tiene guardado) responde con
+#     una sesión nueva sin pedir QR ni nada; con un secreto que no existe, cae a {"ok": false};
+#     y tras "olvidarlo" (como desde PhoneCamDevicesDialog), ese mismo secreto deja de servir --
+#     se nota en la siguiente petición, sin ninguna caché de por medio.
+camui.PHONECAM_DEVICES_FILE = os.path.join(HERE, "_unit_phonecam_devices2.json")
+if os.path.exists(camui.PHONECAM_DEVICES_FILE):
+    os.remove(camui.PHONECAM_DEVICES_FILE)
+for f in _phonecam_pem_files:
+    if os.path.exists(f):
+        os.remove(f)
+try:
+    hub19 = camui.PhoneCamHub(deque(), deque())
+    port19, tok19 = hub19.start(58632)
+    try:
+        with _get("https://127.0.0.1:{0}/cam?t={1}".format(port19, tok19), https=True) as r:
+            assert r.status == 200
+            body19 = r.read().decode("utf-8")
+        m = re.search(r'var dev = "([^"]+)";', body19)
+        assert m, "la página debería traer ya el secreto persistente del móvil, sustituido de verdad"
+        dev19 = m.group(1)
+        assert hub19.known_device(dev19) is not None, \
+            "debería quedar guardado en el momento mismo de servir «/cam», no más tarde"
+
+        def _post_json(url):
+            req = urllib.request.Request(url, data=b"", method="POST")
+            with _get(req, https=True) as r:
+                return json.loads(r.read().decode("utf-8"))
+
+        resp19 = _post_json(
+            "https://127.0.0.1:{0}/add/reconnect?dev={1}".format(port19, dev19))
+        assert resp19["ok"] is True and resp19["url"].startswith("/cam?")
+        assert "dev={0}".format(dev19) in resp19["url"]
+
+        resp19b = _post_json(
+            "https://127.0.0.1:{0}/add/reconnect?dev=lo-que-sea".format(port19))
+        assert resp19b == {"ok": False}
+
+        # el mismo móvil, volviendo a «/cam» con su propio secreto -- no debería acuñar uno
+        # nuevo ni perder el que ya tenía
+        with _get("https://127.0.0.1:{0}/cam?t={1}&dev={2}".format(port19, tok19, dev19),
+                  https=True) as r:
+            body19c = r.read().decode("utf-8")
+        assert ('var dev = "' + dev19 + '"') in body19c, \
+            "con un secreto ya conocido, debería reutilizarlo tal cual, no acuñar otro"
+
+        hub19.forget_device(dev19)
+        resp19d = _post_json(
+            "https://127.0.0.1:{0}/add/reconnect?dev={1}".format(port19, dev19))
+        assert resp19d == {"ok": False}, \
+            "tras «olvidar» el móvil, debería caer al QR de siempre, no reconocerlo más"
+    finally:
+        hub19.stop()
+finally:
+    for f in _phonecam_pem_files:
+        if os.path.exists(f):
+            os.remove(f)
+    if os.path.exists(camui.PHONECAM_DEVICES_FILE):
+        os.remove(camui.PHONECAM_DEVICES_FILE)
+print("19) de punta a punta por HTTP real: «/cam» acuña y guarda el secreto del móvil dentro de "
+      "la propia página, «/add/reconnect» lo reconoce y manda una sesión nueva sin QR, un "
+      "secreto que no existe cae a {\"ok\": false}, uno ya conocido no cambia solo, y tras "
+      "«olvidarlo» deja de servir al instante OK")
 
 print("TODO OK unit_phonecam")

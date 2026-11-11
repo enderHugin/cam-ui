@@ -45,6 +45,7 @@ camui.PHONECAM_CERT_FILE = os.path.join(HOME, "phonecam_cert.pem")
 camui.PHONECAM_KEY_FILE = os.path.join(HOME, "phonecam_key.pem")
 camui.PHONECAM_CA_CERT_FILE = os.path.join(HOME, "phonecam_ca_cert.pem")
 camui.PHONECAM_CA_KEY_FILE = os.path.join(HOME, "phonecam_ca_key.pem")
+camui.PHONECAM_DEVICES_FILE = os.path.join(HOME, "phonecam_devices.json")
 if os.path.isfile(camui.CONFIG):            # arranque limpio: sin restos de una ejecución anterior
     os.remove(camui.CONFIG)                 # (_phonecam_enable guarda "on": true de verdad)
 
@@ -450,6 +451,64 @@ finally:
     dlg = getattr(app, "_phonecam_cert_dialog", None)
     if dlg is not None:
         dlg.close()
+
+# 21-23) «Dispositivos recordados» (ver PhoneCamDevicesDialog), el botón de Ajustes para ver y
+#        «olvidar» los móviles que ya entran solos sin QR (ver el comentario junto a
+#        PHONECAM_DEVICES_FILE). Se limpia ese archivo justo antes -- igual que con los .pem de
+#        más arriba -- porque los pasos 4 y 5 (el propio QR de emparejamiento) ya dejaron, sin
+#        querer probarlo entonces, un móvil persistido de verdad: es lo que debía pasar (ver
+#        _PhoneCamHandler.do_GET), pero aquí hace falta partir de cero para probar esto solo.
+assert app.phonecam_on and app.phonecam.active
+if os.path.exists(camui.PHONECAM_DEVICES_FILE):
+    os.remove(camui.PHONECAM_DEVICES_FILE)
+
+# 21) sin ningún móvil emparejado todavía, el diálogo (real, abierto con el botón de verdad) lo
+#     dice con claridad, en vez de aparecer vacío sin más.
+app.btn_phonecam_devices.invoke()
+dlg_dev = app._phonecam_devices_dialog
+assert dlg_dev is not None and dlg_dev.alive, \
+    "el botón «Dispositivos recordados» debería abrir un diálogo real"
+assert dlg_dev.listbox.get(0, "end") == ("(ninguno todavía)",)
+dlg_dev.close()
+print("21) «Dispositivos recordados» abre un diálogo real; sin ningún móvil emparejado todavía "
+      "lo dice con claridad, en vez de aparecer vacío sin más OK")
+
+# 22) un móvil de verdad que abre «/cam» por primera vez (sin «dev» -- igual que el navegador
+#     real tras leer el QR, ver _PHONECAM_HTML) queda emparejado de verdad: su secreto se guarda
+#     al instante y, al reabrir el diálogo, aparece solo en la lista, con su nombre y la fecha.
+with urllib.request.urlopen(
+        "https://127.0.0.1:{0}/cam?t={1}".format(app.phonecam.port, app.phonecam.token),
+        timeout=5, context=ctx) as r:
+    body21 = r.read().decode("utf-8")
+m21 = re.search(r'var dev = "([^"]+)";', body21)
+assert m21, "la página de captura debería traer ya su propio secreto persistente"
+dev21 = m21.group(1)
+assert app.phonecam.known_device(dev21) is not None, \
+    "debería quedar guardado en el momento mismo de servir «/cam», no más tarde"
+app.btn_phonecam_devices.invoke()
+dlg_dev2 = app._phonecam_devices_dialog
+items = dlg_dev2.listbox.get(0, "end")
+assert len(items) == 1 and items[0].startswith("Móvil") and "(desde " in items[0], items
+print("22) un móvil que abre «/cam» por primera vez queda emparejado de verdad (su secreto se "
+      "guarda al instante) y aparece solo en la lista, con su nombre y la fecha OK")
+
+# 23) «Olvidar», con ese móvil seleccionado, lo borra de verdad: desaparece de la lista (vuelve a
+#     decir que no hay ninguno) y, de ahí en adelante, ese mismo secreto ya no sirve para entrar
+#     sin QR -- «/add/reconnect» (lo que haría el propio script de «/add») cae a {"ok": false},
+#     igual que si ese móvil nunca se hubiera emparejado.
+dlg_dev2.listbox.selection_set(0)
+dlg_dev2.btn_forget.invoke()
+assert dlg_dev2.listbox.get(0, "end") == ("(ninguno todavía)",)
+assert app.phonecam.known_device(dev21) is None
+req23 = urllib.request.Request(
+    "https://127.0.0.1:{0}/add/reconnect?dev={1}".format(app.phonecam.port, dev21),
+    data=b"", method="POST")
+with urllib.request.urlopen(req23, timeout=5, context=ctx) as r:
+    resp23 = json.loads(r.read().decode("utf-8"))
+assert resp23 == {"ok": False}
+dlg_dev2.close()
+print("23) «Olvidar» borra el móvil de verdad -- desaparece de la lista y, de ahí en adelante, "
+      "«/add/reconnect» ya no lo reconoce, como si nunca se hubiera emparejado OK")
 
 app._phonecam_disable()
 app._ip_disable()

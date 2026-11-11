@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 24                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 25                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2599,12 +2599,24 @@ def run_diagnostics(ffmpeg, cams, audios, input_fn=None, secs=6, solo_secs=4):
 # en la wifi que se la encuentre por casualidad, porque aquí sí que añadiría una cámara de
 # verdad al mosaico (a diferencia de «En la red», que solo deja ver).
 PHONECAM_PORT_DEFAULT = 8555
-PHONECAM_FPS = 8                       # de sobra para verlo bien; cuida la batería y la wifi del móvil
-PHONECAM_JPEG_QUALITY = 0.75
-PHONECAM_JPEG_MAX = 4 * 1024 * 1024    # tope de tamaño por fotograma recibido, contra abusos
+# 8fps/720p/calidad 0.75 se quedaba corto para verlo fluido -- la propia página ya se autolimita
+# sola (sendFrame() no manda el siguiente fotograma hasta que el anterior termina de subir, ver
+# la variable "sending"), así que pedir más aquí no puede desbordar nada: en una wifi floja o un
+# móvil lento, se queda corto de este número solo, igual que antes; en una buena, ahora sí llega
+# más cerca de fluido y con más detalle.
+PHONECAM_FPS = 20
+PHONECAM_JPEG_QUALITY = 0.82
+PHONECAM_JPEG_MAX = 6 * 1024 * 1024    # tope de tamaño por fotograma recibido, contra abusos
 PHONECAM_STALE_SECONDS = 8             # sin fotogramas nuevos este tiempo: la cámara se da por caída
 PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan del todo (no acumular)
 PHONECAM_PAIR_TIMEOUT = 90             # sin escanear este QR de emparejamiento en este tiempo, se retira solo
+# Dispositivos ya emparejados antes (ver PhoneCamHub.add_device/known_device y PhoneCamDevicesDialog):
+# un móvil que ya haya pasado una vez por el QR de «/add» guarda un secreto propio (distinto del
+# token de la sesión, que cambia cada vez que se enciende «Cámara del móvil») en su propio
+# localStorage; la próxima vez que abra «/add», lo manda solo y entra directo, sin que nadie
+# tenga que mirar la pantalla del PC otra vez. Se guarda aparte del resto de la configuración
+# (no en config.json) para poder "olvidar" uno sin tocar nada más.
+PHONECAM_DEVICES_FILE = os.path.join(HERE, "phonecam_devices.json")
 PHONECAM_CERT_FILE = os.path.join(HERE, "phonecam_cert.pem")
 PHONECAM_KEY_FILE = os.path.join(HERE, "phonecam_key.pem")
 # CA local (ver _phonecam_ensure_ca): firma el certificado de arriba en vez de que se firme a sí
@@ -2811,6 +2823,17 @@ var canvas = document.createElement("canvas");
 var ctx2d = canvas.getContext("2d");
 var stream = null, timer = null, sending = false, facing = "environment", wakeLock = null;
 
+// Guarda el secreto de este móvil (distinto del "sid" de esta sesión, y del token, que cambia
+// cada vez que se enciende "Cámara del móvil") para que la próxima vez que se abra "/add" en
+// este mismo móvil, cam-ui lo reconozca solo y no haga falta volver a leer ningún QR -- ver
+// PhoneCamHub.add_device y el script de _PHONECAM_ADD_HTML.
+(function () {
+  var dev = "__PHONECAM_DEV_SECRET__";
+  if (dev) {
+    try { localStorage.setItem("camui_dev", dev); } catch (e) {}
+  }
+})();
+
 function setStatus(txt, cls) {
   statusEl.textContent = txt;
   statusEl.className = cls || "";
@@ -2836,7 +2859,9 @@ function sendFrame() {
 
 function startCapture() {
   navigator.mediaDevices.getUserMedia({
-    video: {facingMode: facing, width: {ideal: 1280}, height: {ideal: 720}}, audio: false
+    video: {facingMode: facing, width: {ideal: 1920}, height: {ideal: 1080},
+           frameRate: {ideal: __PHONECAM_FPS__}},
+    audio: false
   }).then(function (s) {
     stream = s;
     v.srcObject = s;
@@ -2885,7 +2910,8 @@ document.addEventListener("visibilitychange", function () {
 """
 _PHONECAM_HTML = _PHONECAM_HTML.replace(
     "__PHONECAM_INTERVAL_MS__", str(int(round(1000.0 / PHONECAM_FPS)))
-).replace("__PHONECAM_JPEG_QUALITY__", str(PHONECAM_JPEG_QUALITY)).encode("utf-8")
+).replace("__PHONECAM_JPEG_QUALITY__", str(PHONECAM_JPEG_QUALITY)
+).replace("__PHONECAM_FPS__", str(PHONECAM_FPS)).encode("utf-8")
 
 
 # ---- «/add»: la puerta de entrada fácil de escribir a mano (dirección fija, sin ningún código
@@ -2986,7 +3012,29 @@ __JSQR_JS_PLACEHOLDER__
   }
 
   document.getElementById("retrybtn").onclick = startCamera;
-  startCamera();   // se pide directamente al cargar, sin tocar nada antes
+
+  // Si este móvil ya se emparejó antes con este mismo cam-ui, tiene guardado su propio secreto
+  // (ver _PHONECAM_HTML / PhoneCamHub.add_device) -- se intenta reconectar solo con él antes de
+  // pedir la cámara para leer un QR nuevo. Si el PC no lo reconoce (p.ej. se "olvidó" desde
+  // Ajustes, o es la configuración de otro cam-ui distinto), se cae al camino de siempre.
+  var dev = null;
+  try { dev = localStorage.getItem("camui_dev"); } catch (e) {}
+  if (dev) {
+    setStatus("Reconectando (ya emparejado antes)…");
+    fetch("/add/reconnect?dev=" + encodeURIComponent(dev), {method: "POST"})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok && j.url) {
+          window.location.href = j.url;
+        } else {
+          try { localStorage.removeItem("camui_dev"); } catch (e2) {}
+          startCamera();
+        }
+      })
+      .catch(function () { startCamera(); });
+  } else {
+    startCamera();   // primera vez: se pide directamente al cargar, sin tocar nada antes
+  }
 })();
 </script>
 </body></html>
@@ -2994,6 +3042,26 @@ __JSQR_JS_PLACEHOLDER__
 _PHONECAM_ADD_HTML = _PHONECAM_ADD_HTML.replace(
     "__JSQR_JS_PLACEHOLDER__", _JSQR_JS
 ).replace("__PHONECAM_ADD_SCAN_MS__", str(int(round(1000.0 / PHONECAM_FPS)))).encode("utf-8")
+
+
+def _phonecam_load_devices():
+    """Móviles ya emparejados antes (ver el comentario junto a PHONECAM_DEVICES_FILE). Se lee
+    de disco en cada llamada, a propósito -- es un archivo pequeño y así "olvidar" uno desde
+    Ajustes se nota al instante, sin tener que mantener ninguna copia en memoria sincronizada."""
+    try:
+        with open(PHONECAM_DEVICES_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _phonecam_save_devices(devices):
+    try:
+        with open(PHONECAM_DEVICES_FILE, "w", encoding="utf-8") as f:
+            json.dump(devices, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.warning("no se pudo guardar la lista de móviles recordados: %r", e)
 
 
 class PhoneCamHub:
@@ -3124,6 +3192,41 @@ class PhoneCamHub:
             s = self._sessions.get(sid)
             return None if s is None else (s["jpeg"], s["gen"], s["ts"])
 
+    def session_name(self, sid):
+        with self._lk:
+            s = self._sessions.get(sid)
+            return s["name"] if s else "Móvil"
+
+    # ---- dispositivos ya emparejados antes (ver el comentario junto a PHONECAM_DEVICES_FILE) --
+    # a diferencia de self._sessions (en memoria, se olvida al apagar «Cámara del móvil»), esto
+    # vive en disco y sobrevive a apagar/encender e incluso a cerrar cam-ui del todo.
+
+    def add_device(self, secret, name):
+        with self._lk:
+            devices = _phonecam_load_devices()
+            devices[secret] = {"name": name, "added": time.time()}
+            _phonecam_save_devices(devices)
+
+    def known_device(self, secret):
+        if not secret:
+            return None
+        with self._lk:
+            return _phonecam_load_devices().get(secret)
+
+    def forget_device(self, secret):
+        with self._lk:
+            devices = _phonecam_load_devices()
+            if secret not in devices:
+                return False
+            del devices[secret]
+            _phonecam_save_devices(devices)
+            return True
+
+    def list_devices(self):
+        with self._lk:
+            devices = _phonecam_load_devices()
+        return sorted(devices.items(), key=lambda kv: kv[1].get("added", 0) if isinstance(kv[1], dict) else 0)
+
     def drop_stale(self):
         """A ratos (como hls_idle_check): olvida del todo las sesiones caducadas hace mucho,
         para no acumular móviles que se cerraron o cambiaron de wifi hace rato."""
@@ -3177,12 +3280,22 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
         sid = params.get("sid", "")
         if not sid or hub.latest(sid) is None:
             sid = hub.new_session("Móvil")
-        body = _PHONECAM_HTML.replace(b"__PHONECAM_SID__", sid.encode("ascii"))
+        # «dev»: el secreto persistente de este móvil (ver PhoneCamHub.add_device). Si ya viene
+        # puesto y es uno que de verdad conocemos (vino de /add/reconnect, un móvil que ya se
+        # había emparejado antes), se reutiliza tal cual. Si no (primera vez, recién leído el QR
+        # en /add), se acuña uno nuevo y se guarda ya mismo -- así la próxima vez que este mismo
+        # móvil abra «/add», entrará solo, sin tener que volver a leer nada.
+        dev = params.get("dev", "")
+        if not dev or hub.known_device(dev) is None:
+            dev = secrets.token_urlsafe(24)
+            hub.add_device(dev, hub.session_name(sid))
+        body = (_PHONECAM_HTML.replace(b"__PHONECAM_SID__", sid.encode("ascii"))
+                              .replace(b"__PHONECAM_DEV_SECRET__", dev.encode("ascii")))
         self._send(200, body, "text/html; charset=utf-8", cache=False)
 
     def do_POST(self):
         hub = self.server.hub
-        path = self.path.split("?", 1)[0]
+        path, _, qs = self.path.partition("?")
         if path == "/add/ready":
             # el móvil que está en /add ya tiene permiso de su cámara (para leer el QR, no
             # para mandar vídeo todavía): se acuña una sesión nueva y se avisa a CamApp para
@@ -3195,6 +3308,24 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
             pair_url = "https://{0}:{1}/cam?t={2}&sid={3}".format(host, hub.port, hub.token, sid)
             hub._pair_q.append(pair_url)
             self._send(200, b"", "text/plain")
+            return
+        if path == "/add/reconnect":
+            # el propio script de /add (ver _PHONECAM_ADD_HTML) manda aquí el secreto que ese
+            # móvil guardó la primera vez que se emparejó (ver PhoneCamHub.add_device, en /cam).
+            # Si se reconoce, se acuña una sesión nueva YA mismo -- atada al token de ESTA
+            # puesta en marcha de «Cámara del móvil», que es nuevo cada vez -- y se devuelve la
+            # URL final de golpe: sin QR, sin que nadie tenga que mirar la pantalla del PC. Si
+            # no se reconoce (se "olvidó" desde Ajustes, o es otro cam-ui distinto), {"ok":
+            # false} hace que ese mismo script caiga solo al camino de siempre.
+            dev = self._parse_qs(qs).get("dev", "")
+            info = hub.known_device(dev)
+            if info is None:
+                self._send(200, b'{"ok": false}', "application/json; charset=utf-8", cache=False)
+                return
+            sid = hub.new_session(info.get("name", "Móvil"))
+            url = "/cam?t={0}&sid={1}&dev={2}".format(hub.token, sid, dev)
+            body = json.dumps({"ok": True, "url": url}).encode("utf-8")
+            self._send(200, body, "application/json; charset=utf-8", cache=False)
             return
         if not path.startswith("/cam/ingest/"):
             self._send(404, b"", "text/plain")
@@ -4946,6 +5077,82 @@ class PhoneCamCertDialog:
             pass
 
 
+class PhoneCamDevicesDialog:
+    """Lista de móviles que ya se emparejaron antes con este cam-ui y que, por eso, entran solos
+    la próxima vez que abran «/add» en este mismo PC, sin tener que leer otra vez ningún QR (ver
+    el comentario junto a PHONECAM_DEVICES_FILE y PhoneCamHub.add_device/known_device). Desde
+    aquí se puede «olvidar» cualquiera -- a partir de ahí, ese móvil tendrá que volver a
+    emparejarse con el QR de siempre, igual que si fuera nuevo."""
+
+    def __init__(self, parent, hub):
+        self.alive = True
+        self.hub = hub
+        self._secrets = []
+        top = self.top = tk.Toplevel(parent)
+        top.title("Dispositivos recordados")
+        top.configure(bg=PANEL)
+        top.geometry("440x320")
+        top.minsize(360, 240)
+        try:
+            top.attributes("-topmost", True)
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, style="Muted.TLabel", wraplength=400, justify="left",
+                  text="Estos móviles entran solos al abrir «/add» en este PC, sin volver a "
+                       "leer ningún código QR."
+                  ).pack(anchor="w", pady=(0, 8))
+        listfrm = ttk.Frame(frm)
+        listfrm.pack(fill="both", expand=True)
+        self.listbox = tk.Listbox(listfrm, exportselection=False)
+        sb = ttk.Scrollbar(listfrm, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=sb.set)
+        self.listbox.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(10, 0))
+        self.btn_forget = ttk.Button(btns, text="Olvidar", command=self._forget_selected)
+        self.btn_forget.pack(side="left")
+        ttk.Button(btns, text="Cerrar", command=self.close).pack(side="right")
+        self._reload()
+
+    def _reload(self):
+        self.listbox.delete(0, "end")
+        self._secrets = []
+        for secret, info in self.hub.list_devices():
+            name = info.get("name", "Móvil") if isinstance(info, dict) else "Móvil"
+            added = info.get("added", 0) if isinstance(info, dict) else 0
+            when = ""
+            if added:
+                try:
+                    when = datetime.datetime.fromtimestamp(added).strftime("%d/%m/%Y")
+                except Exception:
+                    when = ""
+            self.listbox.insert("end", "{0}   (desde {1})".format(name, when) if when else name)
+            self._secrets.append(secret)
+        if not self._secrets:
+            self.listbox.insert("end", "(ninguno todavía)")
+
+    def _forget_selected(self):
+        sel = self.listbox.curselection()
+        if not sel or not self._secrets or sel[0] >= len(self._secrets):
+            return
+        self.hub.forget_device(self._secrets[sel[0]])
+        self._reload()
+
+    def close(self):
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+
+
 class CamApp:
     def __init__(self, root):
         self.root = root
@@ -5035,6 +5242,7 @@ class CamApp:
         self._phonecam_pair_shown_at = 0.0
         self._phonecam_qr_dialog = None                      # diálogo flotante del QR (ver más abajo)
         self._phonecam_cert_dialog = None                     # diálogo del certificado (iPhone/iPad)
+        self._phonecam_devices_dialog = None                  # diálogo de «Dispositivos recordados»
         self.startup_on = startup_get()                      # se comprueba de verdad, no se guarda aparte
         try:
             self.eng.startup_time = min(8.0, max(0.5, float(self._cfg.get("startup", 2.5))))
@@ -6351,6 +6559,17 @@ class CamApp:
                        "aviso de «conexión no privada» -- eso basta para ver la página, pero no "
                        "para la cámara. En Android no hace falta nada de esto."
                   ).grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
+        self.btn_phonecam_devices = ttk.Button(
+            pf, text="👥  Dispositivos recordados",
+            command=self._phonecam_show_devices_dialog)
+        self.btn_phonecam_devices.grid(row=6, column=0, columnspan=3, sticky="w", padx=6,
+                                       pady=(0, 6))
+        self._live.add(str(self.btn_phonecam_devices))     # no toca nada de la grabación en marcha
+        ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Un móvil que ya se emparejó una vez (con el QR de siempre) entra solo "
+                       "la próxima vez que abra esa misma dirección, sin volver a leer ningún "
+                       "código -- aquí se puede ver cuáles, y «olvidar» el que se quiera."
+                  ).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
         ttk.Label(df, text="Carpeta").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -8507,6 +8726,20 @@ class CamApp:
                 ok, msg = pip_install("qrcode")
                 self._tray_q.append(("phonecam_cert_qr_installed", (ok, msg, url)))
             threading.Thread(target=run, daemon=True).start()
+
+    def _phonecam_show_devices_dialog(self):
+        """Botón «Dispositivos recordados» de Ajustes: lista los móviles que ya se emparejaron
+        antes (ver PhoneCamHub.list_devices) y deja «olvidar» cualquiera. No hace falta que
+        «Cámara del móvil» esté encendida -- la lista vive en su propio archivo aparte (ver
+        PHONECAM_DEVICES_FILE), no en la sesión en marcha."""
+        dlg = getattr(self, "_phonecam_devices_dialog", None)
+        if dlg is not None:
+            dlg.close()
+        try:
+            self._phonecam_devices_dialog = PhoneCamDevicesDialog(self.root, self.phonecam)
+        except Exception as e:
+            log.info("no se pudo abrir la lista de dispositivos recordados: %r", e)
+            self._phonecam_devices_dialog = None
 
     def _phonecam_clear_pair_qr(self):
         self._phonecam_pair_shown_at = 0.0

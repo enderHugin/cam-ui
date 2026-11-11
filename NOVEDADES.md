@@ -1,5 +1,29 @@
 # Novedades de cam-ui
 
+## pack 25 — 2026.11.11
+- **Más fluido y con mejor resolución**: la cámara del móvil ahora pide 1080p (antes 720p) a
+  20 fps (antes 8), con algo más de calidad de imagen. Es seguro subirlo así porque el propio
+  navegador del móvil ya se autolimitaba solo (si una foto tarda en enviarse, se salta la
+  siguiente en vez de acumular retraso) — en una wifi floja o un móvil viejo, sencillamente baja
+  solo de fluidez, en vez de atascarse o acumular retraso.
+- **Un móvil ya emparejado no hace falta volver a "emparejarlo"**: hasta ahora, cada vez que se
+  apagaba y encendía «Cámara del móvil» (o se cerraba cam-ui del todo), cualquier móvil tenía que
+  volver a leer el código QR desde cero. Ahora, la primera vez que un móvil se empareja guarda un
+  código propio (en el propio móvil, en su navegador); la próxima vez que abra esa misma
+  dirección, entra solo, sin QR de por medio. *Para que quede claro el cambio de fondo*: de ahí en
+  adelante, ese móvil concreto entra sin que nadie tenga que confirmar nada desde el PC — antes,
+  el QR en la pantalla del PC era precisamente lo que impedía que cualquiera en la wifi se
+  añadiera solo. En Ajustes → Cámara del móvil hay un botón nuevo, «Dispositivos recordados», para
+  ver cuáles son (con la fecha en que se emparejaron) y «olvidar» cualquiera — a partir de ahí, ese
+  móvil vuelve a necesitar el QR de siempre, como si fuera nuevo.
+- El certificado para iPhone/iPad del pack anterior no cambia con nada de esto.
+- Queda pendiente, como su propio cambio aparte (más grande y con más riesgo: Safari no admite de
+  forma fiable los mismos formatos de audio que Chrome/Android): que la cámara del móvil también
+  mande sonido.
+- *Como siempre: sin un móvil real ni un PC con wifi de verdad en este entorno, esto se ha probado
+  a fondo con sockets y servidores HTTP/HTTPS reales (incluido un cliente TLS real y la ventana
+  real con Tk) pero no con hardware real por wifi — conviene confirmarlo en el uso normal.*
+
 ## pack 24 — 2026.11.11
 - **Arreglado: en iPhone/iPad, «Cámara del móvil» no dejaba usar la cámara en absoluto** (ni
   siquiera llegaba a pedir el permiso). La causa: Safari/WebKit, a diferencia de Chrome en
