@@ -374,93 +374,243 @@ finally:
 print("9) sonido de verdad, extremo a extremo (ffmpeg -> IpServer -> HTTP -> MP3 que decodifica "
       "ffprobe) OK")
 
-# 10) CamApp._ip_auto_size: el tamaño real para el modo «Automático» del combo «Tamaño» (pensado
-#     para cuando esta salida en red se usa para encadenar otro cam-ui como «cámara de red»): con
-#     una sola cámara en el mosaico, su tamaño real tras Encuadre (recorte/zoom/giro/ancho) --
-#     igual que "la salida" de la barra de estado; con más de una (o ninguna), no hay "la cámara"
-#     de la que partir, así que cae al tamaño recomendado de siempre (como si no se hubiera
-#     elegido «Automático»). Con un "self" de mentira: no hace falta Tk para esta lógica.
-fake10 = types.SimpleNamespace()
-fake10._geometry = lambda: {"W": 1280, "H": 960, "labels": ["HP Wide Vision HD Camera"]}
-assert camui.CamApp._ip_auto_size(fake10) == (1280, 960), camui.CamApp._ip_auto_size(fake10)
+# 10) ip_fit_size: la salida en red lleva la MISMA forma que el mosaico, lo más grande que quepa
+#     en el máximo elegido y nunca mayor que el propio mosaico. Casos reales del aviso: un PC con
+#     una sola cámara 4:3 (1280×960) y con dos cámaras lado a lado (1280×548), ambos con el máximo
+#     recomendado (640×360) -- antes llegaban los dos como 640×360 con bandas negras.
+assert camui.ip_fit_size(1280, 960, (640, 360)) == (480, 360)
+assert camui.ip_fit_size(1280, 548, (640, 360)) == (640, 274)
+assert camui.ip_fit_size(1280, 720, (640, 360)) == (640, 360)          # 16:9 cabe tal cual
+assert camui.ip_fit_size(1280, 960, (1920, 1080)) == (1280, 960)        # máximo grande: entero
+assert camui.ip_fit_size(640, 480, (1920, 1080)) == (640, 480)          # nunca lo agranda
+assert camui.ip_fit_size(720, 1280, (640, 360)) == (202, 360)           # vertical (móvil)
+for W_, H_ in ((1280, 960), (1280, 548), (1918, 1078), (333, 777), (4000, 10)):
+    for box_ in camui.IP_SIZES:
+        fw_, fh_ = camui.ip_fit_size(W_, H_, box_[1])
+        assert fw_ % 2 == 0 and fh_ % 2 == 0 and fw_ <= box_[1][0] and fh_ <= box_[1][1], \
+            (W_, H_, box_, fw_, fh_)
+        if min(fw_, fh_) > 40:              # misma forma (salvo el redondeo a pares)
+            assert abs(fw_ / float(fh_) - W_ / float(H_)) / (W_ / float(H_)) < 0.02, (W_, H_, fw_, fh_)
+print("10) ip_fit_size: misma forma que el mosaico, dentro del máximo, sin agrandar, pares OK")
 
-fake10._geometry = lambda: {"W": 1280, "H": 548,
-                            "labels": ["HP Wide Vision HD Camera", "EOS Webcam Utility"]}
-assert camui.CamApp._ip_auto_size(fake10) == camui.IP_SIZES[0][1]
 
-fake10._geometry = lambda: None                        # sin ninguna cámara marcada
-assert camui.CamApp._ip_auto_size(fake10) == camui.IP_SIZES[0][1]
-print("10) _ip_auto_size: una sola cámara -> su tamaño real (tras Encuadre); más de una (o "
-      "ninguna) -> el recomendado de siempre, como si no fuera Automático OK")
+def _first_jpeg(http_port, timeout=5):
+    c = http.client.HTTPConnection("127.0.0.1", http_port, timeout=timeout)
+    c.request("GET", "/stream.mjpg")
+    r = c.getresponse()
+    buf, t = b"", time.time() + timeout
+    try:
+        while time.time() < t:
+            ch = r.fp.read1(4096)
+            if not ch:
+                break
+            buf += ch
+            i = buf.find(b"Content-Length: ")
+            j = buf.find(b"\r\n\r\n", i) if i >= 0 else -1
+            if j < 0:
+                continue
+            n = int(buf[i + 16:j].split(b"\r\n")[0])
+            if len(buf) >= j + 4 + n:
+                return Image.open(io.BytesIO(buf[j + 4:j + 4 + n]))
+    finally:
+        c.close()
 
-# 11) CamApp._ip_enable con el combo «Tamaño» en IP_SIZE_AUTO: abre el IpServer de verdad con el
-#     tamaño que resuelva _ip_auto_size (ver bloque 10) y lo dice en el aviso de estado, para que
-#     quede claro qué resolvió -- con un tamaño fijo de siempre, ni lo toca ni lo menciona.
-class _FakeVar11:
-    def __init__(self, value):
-        self._v = value
+
+# 11) extremo a extremo, los dos casos reales del aviso: mosaico blanco puro -> el comando real
+#     de cam-ui (build_command, con el tamaño que calcula ip_fit_size como haría CamApp._plan) ->
+#     ffmpeg de verdad -> IpServer armado con ese tamaño -> HTTP -> JPEG. Debe llegar con la forma
+#     del mosaico y SIN ninguna banda negra (antes: 160 columnas negras con la cámara 4:3 y 86
+#     filas negras con las dos cámaras, medido igual que aquí).
+def _bars_e2e(W_, H_, http_port):
+    s_ = camui.IpServer()
+    s_.open(640, 360, fps=10, port=http_port)
+    try:
+        fw_, fh_ = camui.ip_fit_size(W_, H_, s_.box)
+        p_ = s_.arm(fw_, fh_)
+        plan_ = {"cams": [{"spec": "x", "mode": None, "h": False, "v": False, "rot": 0, "delay": 0,
+                           "tile": "auto", "zoom": 100.0, "cx": 50.0, "cy": 50.0, "color": None}],
+                 "geom": {"W": W_, "H": H_, "tiles": [(0, 0, W_, H_)]}, "fps": 10, "sync": "clock",
+                 "crf": 23, "preset": "veryfast", "audio": {"L": None, "R": None, "offset": 0},
+                 "ipout": {"w": fw_, "h": fh_, "fps": 10, "pix": "rgb24", "port": p_}}
+        cmd_, _ = camui.build_command(plan_, outfile=None, preview=False, input_fn=lambda k, s, o=None: [
+            "-f", "lavfi", "-i", "color=c=white:size={0}x{1}:rate=10".format(W_, H_)])
+        k_ = next(i for i, x in enumerate(cmd_) if x.startswith("tcp://"))
+        cmd_[k_:k_] = ["-t", "2"]
+        r_ = subprocess.run(cmd_, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+        assert r_.returncode == 0, r_.stderr[-600:]
+        im_ = _first_jpeg(http_port)
+        assert im_ is not None, "no llegó ningún JPEG"
+        a_ = np.asarray(im_.convert("L"))
+        return im_.size, int((a_.mean(axis=0) < 40).sum()), int((a_.mean(axis=1) < 40).sum())
+    finally:
+        s_.close()
+
+
+for (W_, H_), want_, hp_ in (((1280, 960), (480, 360), 58911), ((1280, 548), (640, 274), 58912)):
+    size_, dcols_, drows_ = _bars_e2e(W_, H_, hp_)
+    assert size_ == want_, (W_, H_, size_)
+    assert dcols_ == 0 and drows_ == 0, "bandas negras: {0} columnas, {1} filas ({2}x{3})".format(
+        dcols_, drows_, W_, H_)
+print("11) extremo a extremo (ffmpeg real -> IpServer -> HTTP): mosaico 4:3 de una cámara y "
+      "apaisado de dos llegan con su forma real y sin ninguna banda negra OK")
+
+# 12) IpServer.arm(w, h): el tamaño puede cambiar de un arranque de ffmpeg a otro (el emisor
+#     cambia su mosaico) y se sirve el nuevo; si el HLS del Chromecast estaba en marcha (con el
+#     tamaño anterior fijado al arrancarlo), se para -- un proceso real hace de ese ffmpeg aquí.
+s12 = camui.IpServer()
+s12.open(640, 360, fps=10, port=58913)
+try:
+    for (w_, h_), val_ in (((480, 360), 200), ((640, 274), 60)):
+        p_ = s12.arm(w_, h_)
+        assert (s12.w, s12.h) == (w_, h_) and s12.box == (640, 360)
+        so_ = socket.create_connection(("127.0.0.1", p_), timeout=5)
+        fr_ = np.full((h_, w_, 3), val_, np.uint8).tobytes()
+        for _ in range(5):
+            so_.sendall(fr_)
+            time.sleep(0.05)
+        im_ = None
+        t_ = time.time() + 5
+        while time.time() < t_:
+            im_ = _first_jpeg(58913)
+            if im_ is not None and im_.size == (w_, h_):
+                break
+            time.sleep(0.1)
+        so_.close()
+        assert im_ is not None and im_.size == (w_, h_), (w_, h_, im_ and im_.size)
+    fake_hls = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                stdin=subprocess.PIPE)
+    s12._hls_proc = fake_hls
+    s12.arm(640, 274)                               # mismo tamaño: el HLS sigue
+    assert s12._hls_proc is fake_hls
+    s12.arm(480, 360)                               # otro tamaño: el HLS se para
+    assert s12._hls_proc is None
+    fake_hls.wait(timeout=5)
+finally:
+    s12.close()
+print("12) IpServer.arm(w, h): cambia de tamaño entre arranques y para el HLS si cambia OK")
+
+
+# 13) CamApp._plan: el tamaño que pide para la salida en red sale de la forma de SU mosaico
+#     (_geometry) dentro del máximo elegido, no del máximo tal cual. Con un "self" de mentira.
+class _Var13:
+    def __init__(self, v):
+        self.v = v
 
     def get(self):
-        return self._v
+        return self.v
 
 
-def _ip_enable_fake11(ipsize, geometry, port):
-    """Monta un "self" de mentira con justo lo que toca CamApp._ip_enable, y lo llama tal cual
-    lo llamaría la app -- ipsrv es un IpServer DE VERDAD (lo único que de verdad hace falta
-    comprobar aquí es qué w/h recibe)."""
-    f = types.SimpleNamespace(
-        ipsrv=camui.IpServer(), v_ipsize=_FakeVar11(ipsize), _ip_port=lambda: port,
-        ipout_on=False, paused=True, recording=False, _refresh_buttons=lambda: None,
-        _geometry=geometry)
-    f._ip_auto_size = lambda: camui.CamApp._ip_auto_size(f)
-    f._ip_urls = lambda p: "http://127.0.0.1:{0}/".format(p)
-    f._msgs = []
-    f._ip_changed = lambda msg, quiet: f._msgs.append(msg)
-    return f
+class _Cam13:
+    def to_plan(self, spec):
+        return {"spec": spec}
+
+    def color_values(self):
+        return {}
 
 
-fake11a = _ip_enable_fake11(camui.IP_SIZE_AUTO,
-                            lambda: {"W": 1280, "H": 960, "labels": ["HP Wide Vision HD Camera"]},
-                            58130)
+def _plan13(geom):
+    srv_ = types.SimpleNamespace(active=True, box=(640, 360), w=640, h=360, fps=10, pix="rgb24")
+    f_ = types.SimpleNamespace(
+        editing=None, order=list(geom["labels"]), vdev={l: {"spec": l} for l in geom["labels"]},
+        cams={l: _Cam13() for l in geom["labels"]}, v_quality=_Var13("Media"),
+        v_sync=_Var13(""), v_preset=_Var13("veryfast"), vcam_on=False, vcam=None,
+        ipout_on=True, ipsrv=srv_)
+    f_._geometry = lambda: geom
+    f_._fps = lambda: 30
+    f_._audio_plan = lambda: {"L": None, "R": None, "offset": 0}
+    return camui.CamApp._plan(f_)
+
+
+ip13a = _plan13({"W": 1280, "H": 960, "tiles": [(0, 0, 1280, 960)], "labels": ["HP"]})["ipout"]
+assert (ip13a["w"], ip13a["h"]) == (480, 360), ip13a
+ip13b = _plan13({"W": 1280, "H": 548, "tiles": [(0, 0, 732, 548), (732, 0, 548, 548)],
+                 "labels": ["HP", "EOS"]})["ipout"]
+assert (ip13b["w"], ip13b["h"]) == (640, 274), ip13b
+print("13) CamApp._plan pide a «En la red» la forma de su mosaico (480×360 / 640×274), no el "
+      "máximo tal cual OK")
+
+# 14) lo nuevo que esto puede provocar en el PC que lo recibe: el tamaño que llega ya no es
+#     siempre el mismo, cambia si el emisor cambia su mosaico (p. ej. añade una cámara) mientras
+#     el otro lo está recibiendo. Con el comando real del receptor (esta URL como cámara de red,
+#     grabando), el emisor pasa de 480×360 (gris claro) a 640×274 (gris oscuro) a
+#     mitad: el receptor no debe caerse y debe seguir entrando vídeo después del cambio.
+#     El emisor sigue mandando hasta que el receptor termina (como en la realidad): si dejara de
+#     mandar antes, el receptor se quedaría esperando a esa cámara -- eso es otra cosa (una
+#     cámara de red que deja de responder), no lo que se prueba aquí.
+HTTP14 = 58914
+s14 = camui.IpServer()
+s14.open(640, 360, fps=10, port=HTTP14)
+stop14 = threading.Event()
+
+
+def _feed14(w_, h_, secs_, val_):
+    p_ = s14.arm(w_, h_)
+    so_ = None
+    for _ in range(50):
+        try:
+            so_ = socket.create_connection(("127.0.0.1", p_), timeout=2)
+            break
+        except OSError:
+            time.sleep(0.05)
+    fr_ = np.full((h_, w_, 3), val_, np.uint8).tobytes()
+    t_ = time.time()
+    try:
+        while (secs_ is None or time.time() - t_ < secs_) and not stop14.is_set():
+            so_.sendall(fr_)
+            time.sleep(0.1)
+    except OSError:
+        pass
+    finally:
+        so_.close()
+
+
+def _sender14():
+    _feed14(480, 360, 3.0, 200)
+    time.sleep(0.3)                  # el hueco de un reinicio de ffmpeg en el emisor
+    _feed14(640, 274, None, 90)      # hasta que el receptor termine
+
+
+th14 = threading.Thread(target=_sender14, daemon=True)
+th14.start()
+time.sleep(0.8)
+out14 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ipout_resize_rx.mp4")
+if os.path.exists(out14):
+    os.remove(out14)
+_cam14 = lambda spec: {"spec": spec, "mode": None, "h": False, "v": False, "rot": 0, "delay": 0,
+                       "tile": "auto", "zoom": 100.0, "cx": 50.0, "cy": 50.0, "color": {}}
+# (solo la cámara encadenada en el receptor: con otra cámara sintética «-re» al lado, el
+#  receptor a veces no arranca -- comprobado que eso pasa igual con el código anterior y sin
+#  ningún cambio de tamaño, así que no es lo que se prueba aquí)
+plan14 = {"cams": [_cam14("http://127.0.0.1:{0}/stream.mjpg".format(HTTP14))],
+          "geom": camui.layout_tiles([4 / 3.0], [1], 320), "fps": 10, "sync": "clock",
+          "crf": 28, "preset": "veryfast", "audio": {"L": None, "R": None, "offset": 0},
+          "duration": 6}
+cmd14, _ = camui.build_command(plan14, outfile=out14, preview=False, input_fn=camui._dshow_input)
 try:
-    ok11a = camui.CamApp._ip_enable(fake11a, quiet=True)
-    assert ok11a is True
-    assert (fake11a.ipsrv.w, fake11a.ipsrv.h) == (1280, 960), (fake11a.ipsrv.w, fake11a.ipsrv.h)
-    assert fake11a._msgs and "automático: 1280×960" in fake11a._msgs[-1], fake11a._msgs
+    r14 = subprocess.run(cmd14, capture_output=True, text=True, timeout=40)
+    assert r14.returncode == 0, "el receptor se cayó con el cambio de tamaño:\n" + r14.stderr[-800:]
+    nf14 = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                           "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", out14],
+                          capture_output=True, text=True, timeout=15).stdout.strip()
+    assert nf14.isdigit() and int(nf14) >= 50, "muy pocos fotogramas en el receptor: " + nf14
+
+    def _net_gray14(ts_):
+        q_ = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(ts_), "-i", out14, "-frames:v", "1",
+                             "-vf", "scale=1:1", "-f", "rawvideo",
+                             "-pix_fmt", "gray", "-"], capture_output=True, timeout=15)
+        return q_.stdout[0] if q_.stdout else None
+
+    g_before, g_after = _net_gray14(1.5), _net_gray14(5.5)
+    assert g_before is not None and g_before > 150, g_before
+    assert g_after is not None and g_after < 120, ("tras el cambio de tamaño no siguió entrando "
+                                                   "vídeo de la cámara de red", g_after)
 finally:
-    fake11a.ipsrv.release()
-print("11a) _ip_enable con «Automático» y una sola cámara abre el IpServer con su tamaño real, "
-      "y lo dice en el aviso OK")
-
-fake11b = _ip_enable_fake11(
-    camui.IP_SIZE_AUTO,
-    lambda: {"W": 1280, "H": 548, "labels": ["HP Wide Vision HD Camera", "EOS Webcam Utility"]},
-    58131)
-try:
-    ok11b = camui.CamApp._ip_enable(fake11b, quiet=True)
-    assert ok11b is True
-    assert (fake11b.ipsrv.w, fake11b.ipsrv.h) == camui.IP_SIZES[0][1]
-    assert fake11b._msgs and "automático: {0}×{1}".format(*camui.IP_SIZES[0][1]) in fake11b._msgs[-1], \
-        fake11b._msgs
-finally:
-    fake11b.ipsrv.release()
-print("11b) _ip_enable con «Automático» y más de una cámara cae al tamaño recomendado de "
-      "siempre (avisándolo igual) OK")
-
-
-def _boom():
-    raise AssertionError("con un tamaño fijo no debería ni mirar _geometry/_ip_auto_size")
-
-
-fake11c = _ip_enable_fake11("960×540", _boom, 58132)
-try:
-    ok11c = camui.CamApp._ip_enable(fake11c, quiet=True)
-    assert ok11c is True
-    assert (fake11c.ipsrv.w, fake11c.ipsrv.h) == (960, 540)
-    assert fake11c._msgs and "automático" not in fake11c._msgs[-1], fake11c._msgs
-finally:
-    fake11c.ipsrv.release()
-print("11c) _ip_enable con un tamaño fijo de siempre no toca _ip_auto_size ni lo menciona en "
-      "el aviso OK")
+    stop14.set()
+    th14.join(10)
+    s14.close()
+    if os.path.exists(out14):
+        os.remove(out14)
+print("14) el receptor (comando real de cam-ui) sigue recibiendo, sin caerse, cuando el emisor "
+      "cambia de tamaño a mitad ({0} fotogramas; gris {1} -> {2}) OK".format(nf14, g_before, g_after))
 
 print("TODO OK unit_ipout")

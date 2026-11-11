@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 29                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 30                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1022,9 +1022,11 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
                       src["vc"], max(1, min(fps, int(vc.get("fps", 30)))), vw, vh,
                       vc.get("pix", "rgb24")))
     if ip:
+        # w×h ya trae la forma del propio mosaico (CamApp._plan -> ip_fit_size): se escala tal
+        # cual, sin rellenar con negro hasta otro formato (antes se encajaba siempre en el tamaño
+        # fijo elegido, con bandas negras a los lados o arriba/abajo según la forma del mosaico)
         iw, ih = int(ip["w"]), int(ip["h"])
-        fc.append("{0}fps={1},scale={2}:{3}:force_original_aspect_ratio=decrease:flags=bilinear,"
-                  "pad={2}:{3}:(ow-iw)/2:(oh-ih)/2:color=black,format={4}[ip]".format(
+        fc.append("{0}fps={1},scale={2}:{3}:flags=bilinear,setsar=1,format={4}[ip]".format(
                       src["ip"], max(1, min(fps, int(ip.get("fps", IP_FPS)))), iw, ih,
                       ip.get("pix", "rgb24")))
 
@@ -1313,15 +1315,13 @@ class VirtualCam:
 #  local (igual mecanismo que la cámara virtual) -> servidor HTTP MJPEG propio, no ffmpeg, para
 #  que un visor que se cuelga o se desconecta nunca afecte a ffmpeg ni a la grabación.
 # =====================================================================
-IP_SIZES = (("640×360  (recomendado)", (640, 360)), ("960×540", (960, 540)),
-           ("1280×720", (1280, 720)), ("1920×1080", (1920, 1080)))
-# Opción aparte del combo de «Tamaño» (no es un tamaño fijo, así que no vive en IP_SIZES): con una
-# sola cámara en el mosaico, la salida en red manda esa cámara tal cual -- con el mismo recorte,
-# zoom, giro y ancho que ya se le aplicó en Encuadre (ver CamApp._ip_auto_size) -- en vez de un
-# tamaño aparte sin relación. Con más de una cámara no hay "la cámara" de la que partir, así que
-# se comporta como si no se hubiera elegido: el tamaño recomendado de siempre (IP_SIZES[0]).
-IP_SIZE_AUTO = "Automático (si hay una sola cámara)"
-IP_FPS = 10                  # de sobra para verlo: ahorra wifi y CPU (va aparte de los fps de grabación)
+# Tamaño MÁXIMO de la salida en red: se manda con la forma real del mosaico (ver ip_fit_size), lo
+# más grande que quepa aquí -- nunca rellenando con negro hasta este formato (antes sí: un mosaico
+# 4:3 llegaba a quien lo viera, o a otro cam-ui que lo usara como cámara de red, con bandas negras a
+# los lados, y uno apaisado con bandas arriba y abajo).
+IP_SIZES = (("hasta 640×360  (recomendado)", (640, 360)), ("hasta 960×540", (960, 540)),
+           ("hasta 1280×720", (1280, 720)), ("hasta 1920×1080", (1920, 1080)))
+IP_FPS = 10                 # de sobra para verlo: ahorra wifi y CPU (va aparte de los fps de grabación)
 IP_PORT_DEFAULT = 8554
 IP_JPEG_QUALITY = 70
 
@@ -1337,6 +1337,18 @@ HLS_SEGMENT_SECONDS = 2
 HLS_LIST_SIZE = 6
 HLS_BITRATE = "2500k"
 HLS_IDLE_SECONDS = 25         # sin pedir ni un trozo en todo este tiempo -> se para solo
+
+
+def ip_fit_size(W, H, box):
+    """Tamaño real de la salida en red para un mosaico de W×H: la MISMA forma que el mosaico
+    (sin barras negras añadidas), lo más grande que quepa en box=(ancho, alto) máximos, y nunca
+    mayor que el propio mosaico. Pares (los pide el H.264 del Chromecast y el receptor)."""
+    W, H = max(2, int(W)), max(2, int(H))
+    bw, bh = max(2, int(box[0])), max(2, int(box[1]))
+    s = min(1.0, bw / float(W), bh / float(H))
+    w = max(2, min(bw - bw % 2, int(round(W * s / 2.0)) * 2))
+    h = max(2, min(bh - bh % 2, int(round(H * s / 2.0)) * 2))
+    return w, h
 
 
 def ip_size_label(size):
@@ -1950,6 +1962,7 @@ class IpServer:
         http_srv = _MjpegHTTPServer(("0.0.0.0", int(port)), _MjpegHandler)
         http_srv.owner = self
         self.w, self.h, self.fps, self.port = int(w), int(h), int(fps), int(port)
+        self.box = (self.w, self.h)   # el máximo elegido; w/h es lo que de verdad llega (ver arm)
         self.sent = self.dropped = self.received = self.errors = self.clients = 0
         self.a_received = self.a_dropped = 0
         self._closed = False
@@ -1962,8 +1975,17 @@ class IpServer:
         self._encoder.start()
         log.info("salida en red abierta: puerto %d, %dx%d @%d", self.port, self.w, self.h, self.fps)
 
-    def arm(self):
-        """Prepara un socket de escucha para la próxima conexión de ffmpeg; devuelve su puerto."""
+    def arm(self, w=None, h=None):
+        """Prepara un socket de escucha para la próxima conexión de ffmpeg; devuelve su puerto.
+        w, h: tamaño de los fotogramas que mandará ESE ffmpeg (la forma real del mosaico, ver
+        ip_fit_size) -- puede cambiar de un arranque a otro si cambia el mosaico. Si cambia con el
+        HLS de Chromecast en marcha, ese se para (lleva el tamaño fijado al arrancar); se vuelve a
+        encender solo con la siguiente petición de la tele."""
+        if w and h and (int(w), int(h)) != (self.w, self.h):
+            self.w, self.h = int(w), int(h)
+            log.info("salida en red: %dx%d (forma real del mosaico)", self.w, self.h)
+            if self._hls_proc is not None:
+                self._hls_stop()
         self._drop_srv()
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.bind(("127.0.0.1", 0))
@@ -3637,7 +3659,8 @@ class FFmpegEngine:
             else:
                 plan.pop("vcam", None)
             if plan.get("ipout") and self.ipsrv is not None and self.ipsrv.active:
-                plan["ipout"]["port"] = self.ipsrv.arm()     # un socket nuevo en cada intento
+                plan["ipout"]["port"] = self.ipsrv.arm(      # un socket nuevo en cada intento,
+                    plan["ipout"].get("w"), plan["ipout"].get("h"))   # con el tamaño de ESTE mosaico
                 plan["ipout"]["aport"] = self.ipsrv.arm_audio()  # igual, para el sonido (si hay)
             else:
                 plan.pop("ipout", None)
@@ -5981,11 +6004,10 @@ class CamApp:
             iszv = (int(isz[0]), int(isz[1]))
         except Exception:
             iszv = IP_SIZES[0][1]
-        # "auto" aparte del tamaño guardado (que sigue siendo el último resuelto, por si hiciera
-        # falta en otro sitio) porque un tamaño en píxeles no distingue "elegí 640x360" de
-        # "elegí Automático y de momento resolvió a 640x360" -- sin esto, reabrir cam-ui olvidaría
-        # que estaba en Automático en cuanto esa resolución coincidiera con el valor recomendado.
-        self.v_ipsize = t(value=IP_SIZE_AUTO if ipout_cfg.get("auto") else ip_size_label(iszv))
+        # "auto": la opción «Automático» del pack 29 (ya no existe -- la forma real del mosaico se
+        # respeta siempre, ver ip_fit_size); quien la eligió quería la resolución completa, así
+        # que se le pone el máximo más grande en vez de volver al recomendado sin avisar.
+        self.v_ipsize = t(value=IP_SIZES[-1][0] if ipout_cfg.get("auto") else ip_size_label(iszv))
         self.v_ipsize.trace_add("write", self._on_ipsize)
         iport = (self._cfg.get("ipout") or {}).get("port") if isinstance(self._cfg.get("ipout"), dict) else None
         self.v_ipport = t(value=str(iport or IP_PORT_DEFAULT))
@@ -6573,8 +6595,7 @@ class CamApp:
         self.btn_vlc.grid(row=2, column=1, sticky="w", padx=6, pady=(2, 6))
         self._live.add(str(self.btn_vlc))
         ttk.Label(nf, text="Tamaño").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Combobox(nf, textvariable=self.v_ipsize,
-                     values=[IP_SIZE_AUTO] + [z[0] for z in IP_SIZES], width=34,
+        ttk.Combobox(nf, textvariable=self.v_ipsize, values=[z[0] for z in IP_SIZES], width=28,
                      state="readonly").grid(row=0, column=1, sticky="w")
         ttk.Label(nf, text="Puerto").grid(row=1, column=0, sticky="w", padx=6, pady=4)
         e_ipport = ttk.Entry(nf, textvariable=self.v_ipport, width=8)
@@ -6585,12 +6606,11 @@ class CamApp:
         self.frm_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
         self._set_link_list(self.frm_ipurl, "No está activa.", [])
         ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="«Tamaño»: el de siempre reduce el mosaico para ahorrar wifi/CPU al verlo en "
-                       "directo, sin relación con el tamaño real de grabación. «Automático» es para "
-                       "cuando esto se usa para encadenar otro cam-ui (lo añade como «cámara de "
-                       "red»): manda esa única cámara tal cual, con el mismo encuadre, sin otro "
-                       "tamaño aparte -- si hay más de una cámara en el mosaico no hay «la cámara» "
-                       "de la que partir, así que se comporta como el tamaño recomendado de siempre. "
+                  text="«Tamaño» es el máximo: se manda con la misma forma que el mosaico de aquí "
+                       "(con su encuadre, sin añadir barras negras), lo más grande que quepa, y "
+                       "nunca mayor que el propio mosaico -- así otro cam-ui que lo añada como "
+                       "«cámara de red» lo recibe con el mismo formato. Un máximo mayor da más "
+                       "resolución a cambio de más wifi/CPU. "
                        "Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
                        "(wifi) para ver el mosaico en directo, con pantalla completa; también en la "
                        "bandeja, el menú «Modo» y, en compacto y mini, el botón 🌐 (clic en la "
@@ -7873,8 +7893,10 @@ class CamApp:
             plan["vcam"] = {"w": self.vcam.w, "h": self.vcam.h, "fps": min(30, self._fps()),
                             "pix": self.vcam.pix}
         if self.ipout_on and self.ipsrv.active:
-            plan["ipout"] = {"w": self.ipsrv.w, "h": self.ipsrv.h, "fps": self.ipsrv.fps,
-                             "pix": self.ipsrv.pix}
+            # la forma real del mosaico, dentro del máximo elegido -- sin barras negras añadidas
+            iw, ih = ip_fit_size(g["W"], g["H"], getattr(self.ipsrv, "box", None) or
+                                 (self.ipsrv.w, self.ipsrv.h))
+            plan["ipout"] = {"w": iw, "h": ih, "fps": self.ipsrv.fps, "pix": self.ipsrv.pix}
         return plan
 
     def _edit_plan(self):
@@ -7909,7 +7931,7 @@ class CamApp:
         cfg["startup"] = round(float(self.eng.startup_time), 2)     # para grabar sin vista previa
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
         cfg["ipout"] = {"on": bool(self.ipout_on), "size": list(ip_size_value(self.v_ipsize.get())),
-                        "auto": self.v_ipsize.get() == IP_SIZE_AUTO, "port": self._ip_port()}
+                        "port": self._ip_port()}
         cfg["phonecam"] = {"port": self._phonecam_port()}   # siempre activa: no hace falta guardar "on"
         # las cámaras de móvil se añaden solas cuando el móvil se conecta de verdad (su URL
         # depende de la sesión en marcha, no sobrevive a cerrar cam-ui) -- no se guardan, para
@@ -8592,21 +8614,11 @@ class CamApp:
             messagebox.showerror("Abrir en VLC", "No se pudo abrir VLC.\n\n{0}".format(
                 str(e).strip()[-300:]))
 
-    def _ip_auto_size(self):
-        """Tamaño real para «En la red» en modo IP_SIZE_AUTO: el de la ÚNICA cámara del mosaico
-        actual, tal cual queda tras Encuadre (recorte, zoom, giro, ancho) -- lo mismo que ya se ve
-        como «salida» en la barra de estado, así que quien la añada como cámara de red en otro
-        equipo recibe exactamente eso, no un tamaño aparte sin relación. Con más de una cámara (o
-        ninguna) no hay "la cámara" de la que partir: se usa el tamaño recomendado de siempre."""
-        g = self._geometry()
-        if g and len(g.get("labels") or []) == 1:
-            return (g["W"], g["H"])
-        return IP_SIZES[0][1]
-
     def _ip_enable(self, quiet=False):
-        """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa."""
-        auto = self.v_ipsize.get() == IP_SIZE_AUTO
-        w, h = self._ip_auto_size() if auto else ip_size_value(self.v_ipsize.get())
+        """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa. El
+        tamaño elegido es el máximo: lo que de verdad se manda lleva la forma del mosaico (ver
+        _plan / ip_fit_size)."""
+        w, h = ip_size_value(self.v_ipsize.get())
         port = self._ip_port()
         try:
             self.ipsrv.open(w, h, IP_FPS, port)
@@ -8630,10 +8642,7 @@ class CamApp:
             return False
         self.ipout_on = True
         self.paused = False
-        msg = "En la red: {0}".format(self._ip_urls(port))
-        if auto:
-            msg += " (automático: {0}×{1})".format(w, h)
-        self._ip_changed(msg, quiet)
+        self._ip_changed("En la red: {0}".format(self._ip_urls(port)), quiet)
         return True
 
     def _ip_disable(self, why=None):

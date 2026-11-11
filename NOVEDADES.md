@@ -1,5 +1,26 @@
 # Novedades de cam-ui
 
+## pack 30 — 2026.11.11
+- **Arreglado: «En la red» añadía barras negras y cambiaba el formato del mosaico.** Siempre
+  encajaba el mosaico en un formato fijo 16:9 y rellenaba con negro lo que sobraba: un mosaico
+  4:3 de una sola cámara llegaba con bandas negras a los lados, y uno apaisado de dos cámaras
+  con bandas arriba y abajo — tanto a quien lo viera en el navegador como a otro cam-ui que lo
+  usara como «cámara de red», que además lo tomaba como si esa cámara fuera 16:9. Ahora se manda
+  con la misma forma que el mosaico de verdad (con su encuadre), sin añadir nada: medido con el
+  comando real, 1280×960 llega como 480×360 y 1280×548 como 640×274, sin una sola fila ni
+  columna negra (antes: 160 columnas y 86 filas negras). El «Tamaño» de «En la red» pasa a ser
+  un máximo («hasta 640×360», etc.): para más resolución, basta con elegir uno mayor.
+- **Quitada la opción «Automático» del pack 29.** Atacaba la resolución, solo con una cámara y
+  solo si se elegía a mano — no el problema real, que era este relleno de negro (y que pasaba
+  igual con varias cámaras). Quien la tuviera elegida pasa al máximo más grande (hasta
+  1920×1080), que es lo que buscaba.
+- Si el PC que envía cambia su mosaico (p. ej. añade una cámara) mientras otro lo está
+  recibiendo, el receptor sigue recibiendo sin cortarse (probado con su comando real), pero ve
+  el formato nuevo encajado en su celda anterior hasta que su vista previa se reinicia (p. ej.
+  al pausarla y reanudarla), que es cuando se entera del tamaño nuevo y se reajusta.
+- *Verificado con ffmpeg e IpServer reales, no con dos PCs de verdad encadenados — conviene
+  confirmarlo en tu caso.*
+
 ## pack 29 — 2026.11.11
 - **Nueva opción «Automático» en Ajustes → Salida → «En la red» → Tamaño, para cuando se usa
   para encadenar otro cam-ui.** Hasta ahora, «En la red» siempre reducía el mosaico a un tamaño
