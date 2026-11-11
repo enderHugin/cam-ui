@@ -13,18 +13,28 @@ assert not camui._is_net_spec("")
 assert not camui._is_net_spec(None)
 print("1) _is_net_spec OK")
 
-# 2) _dshow_input despacha a la entrada de red o a dshow según el spec, sin tocar el resto
+# 2) _dshow_input despacha a la entrada de red o a dshow según el spec, sin tocar el resto. Una
+#    cámara de red lleva siempre -rw_timeout (ver NET_IO_TIMEOUT_US): sin esto, una que acepta la
+#    conexión pero deja de contestar puede colgar a ffmpeg mucho más de lo que tarda en
+#    desbordarse el búfer de OTRA cámara del mismo proceso (ver más abajo, con un servidor real).
+T = str(camui.NET_IO_TIMEOUT_US)
 v_net = camui._dshow_input("video", "http://1.2.3.4:8080/video")
-assert v_net == ["-i", "http://1.2.3.4:8080/video"], v_net
+assert v_net == ["-rw_timeout", T, "-i", "http://1.2.3.4:8080/video"], v_net
 v_rtsp = camui._dshow_input("video", "rtsp://1.2.3.4:554/live")
-assert v_rtsp == ["-rtsp_transport", "tcp", "-i", "rtsp://1.2.3.4:554/live"], v_rtsp
+assert v_rtsp == ["-rw_timeout", T, "-rtsp_transport", "tcp", "-timeout", T,
+                 "-i", "rtsp://1.2.3.4:554/live"], v_rtsp
 v_usb = camui._dshow_input("video", "USB2.0 Camera", "640x480 @ 30 fps [mjpeg]")
 assert v_usb == ["-f", "dshow", "-rtbufsize", "512M", "-video_size", "640x480",
                  "-framerate", "30", "-vcodec", "mjpeg", "-i", "video=USB2.0 Camera"], v_usb
 a_usb = camui._dshow_input("audio", "Micrófono")
 assert a_usb == ["-f", "dshow", "-rtbufsize", "64M", "-audio_buffer_size", "50",
                 "-i", "audio=Micrófono"], a_usb
-print("2) _dshow_input (red / dshow) OK")
+# un timeout_us explícito (el que usa CamApp._preflight_net_cams, más corto) lo sustituye
+v_net_pf = camui._dshow_input("video", "http://1.2.3.4:8080/video",
+                              timeout_us=camui.NET_PREFLIGHT_TIMEOUT_US)
+assert v_net_pf == ["-rw_timeout", str(camui.NET_PREFLIGHT_TIMEOUT_US),
+                    "-i", "http://1.2.3.4:8080/video"], v_net_pf
+print("2) _dshow_input (red / dshow, con -rw_timeout en la de red) OK")
 
 # 3) list_camera_modes no intenta -list_options contra una URL (no tiene sentido): [] al vuelo
 t0 = time.time()
@@ -417,5 +427,134 @@ assert cs11d.src == (1080, 1920)
 assert app11d.calls["on_change"] == 1, "un cambio de forma real (girar el móvil) sí debe reajustar"
 print("11d) un cambio de forma de verdad (girar el móvil) sigue reajustando el mosaico, "
       "como siempre -- la tolerancia no se traga esto OK")
+
+# 12) -rw_timeout de verdad acota una conexión que se queda colgada (acepta la conexión TCP y
+#     luego no contesta nada) -- comprobado a mano una vez (ver el comentario de NET_IO_TIMEOUT_US
+#     en camui.py: sin esto, ffmpeg se quedó colgado más de 8s contra exactamente este mismo tipo
+#     de servidor, y hubo que matarlo desde fuera); aquí queda como prueba repetible, con un
+#     socket Python real que acepta y se calla, en vez de confiar solo en lo comprobado a mano.
+import socket as _socket12, threading as _threading12
+
+PORT12 = 8793
+_stall_srv12 = _socket12.socket(_socket12.AF_INET, _socket12.SOCK_STREAM)
+_stall_srv12.setsockopt(_socket12.SOL_SOCKET, _socket12.SO_REUSEADDR, 1)
+_stall_srv12.bind(("127.0.0.1", PORT12))
+_stall_srv12.listen(1)
+
+
+def _stall_accept12():
+    _stall_srv12.settimeout(5)
+    try:
+        conn, _addr = _stall_srv12.accept()
+    except Exception:
+        return
+    time.sleep(10)                 # acepta y no manda ni una línea: justo el caso real
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+_th12 = _threading12.Thread(target=_stall_accept12, daemon=True)
+_th12.start()
+time.sleep(0.2)
+
+cmd12 = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+cmd12 += camui._dshow_input("video", "http://127.0.0.1:{0}/video".format(PORT12), timeout_us=1_500_000)
+cmd12 += ["-t", "1", "-f", "null", "-"]
+t12 = time.time()
+try:
+    r12 = subprocess.run(cmd12, capture_output=True, text=True, timeout=8)
+    elapsed12 = time.time() - t12
+    assert r12.returncode != 0, "una conexión que nunca contesta no debería 'tener éxito'"
+    assert "timed out" in r12.stderr.lower(), (
+        "debería fallar por timeout, no por otra cosa:\n" + r12.stderr[-500:])
+    assert elapsed12 < 4.0, (
+        "con -rw_timeout=1.5s debería fallar en poco más de 1.5s, no {0:.1f}s (¿se está "
+        "ignorando el timeout?)".format(elapsed12))
+finally:
+    _stall_srv12.close()
+print("12) -rw_timeout acota de verdad una conexión que acepta pero nunca contesta "
+      "({0:.1f}s, no colgada) OK".format(elapsed12))
+
+# 13) CamApp._preflight_net_cams: antes de meter una cámara de red en el mosaico real, se prueba
+#     aparte (y solo ella: ni las locales ni las que ya estaban "sin señal" generan ni un job de
+#     prueba); la que no entrega vídeo a tiempo se marca "_offline" ahí mismo -- antes de que
+#     ffmpeg arranque de verdad con todas a la vez -- y avisa por self._tray_q, igual que si ya
+#     hubiera fallado dentro del mosaico (ver _on_cam_offline). Caso real que esto evita: una
+#     EOS Webcam Utility real desbordaba su búfer mientras ffmpeg seguía esperando, sin límite,
+#     a una cámara de red que ni conectaba, en el mismo proceso.
+class _FakeApp13(camui.CamApp):           # solo para heredar _preflight_net_cams; sin Tk, sin __init__ real
+    def __init__(self, ffmpeg="ffmpeg"):
+        self.eng = camui.FFmpegEngine(ffmpeg=ffmpeg)
+        self._tray_q = deque()
+
+
+_orig_preflight_probe13 = camui._preflight_probe
+_calls13 = []
+
+
+def _spy_preflight_probe13(jobs, ffmpeg, secs=None):
+    _calls13.append([j[0] for j in jobs])     # solo las claves, para comprobar qué se probó
+    return _orig_preflight_probe13(jobs, ffmpeg, secs)
+
+
+# 13a) sin ninguna cámara de red en el plan: no se llama ni una vez a la prueba (ningún retraso
+#      para quien no usa cámaras de red)
+camui._preflight_probe = _spy_preflight_probe13
+try:
+    plan13a = {"cams": [{"spec": "USB2.0 Camera"}], "labels": ["USB"]}
+    app13a = _FakeApp13()
+    app13a._preflight_net_cams(plan13a)
+    assert _calls13 == [], "no debería probar nada sin cámaras de red: {0}".format(_calls13)
+    assert not plan13a["cams"][0].get("_offline")
+    assert not app13a._tray_q
+finally:
+    camui._preflight_probe = _orig_preflight_probe13
+print("13a) sin cámaras de red en el plan, _preflight_net_cams no hace nada (ni llama a la "
+      "prueba) OK")
+
+# 13b) una cámara local (no de red) y una de red ya marcada "_offline": ninguna de las dos debe
+#      generar un job de prueba
+_calls13.clear()
+camui._preflight_probe = _spy_preflight_probe13
+try:
+    plan13b = {"cams": [{"spec": "USB2.0 Camera"},
+                        {"spec": "http://127.0.0.1:1/video", "_offline": True}],
+              "labels": ["USB", "🌐 Ya caída"]}
+    app13b = _FakeApp13()
+    app13b._preflight_net_cams(plan13b)
+    assert _calls13 == [], ("ni la local ni la ya marcada _offline deberían generar "
+                            "prueba: {0}".format(_calls13))
+finally:
+    camui._preflight_probe = _orig_preflight_probe13
+print("13b) una cámara local y una ya marcada 'sin señal' no se vuelven a probar OK")
+
+# 13c) cámara de red que SÍ responde (servidor MJPEG real, como en el bloque 5): no se marca
+#      "_offline" y no avisa por la bandeja
+PORT13 = 8796
+srv13 = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re",
+                          "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=6",
+                          "-f", "mpjpeg", "-listen", "1", "http://127.0.0.1:{0}/".format(PORT13)])
+time.sleep(0.8)
+try:
+    plan13c = {"cams": [{"spec": "http://127.0.0.1:{0}/".format(PORT13)}], "labels": ["🌐 Móvil"]}
+    app13c = _FakeApp13()
+    app13c._preflight_net_cams(plan13c)
+    assert not plan13c["cams"][0].get("_offline"), "una cámara de red que sí responde no debe marcarse"
+    assert not app13c._tray_q, "no debe avisar si la cámara de red respondió bien"
+finally:
+    srv13.wait(timeout=5)
+print("13c) una cámara de red que responde de verdad no se marca 'sin señal' ni avisa OK")
+
+# 13d) cámara de red que NO responde (nada escuchando en ese puerto): se marca "_offline" Y
+#      avisa por la bandeja con la etiqueta correcta -- antes de que ffmpeg arranque de verdad
+plan13d = {"cams": [{"spec": "http://127.0.0.1:1/video"}], "labels": ["🌐 esp32cam"]}
+app13d = _FakeApp13()
+app13d._preflight_net_cams(plan13d)
+assert plan13d["cams"][0].get("_offline") is True, "una cámara de red que no responde debe marcarse"
+assert list(app13d._tray_q) == [("cam_offline", "🌐 esp32cam")], app13d._tray_q
+print("13d) una cámara de red que no responde se marca 'sin señal' y avisa, antes de arrancar "
+      "ffmpeg de verdad OK")
 
 print("TODO OK unit_netcam")

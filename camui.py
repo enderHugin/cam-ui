@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 27                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 28                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -693,6 +693,21 @@ def plan_geometry(plan):
 # =====================================================================
 _NET_SCHEMES = ("http://", "https://", "rtsp://", "rtsps://")
 
+# Tope de conexión/lectura (microsegundos) para una cámara de red, con -rw_timeout (genérico,
+# vale para http/https) y, en rtsp, también con el -timeout propio del demuxer. Sin esto, una
+# fuente que acepta la conexión pero deja de contestar (wifi, cámara apagada, un móvil que se
+# bloquea...) puede colgar a ffmpeg bastante más de lo que tarda en desbordarse el búfer en
+# tiempo real de OTRA cámara del mismo proceso (-rtbufsize, ver _dshow_input): comprobado de
+# verdad, sin -rw_timeout un servidor que acepta la conexión y no manda nada deja a ffmpeg
+# colgado más de 8s sin más; con -rw_timeout falla sola, limpia, al momento. 5s deja margen para
+# un bache de wifi normal sin arriesgarse a tanto (una EOS Webcam Utility real, 1280x720 sin
+# comprimir a 30fps, llena sus 512 MB en unos 9s si nadie la vacía).
+NET_IO_TIMEOUT_US = 5_000_000
+# Igual, pero para la prueba de red previa (ver CamApp._preflight_net_cams): ahí interesa fallar
+# pronto, no esperar lo mismo que ya se tolera una vez integrada de verdad en el mosaico.
+NET_PREFLIGHT_TIMEOUT_US = 2_000_000
+NET_PREFLIGHT_SECS = 1.5
+
 
 def _is_net_spec(spec):
     """True si «spec» es una URL (cámara de red: el móvil con una app como IP Webcam) en vez de
@@ -700,13 +715,17 @@ def _is_net_spec(spec):
     return (spec or "").strip().lower().startswith(_NET_SCHEMES)
 
 
-def _net_video_input(spec, opt=None):
-    """Entrada de vídeo por red (http/https MJPEG o rtsp): spec es la URL completa. En pruebas:
-    sin cámara real que probar desde aquí, solo validado contra servidores locales de prueba."""
+def _net_video_input(spec, opt=None, timeout_us=None):
+    """Entrada de vídeo por red (http/https MJPEG o rtsp): spec es la URL completa. opt se
+    ignora (no hay «modo de captura» que elegir en una URL). timeout_us: ver NET_IO_TIMEOUT_US
+    (None = el de siempre; CamApp._preflight_net_cams pasa el suyo, más corto). En pruebas: sin
+    cámara real que probar desde aquí, validado contra servidores locales de prueba (incluida una
+    fuente que acepta la conexión y no contesta nada, para el propio -rw_timeout)."""
     spec = spec.strip()
-    pre = []
+    t = str(NET_IO_TIMEOUT_US if timeout_us is None else timeout_us)
+    pre = ["-rw_timeout", t]
     if spec.lower().startswith(("rtsp://", "rtsps://")):
-        pre += ["-rtsp_transport", "tcp"]       # evita paquetes perdidos por UDP en wifi
+        pre += ["-rtsp_transport", "tcp", "-timeout", t]   # evita paquetes perdidos por UDP en wifi
     return pre + ["-i", spec]
 
 
@@ -737,11 +756,13 @@ def _offline_lavfi(w, h, fps, label):
                w, h, fps, font, text, fs))
 
 
-def _dshow_input(kind, spec, opt=None):
-    """opt: modo de captura (vídeo) o tamaño del búfer en ms (audio; 0 = el del dispositivo)."""
+def _dshow_input(kind, spec, opt=None, timeout_us=None):
+    """opt: modo de captura (vídeo) o tamaño del búfer en ms (audio; 0 = el del dispositivo).
+    timeout_us: solo para una cámara de red (ver _net_video_input) -- se ignora en una
+    DirectShow local, que no tiene «conexión» que pueda quedarse colgada igual."""
     if kind == "video":
         if _is_net_spec(spec):
-            return _net_video_input(spec, opt)
+            return _net_video_input(spec, opt, timeout_us)
         return (["-f", "dshow", "-rtbufsize", "512M"] + capture_args(opt) +
                 ["-i", "video=" + spec])
     buf = 50 if opt is None else int(opt)
@@ -2515,6 +2536,37 @@ def _run_probes(jobs, secs, ffmpeg, input_fn=None):
             err = p.communicate(timeout=secs + 25)[1].decode("utf-8", "ignore")
         except Exception:
             p.kill()
+            err = "tiempo agotado"
+        out[key] = _parse_probe(kind, err, secs)
+    return out
+
+
+def _preflight_probe(jobs, ffmpeg, secs=None):
+    """Como _run_probes, pero para la prueba de red RÁPIDA antes de integrar una cámara nueva en
+    el mosaico de verdad (ver CamApp._preflight_net_cams): aquí interesa fallar pronto, así que
+    el margen de guarda tras el propio plazo es mucho más corto que los +25s de _run_probes (esos
+    pensados para el botón «Diagnóstico» a mano, donde esperar un poco más no cuesta nada) -- el
+    límite real lo pone el -rw_timeout, más corto, de la propia cámara (ver NET_PREFLIGHT_TIMEOUT_US
+    e input_fn); este margen solo cubre que, por lo que sea (versión de ffmpeg rara...), no lo
+    respetara."""
+    secs = NET_PREFLIGHT_SECS if secs is None else secs
+    input_fn = lambda k, s, o: _dshow_input(k, s, o, timeout_us=NET_PREFLIGHT_TIMEOUT_US)
+    procs = []
+    for key, kind, spec, opt in jobs:
+        cmd = _probe_cmd(ffmpeg, kind, spec, opt, secs, input_fn)
+        log.info("prueba de red %s: %s", key, subprocess.list2cmdline(cmd))
+        procs.append((key, kind, subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                                  stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)))
+    out = {}
+    for key, kind, p in procs:
+        try:
+            err = p.communicate(timeout=secs + 3.0)[1].decode("utf-8", "ignore")
+        except Exception:
+            p.kill()
+            try:
+                p.communicate(timeout=3.0)
+            except Exception:
+                pass
             err = "tiempo agotado"
         out[key] = _parse_probe(kind, err, secs)
     return out
@@ -7899,6 +7951,7 @@ class CamApp:
         por último, con el de fábrica del driver, en vez de tratarlo como cámara ocupada."""
         self.eng.stop()
         self._auto_modes(plan)
+        self._preflight_net_cams(plan)
         res = self.eng.start(plan, **kw)
         ok, err = res if isinstance(res, tuple) else (False, str(res))
         if not ok and plan.get("vcam") and not self.eng._abort and \
@@ -7925,6 +7978,46 @@ class CamApp:
                 break
             res = self.eng.start(plan, **kw)
         return res
+
+    def _preflight_net_cams(self, plan):
+        """(hilo de fondo, llamado desde _engine_start antes de arrancar ffmpeg de verdad)
+        Prueba de red: cada cámara de red del plan que no esté ya marcada «sin señal» se prueba
+        por separado -- todas a la vez, con un margen corto (ver NET_PREFLIGHT_SECS /
+        NET_PREFLIGHT_TIMEOUT_US) -- antes de integrarla tal cual en el mosaico real. La que no
+        responda a tiempo (o conecte pero no entregue ni un fotograma de vídeo válido) se marca
+        "_offline" desde el principio, exactamente igual que si ffmpeg ya hubiera fallado al
+        abrirla (ver build_command/_offline_lavfi y _drop_bad_cam): así nunca comparte el mismo
+        proceso de ffmpeg que una cámara local de verdad mientras se decide si responde o no, y
+        no puede retrasar el arranque lo bastante como para desbordarle el búfer en tiempo real a
+        otra (caso real: una EOS Webcam Utility real se quedaba con el búfer lleno y tiraba abajo
+        todo el proceso mientras ffmpeg seguía esperando a una cámara de red que ni conectaba).
+        Sin ninguna cámara de red en el plan (el caso normal) no hace nada -- ningún retraso para
+        quien no la usa."""
+        if self.eng._abort:
+            return
+        cams = plan.get("cams") or []
+        labels = plan.get("labels") or []
+        jobs, idx_by_key = [], {}
+        for i, c in enumerate(cams):
+            if c.get("_offline") or not _is_net_spec(c.get("spec")):
+                continue
+            key = str(i)
+            jobs.append((key, "video", c["spec"], c.get("mode")))
+            idx_by_key[key] = i
+        if not jobs:
+            return
+        results = _preflight_probe(jobs, self.eng.ffmpeg)
+        for key, i in idx_by_key.items():
+            if self.eng._abort:
+                return
+            r = results.get(key) or {}
+            if r.get("frames"):
+                continue
+            cams[i]["_offline"] = True
+            lab = labels[i] if i < len(labels) else (cams[i].get("spec") or "?")
+            log.warning("prueba de red: «%s» no respondió a tiempo (o sin vídeo válido); se "
+                       "arranca como «sin señal»:\n%s", lab, (r.get("err") or "")[-300:])
+            self._tray_q.append(("cam_offline", lab))
 
     def _drop_bad_cam(self, plan, err):
         """Si el error identifica una cámara (DirectShow local o de red) que ffmpeg no pudo

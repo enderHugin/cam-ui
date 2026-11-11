@@ -1,5 +1,32 @@
 # Novedades de cam-ui
 
+## pack 28 — 2026.11.11
+- **Arreglado: un bucle de caídas de ffmpeg («ffmpeg se detuvo de forma inesperada») al tener
+  una cámara de red que no responde (o tarda) junto a cámaras locales reales en el mosaico.**
+  ffmpeg abre todas las cámaras una tras otra ANTES de empezar a procesar nada; una cámara de
+  red que acepta la conexión pero no contesta (wifi floja, dispositivo apagado, una app
+  bloqueada...) podía dejar a ffmpeg esperando sin ningún límite mientras una cámara local de
+  verdad (p. ej. una EOS Webcam Utility) seguía entregando fotogramas sin que nadie los
+  consumiera todavía: su búfer en tiempo real acababa desbordándose y tirando abajo TODO el
+  proceso — y, como el error resultante no es el típico «no se pudo abrir tal cámara», cam-ui
+  no sabía reconocerlo ni recuperarse solo, así que el mosaico se quedaba cayendo y
+  recuperándose en bucle (los botones de la ventana apareciendo y desapareciendo una y otra
+  vez). Ahora cada cámara de red se prueba aparte, con un margen corto, justo antes de arrancar
+  el mosaico de verdad — de forma automática, cada vez: al abrir la vista previa, al grabar, y
+  en cada reconexión —; la que no responda a tiempo arranca de entrada como «Sin señal:
+  nombre», igual que si ffmpeg ya hubiera fallado al abrirla, sin bloquear ni un instante a las
+  demás. También se le ha puesto un tope de tiempo a toda cámara de red ya integrada en el
+  mosaico (no solo en esta prueba previa), por si deja de responder a mitad de una sesión en
+  vez de al principio.
+- Cierra el pendiente del pack anterior: «añadir una prueba de red antes de integrar la
+  ingesta de un dispositivo nuevo».
+- *Como siempre: sin las cámaras de red reales del aviso (un ESP32-CAM, otro PC con cam-ui) ni
+  una EOS Webcam Utility real para reproducir el síntoma tal cual se reportó, esto se ha
+  verificado contra la causa real identificada en el código — incluido un servidor de prueba
+  real que reproduce justo «acepta la conexión y no contesta», y pruebas que fallan de verdad
+  sin el arreglo y pasan con él — conviene confirmar en tu equipo que el bucle de caídas no
+  vuelve a aparecer.*
+
 ## pack 27 — 2026.11.11
 - **«Cámara del móvil» ya no tiene interruptor: siempre está activa.** El botón «Añadir un
   dispositivo móvil como cámara» de Ajustes desaparece — sin ningún móvil conectado, tenerla
