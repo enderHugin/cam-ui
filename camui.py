@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 28                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 29                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1315,6 +1315,12 @@ class VirtualCam:
 # =====================================================================
 IP_SIZES = (("640×360  (recomendado)", (640, 360)), ("960×540", (960, 540)),
            ("1280×720", (1280, 720)), ("1920×1080", (1920, 1080)))
+# Opción aparte del combo de «Tamaño» (no es un tamaño fijo, así que no vive en IP_SIZES): con una
+# sola cámara en el mosaico, la salida en red manda esa cámara tal cual -- con el mismo recorte,
+# zoom, giro y ancho que ya se le aplicó en Encuadre (ver CamApp._ip_auto_size) -- en vez de un
+# tamaño aparte sin relación. Con más de una cámara no hay "la cámara" de la que partir, así que
+# se comporta como si no se hubiera elegido: el tamaño recomendado de siempre (IP_SIZES[0]).
+IP_SIZE_AUTO = "Automático (si hay una sola cámara)"
 IP_FPS = 10                  # de sobra para verlo: ahorra wifi y CPU (va aparte de los fps de grabación)
 IP_PORT_DEFAULT = 8554
 IP_JPEG_QUALITY = 70
@@ -5969,12 +5975,17 @@ class CamApp:
             vsz = VCAM_SIZES[0][1]
         self.v_vsize = t(value=vcam_size_label(vsz))
         self.v_vsize.trace_add("write", self._on_vsize)
-        isz = (self._cfg.get("ipout") or {}).get("size") if isinstance(self._cfg.get("ipout"), dict) else None
+        ipout_cfg = self._cfg.get("ipout") if isinstance(self._cfg.get("ipout"), dict) else {}
+        isz = ipout_cfg.get("size")
         try:
             iszv = (int(isz[0]), int(isz[1]))
         except Exception:
             iszv = IP_SIZES[0][1]
-        self.v_ipsize = t(value=ip_size_label(iszv))
+        # "auto" aparte del tamaño guardado (que sigue siendo el último resuelto, por si hiciera
+        # falta en otro sitio) porque un tamaño en píxeles no distingue "elegí 640x360" de
+        # "elegí Automático y de momento resolvió a 640x360" -- sin esto, reabrir cam-ui olvidaría
+        # que estaba en Automático en cuanto esa resolución coincidiera con el valor recomendado.
+        self.v_ipsize = t(value=IP_SIZE_AUTO if ipout_cfg.get("auto") else ip_size_label(iszv))
         self.v_ipsize.trace_add("write", self._on_ipsize)
         iport = (self._cfg.get("ipout") or {}).get("port") if isinstance(self._cfg.get("ipout"), dict) else None
         self.v_ipport = t(value=str(iport or IP_PORT_DEFAULT))
@@ -6562,7 +6573,8 @@ class CamApp:
         self.btn_vlc.grid(row=2, column=1, sticky="w", padx=6, pady=(2, 6))
         self._live.add(str(self.btn_vlc))
         ttk.Label(nf, text="Tamaño").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Combobox(nf, textvariable=self.v_ipsize, values=[z[0] for z in IP_SIZES], width=24,
+        ttk.Combobox(nf, textvariable=self.v_ipsize,
+                     values=[IP_SIZE_AUTO] + [z[0] for z in IP_SIZES], width=34,
                      state="readonly").grid(row=0, column=1, sticky="w")
         ttk.Label(nf, text="Puerto").grid(row=1, column=0, sticky="w", padx=6, pady=4)
         e_ipport = ttk.Entry(nf, textvariable=self.v_ipport, width=8)
@@ -6573,7 +6585,13 @@ class CamApp:
         self.frm_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
         self._set_link_list(self.frm_ipurl, "No está activa.", [])
         ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
+                  text="«Tamaño»: el de siempre reduce el mosaico para ahorrar wifi/CPU al verlo en "
+                       "directo, sin relación con el tamaño real de grabación. «Automático» es para "
+                       "cuando esto se usa para encadenar otro cam-ui (lo añade como «cámara de "
+                       "red»): manda esa única cámara tal cual, con el mismo encuadre, sin otro "
+                       "tamaño aparte -- si hay más de una cámara en el mosaico no hay «la cámara» "
+                       "de la que partir, así que se comporta como el tamaño recomendado de siempre. "
+                       "Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
                        "(wifi) para ver el mosaico en directo, con pantalla completa; también en la "
                        "bandeja, el menú «Modo» y, en compacto y mini, el botón 🌐 (clic en la "
                        "dirección de la barra de estado la abre directamente). Si hay micrófono "
@@ -7891,7 +7909,7 @@ class CamApp:
         cfg["startup"] = round(float(self.eng.startup_time), 2)     # para grabar sin vista previa
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
         cfg["ipout"] = {"on": bool(self.ipout_on), "size": list(ip_size_value(self.v_ipsize.get())),
-                        "port": self._ip_port()}
+                        "auto": self.v_ipsize.get() == IP_SIZE_AUTO, "port": self._ip_port()}
         cfg["phonecam"] = {"port": self._phonecam_port()}   # siempre activa: no hace falta guardar "on"
         # las cámaras de móvil se añaden solas cuando el móvil se conecta de verdad (su URL
         # depende de la sesión en marcha, no sobrevive a cerrar cam-ui) -- no se guardan, para
@@ -8574,9 +8592,21 @@ class CamApp:
             messagebox.showerror("Abrir en VLC", "No se pudo abrir VLC.\n\n{0}".format(
                 str(e).strip()[-300:]))
 
+    def _ip_auto_size(self):
+        """Tamaño real para «En la red» en modo IP_SIZE_AUTO: el de la ÚNICA cámara del mosaico
+        actual, tal cual queda tras Encuadre (recorte, zoom, giro, ancho) -- lo mismo que ya se ve
+        como «salida» en la barra de estado, así que quien la añada como cámara de red en otro
+        equipo recibe exactamente eso, no un tamaño aparte sin relación. Con más de una cámara (o
+        ninguna) no hay "la cámara" de la que partir: se usa el tamaño recomendado de siempre."""
+        g = self._geometry()
+        if g and len(g.get("labels") or []) == 1:
+            return (g["W"], g["H"])
+        return IP_SIZES[0][1]
+
     def _ip_enable(self, quiet=False):
         """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa."""
-        w, h = ip_size_value(self.v_ipsize.get())
+        auto = self.v_ipsize.get() == IP_SIZE_AUTO
+        w, h = self._ip_auto_size() if auto else ip_size_value(self.v_ipsize.get())
         port = self._ip_port()
         try:
             self.ipsrv.open(w, h, IP_FPS, port)
@@ -8600,7 +8630,10 @@ class CamApp:
             return False
         self.ipout_on = True
         self.paused = False
-        self._ip_changed("En la red: {0}".format(self._ip_urls(port)), quiet)
+        msg = "En la red: {0}".format(self._ip_urls(port))
+        if auto:
+            msg += " (automático: {0}×{1})".format(w, h)
+        self._ip_changed(msg, quiet)
         return True
 
     def _ip_disable(self, why=None):

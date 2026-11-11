@@ -1,5 +1,22 @@
 # Novedades de cam-ui
 
+## pack 29 — 2026.11.11
+- **Nueva opción «Automático» en Ajustes → Salida → «En la red» → Tamaño, para cuando se usa
+  para encadenar otro cam-ui.** Hasta ahora, «En la red» siempre reducía el mosaico a un tamaño
+  fijo (640×360 por defecto) para ahorrar wifi/CPU al verlo en directo — un tamaño aparte, sin
+  relación con el tamaño real del mosaico/grabación. Eso está bien para verlo en un navegador,
+  pero al encadenar un PC a otro (añadiendo «En la red» de uno como «cámara de red» del otro,
+  algo que cam-ui ya permitía) ese tamaño reducido se notaba de más: una cámara real a buena
+  resolución acababa llegando al otro equipo a 640×360, sin que hubiera forma de evitarlo.
+  Ahora, con una sola cámara marcada en el mosaico, «Automático» manda esa cámara tal cual —
+  con el mismo recorte, zoom, giro y ancho que ya se le aplicó en «Encuadre» — en vez de un
+  tamaño aparte. Con más de una cámara en el mosaico no hay «la cámara» de la que partir, así
+  que se comporta exactamente como el tamaño recomendado de siempre (640×360); esto es a
+  propósito, no una limitación pendiente de arreglar — encadenar un mosaico de varias cámaras
+  es un caso distinto, sin una respuesta tan clara de qué tamaño «automático» tendría sentido.
+- *Como siempre: verificado con pruebas (incluida una que monta un IpServer de verdad), no con
+  dos PCs reales uno encadenado al otro — conviene probarlo en tu caso real.*
+
 ## pack 28 — 2026.11.11
 - **Arreglado: un bucle de caídas de ffmpeg («ffmpeg se detuvo de forma inesperada») al tener
   una cámara de red que no responde (o tarda) junto a cámaras locales reales en el mosaico.**

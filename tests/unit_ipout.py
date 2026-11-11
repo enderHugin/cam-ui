@@ -374,4 +374,93 @@ finally:
 print("9) sonido de verdad, extremo a extremo (ffmpeg -> IpServer -> HTTP -> MP3 que decodifica "
       "ffprobe) OK")
 
+# 10) CamApp._ip_auto_size: el tamaño real para el modo «Automático» del combo «Tamaño» (pensado
+#     para cuando esta salida en red se usa para encadenar otro cam-ui como «cámara de red»): con
+#     una sola cámara en el mosaico, su tamaño real tras Encuadre (recorte/zoom/giro/ancho) --
+#     igual que "la salida" de la barra de estado; con más de una (o ninguna), no hay "la cámara"
+#     de la que partir, así que cae al tamaño recomendado de siempre (como si no se hubiera
+#     elegido «Automático»). Con un "self" de mentira: no hace falta Tk para esta lógica.
+fake10 = types.SimpleNamespace()
+fake10._geometry = lambda: {"W": 1280, "H": 960, "labels": ["HP Wide Vision HD Camera"]}
+assert camui.CamApp._ip_auto_size(fake10) == (1280, 960), camui.CamApp._ip_auto_size(fake10)
+
+fake10._geometry = lambda: {"W": 1280, "H": 548,
+                            "labels": ["HP Wide Vision HD Camera", "EOS Webcam Utility"]}
+assert camui.CamApp._ip_auto_size(fake10) == camui.IP_SIZES[0][1]
+
+fake10._geometry = lambda: None                        # sin ninguna cámara marcada
+assert camui.CamApp._ip_auto_size(fake10) == camui.IP_SIZES[0][1]
+print("10) _ip_auto_size: una sola cámara -> su tamaño real (tras Encuadre); más de una (o "
+      "ninguna) -> el recomendado de siempre, como si no fuera Automático OK")
+
+# 11) CamApp._ip_enable con el combo «Tamaño» en IP_SIZE_AUTO: abre el IpServer de verdad con el
+#     tamaño que resuelva _ip_auto_size (ver bloque 10) y lo dice en el aviso de estado, para que
+#     quede claro qué resolvió -- con un tamaño fijo de siempre, ni lo toca ni lo menciona.
+class _FakeVar11:
+    def __init__(self, value):
+        self._v = value
+
+    def get(self):
+        return self._v
+
+
+def _ip_enable_fake11(ipsize, geometry, port):
+    """Monta un "self" de mentira con justo lo que toca CamApp._ip_enable, y lo llama tal cual
+    lo llamaría la app -- ipsrv es un IpServer DE VERDAD (lo único que de verdad hace falta
+    comprobar aquí es qué w/h recibe)."""
+    f = types.SimpleNamespace(
+        ipsrv=camui.IpServer(), v_ipsize=_FakeVar11(ipsize), _ip_port=lambda: port,
+        ipout_on=False, paused=True, recording=False, _refresh_buttons=lambda: None,
+        _geometry=geometry)
+    f._ip_auto_size = lambda: camui.CamApp._ip_auto_size(f)
+    f._ip_urls = lambda p: "http://127.0.0.1:{0}/".format(p)
+    f._msgs = []
+    f._ip_changed = lambda msg, quiet: f._msgs.append(msg)
+    return f
+
+
+fake11a = _ip_enable_fake11(camui.IP_SIZE_AUTO,
+                            lambda: {"W": 1280, "H": 960, "labels": ["HP Wide Vision HD Camera"]},
+                            58130)
+try:
+    ok11a = camui.CamApp._ip_enable(fake11a, quiet=True)
+    assert ok11a is True
+    assert (fake11a.ipsrv.w, fake11a.ipsrv.h) == (1280, 960), (fake11a.ipsrv.w, fake11a.ipsrv.h)
+    assert fake11a._msgs and "automático: 1280×960" in fake11a._msgs[-1], fake11a._msgs
+finally:
+    fake11a.ipsrv.release()
+print("11a) _ip_enable con «Automático» y una sola cámara abre el IpServer con su tamaño real, "
+      "y lo dice en el aviso OK")
+
+fake11b = _ip_enable_fake11(
+    camui.IP_SIZE_AUTO,
+    lambda: {"W": 1280, "H": 548, "labels": ["HP Wide Vision HD Camera", "EOS Webcam Utility"]},
+    58131)
+try:
+    ok11b = camui.CamApp._ip_enable(fake11b, quiet=True)
+    assert ok11b is True
+    assert (fake11b.ipsrv.w, fake11b.ipsrv.h) == camui.IP_SIZES[0][1]
+    assert fake11b._msgs and "automático: {0}×{1}".format(*camui.IP_SIZES[0][1]) in fake11b._msgs[-1], \
+        fake11b._msgs
+finally:
+    fake11b.ipsrv.release()
+print("11b) _ip_enable con «Automático» y más de una cámara cae al tamaño recomendado de "
+      "siempre (avisándolo igual) OK")
+
+
+def _boom():
+    raise AssertionError("con un tamaño fijo no debería ni mirar _geometry/_ip_auto_size")
+
+
+fake11c = _ip_enable_fake11("960×540", _boom, 58132)
+try:
+    ok11c = camui.CamApp._ip_enable(fake11c, quiet=True)
+    assert ok11c is True
+    assert (fake11c.ipsrv.w, fake11c.ipsrv.h) == (960, 540)
+    assert fake11c._msgs and "automático" not in fake11c._msgs[-1], fake11c._msgs
+finally:
+    fake11c.ipsrv.release()
+print("11c) _ip_enable con un tamaño fijo de siempre no toca _ip_auto_size ni lo menciona en "
+      "el aviso OK")
+
 print("TODO OK unit_ipout")

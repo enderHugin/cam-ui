@@ -57,7 +57,12 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   pantalla completa; funciona a la vez que se graba y que la cámara virtual, es solo para ver
   (sin contraseña) y no depende de ffmpeg para servir el vídeo. En Ajustes se ven todas las
   direcciones donde responde (una por tarjeta de red y el nombre del equipo), cada una clicable
-  para probarla desde este mismo PC. Botón «Abrir en VLC»: si está
+  para probarla desde este mismo PC. Tamaño reducido por defecto (640×360) para ahorrar
+  wifi/CPU al verlo en directo, sin relación con el tamaño real de grabación; si esta salida se
+  usa para encadenar otro cam-ui (añadiéndola allí como «cámara de red»), la opción «Automático»
+  manda esa cámara tal cual, con su mismo encuadre, en vez de un tamaño aparte — solo tiene
+  sentido con una única cámara en el mosaico; con más de una se comporta como el tamaño
+  recomendado de siempre. Botón «Abrir en VLC»: si está
   instalado, lo abre ahí en vez del navegador, y desde el propio menú de VLC (Reproducción →
   Renderizador) se puede enviar a un Chromecast de la misma red sin nada más que configurar.
   La propia página también trae el icono nativo de Chromecast (un segundo ffmpeg aparte, H.264
