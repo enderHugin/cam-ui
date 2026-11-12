@@ -485,9 +485,16 @@ try:
     s12.arm(480, 360)                               # otro tamaño: el HLS se para
     assert s12._hls_proc is None
     fake_hls.wait(timeout=5)
+    fake_hls2 = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                 stdin=subprocess.PIPE)
+    s12._hls_proc = fake_hls2
+    s12.arm(480, 360, 25)                           # mismo tamaño, otros fps: también se para
+    assert s12.fps == 25 and s12._hls_proc is None
+    fake_hls2.wait(timeout=5)
 finally:
     s12.close()
-print("12) IpServer.arm(w, h): cambia de tamaño entre arranques y para el HLS si cambia OK")
+print("12) IpServer.arm(w, h, fps): cambia de tamaño/fps entre arranques y para el HLS si "
+      "cambian OK")
 
 
 # 13) CamApp._plan: el tamaño que pide para la salida en red sale de la forma de SU mosaico
@@ -528,6 +535,27 @@ ip13b = _plan13({"W": 1280, "H": 548, "tiles": [(0, 0, 732, 548), (732, 0, 548, 
 assert (ip13b["w"], ip13b["h"]) == (640, 274), ip13b
 print("13) CamApp._plan pide a «En la red» la forma de su mosaico (480×360 / 640×274), no el "
       "máximo tal cual OK")
+
+
+# 13b) y la fluidez del mosaico (hasta IP_FPS = 30), no un tope aparte más bajo (antes: 10 siempre)
+def _plan13_fps(mosaic_fps):
+    g_ = {"W": 640, "H": 480, "tiles": [(0, 0, 640, 480)], "labels": ["HP"]}
+    srv_ = types.SimpleNamespace(active=True, box=(640, 360), w=640, h=360, fps=10, pix="rgb24")
+    f_ = types.SimpleNamespace(
+        editing=None, order=["HP"], vdev={"HP": {"spec": "HP"}}, cams={"HP": _Cam13()},
+        v_quality=_Var13("Media"), v_sync=_Var13(""), v_preset=_Var13("veryfast"), vcam_on=False,
+        vcam=None, ipout_on=True, ipsrv=srv_)
+    f_._geometry = lambda: g_
+    f_._fps = lambda: mosaic_fps
+    f_._audio_plan = lambda: {"L": None, "R": None, "offset": 0}
+    return camui.CamApp._plan(f_)["ipout"]["fps"]
+
+
+assert camui.IP_FPS >= 30
+assert _plan13_fps(30) == 30 and _plan13_fps(25) == 25 and _plan13_fps(15) == 15
+assert _plan13_fps(60) == camui.IP_FPS
+print("13b) «En la red» va a los fps del mosaico (30 -> 30, 25 -> 25), con tope {0} OK".format(
+    camui.IP_FPS))
 
 # 14) lo nuevo que esto puede provocar en el PC que lo recibe: el tamaño que llega ya no es
 #     siempre el mismo, cambia si el emisor cambia su mosaico (p. ej. añade una cámara) mientras
@@ -612,5 +640,64 @@ finally:
         os.remove(out14)
 print("14) el receptor (comando real de cam-ui) sigue recibiendo, sin caerse, cuando el emisor "
       "cambia de tamaño a mitad ({0} fotogramas; gris {1} -> {2}) OK".format(nf14, g_before, g_after))
+
+# 15) fluidez y calidad de punta a punta: un mosaico de 30 fps (comando real de cam-ui, con la
+#     fluidez que pide _plan) -> IpServer -> HTTP. Deben llegar ~30 fps a ritmo regular (antes:
+#     10 fps fijos, y aun subiéndolos, ~22 a saltos de 40 ms porque cada visor miraba cada 40 ms
+#     si había uno nuevo), y en JPEG de calidad 85 (antes 70: SSIM 0,84 frente a 0,94).
+HTTP15 = 58915
+s15 = camui.IpServer()
+s15.open(640, 360, fps=camui.IP_FPS, port=HTTP15)
+try:
+    fps15 = _plan13_fps(30)                       # lo que pediría CamApp._plan
+    w15, h15 = camui.ip_fit_size(640, 480, s15.box)
+    p15 = s15.arm(w15, h15, fps15)
+    plan15 = {"cams": [{"spec": "x", "mode": None, "h": False, "v": False, "rot": 0, "delay": 0,
+                        "tile": "auto", "zoom": 100.0, "cx": 50.0, "cy": 50.0, "color": None}],
+              "geom": {"W": 640, "H": 480, "tiles": [(0, 0, 640, 480)]}, "fps": 30, "sync": "device",
+              "crf": 23, "preset": "veryfast", "audio": {"L": None, "R": None, "offset": 0},
+              "ipout": {"w": w15, "h": h15, "fps": fps15, "pix": "rgb24", "port": p15}}
+    cmd15, _ = camui.build_command(plan15, outfile=None, preview=False, input_fn=lambda k, s, o=None: [
+        "-re", "-f", "lavfi", "-i", "testsrc2=size=640x480:rate=30"])
+    k15 = next(i for i, x in enumerate(cmd15) if x.startswith("tcp://"))
+    cmd15[k15:k15] = ["-t", "8"]
+    pr15 = subprocess.Popen(cmd15, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    c15 = http.client.HTTPConnection("127.0.0.1", HTTP15, timeout=5)
+    c15.request("GET", "/stream.mjpg")
+    rr15 = c15.getresponse()
+    ts15, buf15, last_jpeg15, t_end15 = [], b"", None, time.time() + 4.5
+    while time.time() < t_end15:
+        ch_ = rr15.fp.read1(65536)
+        if not ch_:
+            break
+        buf15 += ch_
+        while True:
+            i_ = buf15.find(b"Content-Length: ")
+            j_ = buf15.find(b"\r\n\r\n", i_) if i_ >= 0 else -1
+            if j_ < 0:
+                break
+            n_ = int(buf15[i_ + 16:j_].split(b"\r\n")[0])
+            if len(buf15) < j_ + 4 + n_:
+                break
+            ts15.append(time.time())
+            last_jpeg15 = buf15[j_ + 4:j_ + 4 + n_]
+            buf15 = buf15[j_ + 4 + n_:]
+    c15.close()
+    pr15.kill()
+    pr15.wait(5)
+finally:
+    s15.close()
+ts15 = ts15[5:]
+gaps15 = sorted(b - a for a, b in zip(ts15, ts15[1:]))
+got_fps15 = (len(ts15) - 1) / (ts15[-1] - ts15[0])
+med15 = gaps15[len(gaps15) // 2] * 1000
+assert got_fps15 >= 27, "solo llegan {0:.1f} fps de 30".format(got_fps15)
+assert med15 < 37, "hueco típico entre fotogramas {0:.0f} ms (a 30 fps deberían ser 33)".format(med15)
+q15 = Image.open(io.BytesIO(last_jpeg15)).quantization[0][0]
+assert q15 <= 6, "el JPEG llega con calidad baja (cuantización {0}; 85 -> 5, 70 -> 10)".format(q15)
+print("15) de punta a punta a 30 fps: llegan {0:.1f} fps, uno cada {1:.0f} ms, en JPEG de calidad "
+      "85 OK".format(got_fps15, med15))
 
 print("TODO OK unit_ipout")

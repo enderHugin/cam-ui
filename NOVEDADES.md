@@ -1,5 +1,19 @@
 # Novedades de cam-ui
 
+## pack 31 — 2026.11.12
+- **«En la red» conserva la fluidez del original.** Iba siempre a 10 fps, para ahorrar wifi:
+  otro cam-ui que la encadenara recibía un vídeo de 30 fps a 10. Ahora va a los mismos fps que el
+  mosaico (hasta 30).
+- **Y llega a ritmo regular.** Quien lo veía (navegador u otro cam-ui) miraba cada 40 ms si había
+  fotograma nuevo: aun subiendo los fps, a 30 solo llegaban unos 22, a saltos, e incluso a 10 los
+  huecos iban de 88 a 162 ms. Ahora se le avisa en cuanto hay uno: medido, llegan 29,8-30 fps,
+  uno cada 33 ms.
+- **Más calidad: JPEG 85 en vez de 70.** Medido con una grabación real de cam-ui: a 70 se parece
+  al original un 0,84 (SSIM, 1 = idéntico), a 85 un 0,94. Cuesta un 58 % más de datos; codificar
+  apenas cuesta CPU. Lo que sí sube es la wifi: con el tamaño por defecto (hasta 640×360), unos
+  13 Mbit/s a 30 fps; a 1280 de ancho, unos 40.
+- *Verificado con ffmpeg e IpServer reales en un solo equipo, sin wifi de por medio.*
+
 ## pack 30 — 2026.11.11
 - **Arreglado: «En la red» añadía barras negras y cambiaba el formato del mosaico.** Siempre
   encajaba el mosaico en un formato fijo 16:9 y rellenaba con negro lo que sobraba: un mosaico

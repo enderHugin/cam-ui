@@ -58,9 +58,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   (sin contraseña) y no depende de ffmpeg para servir el vídeo. En Ajustes se ven todas las
   direcciones donde responde (una por tarjeta de red y el nombre del equipo), cada una clicable
   para probarla desde este mismo PC. Se manda con la misma forma que el mosaico (con su
-  encuadre, sin añadir barras negras); el «Tamaño» elegido es solo el máximo (por defecto hasta
-  640×360, para ahorrar wifi/CPU) — así, otro cam-ui que la añada como «cámara de red» la
-  recibe con el mismo formato que se ve aquí. Botón «Abrir en VLC»: si está
+  encuadre, sin añadir barras negras) y sus mismos fps (hasta 30); el «Tamaño» elegido es solo
+  el máximo (por defecto hasta 640×360, para ahorrar wifi) — así, otro cam-ui que la añada como
+  «cámara de red» la recibe con el mismo formato y la misma fluidez que se ve aquí. Botón «Abrir en VLC»: si está
   instalado, lo abre ahí en vez del navegador, y desde el propio menú de VLC (Reproducción →
   Renderizador) se puede enviar a un Chromecast de la misma red sin nada más que configurar.
   La propia página también trae el icono nativo de Chromecast (un segundo ffmpeg aparte, H.264

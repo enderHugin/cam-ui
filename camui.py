@@ -80,7 +80,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 30                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 31                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1321,9 +1321,14 @@ class VirtualCam:
 # los lados, y uno apaisado con bandas arriba y abajo).
 IP_SIZES = (("hasta 640×360  (recomendado)", (640, 360)), ("hasta 960×540", (960, 540)),
            ("hasta 1280×720", (1280, 720)), ("hasta 1920×1080", (1920, 1080)))
-IP_FPS = 10                 # de sobra para verlo: ahorra wifi y CPU (va aparte de los fps de grabación)
+# Fluidez de la salida en red: los mismos fps que el mosaico, con este tope (antes iba siempre a 10,
+# para ahorrar wifi -- pero así otro cam-ui que la encadenara recibía un vídeo de 30 fps a 10).
+IP_FPS = 30
 IP_PORT_DEFAULT = 8554
-IP_JPEG_QUALITY = 70
+# Medido con una grabación real de cam-ui: calidad 70 se parece al original un 0,84 (SSIM), 85 un
+# 0,94 y 92 un 0,95 -- de 70 a 85 se gana mucho por un 58 % más de datos; de 85 a 92, casi nada
+# por otro 45 %. Codificar apenas cuesta (1920×1800 a 92: 14 ms por fotograma en un núcleo lento).
+IP_JPEG_QUALITY = 85
 
 # ---- HLS para el botón nativo de Chromecast («En la red»): un segundo ffmpeg, aparte del
 # MJPEG de siempre (que sigue igual), solo se enciende mientras alguien lo está viendo en una
@@ -1860,7 +1865,8 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
                 with owner._lk:
                     frame, gen = owner._jpeg, owner._jgen
                 if frame is None or gen == last:
-                    time.sleep(0.04)
+                    with owner._jcond:          # se despierta en cuanto haya uno nuevo
+                        owner._jcond.wait_for(lambda: owner._jgen != last or owner._closed, 0.5)
                     continue
                 last = gen
                 self.wfile.write(b"--" + boundary.encode() + b"\r\n")
@@ -1930,6 +1936,9 @@ class IpServer:
         self._ev = threading.Event()
         self._jpeg = None
         self._jgen = 0
+        # avisa al instante a quien lo esté viendo de que hay un JPEG nuevo (antes cada visor
+        # miraba cada 40 ms: con 30 fps solo llegaban ~22, a saltos, y a 10 fps a trompicones)
+        self._jcond = threading.Condition()
         self._closed = False
         self.phonecam = None         # PhoneCamHub, si CamApp lo enlaza (ver CamApp.__init__) --
                                       # para el botón «Añadir cámara del móvil» de esta página
@@ -1975,15 +1984,22 @@ class IpServer:
         self._encoder.start()
         log.info("salida en red abierta: puerto %d, %dx%d @%d", self.port, self.w, self.h, self.fps)
 
-    def arm(self, w=None, h=None):
+    def arm(self, w=None, h=None, fps=None):
         """Prepara un socket de escucha para la próxima conexión de ffmpeg; devuelve su puerto.
         w, h: tamaño de los fotogramas que mandará ESE ffmpeg (la forma real del mosaico, ver
-        ip_fit_size) -- puede cambiar de un arranque a otro si cambia el mosaico. Si cambia con el
-        HLS de Chromecast en marcha, ese se para (lleva el tamaño fijado al arrancar); se vuelve a
-        encender solo con la siguiente petición de la tele."""
+        ip_fit_size); fps: los suyos (los del mosaico, con tope IP_FPS) -- pueden cambiar de un
+        arranque a otro. Si cambian con el HLS de Chromecast en marcha, ese se para (lleva tamaño
+        y fps fijados al arrancar); se vuelve a encender solo con la siguiente petición de la tele."""
+        changed = False
         if w and h and (int(w), int(h)) != (self.w, self.h):
             self.w, self.h = int(w), int(h)
-            log.info("salida en red: %dx%d (forma real del mosaico)", self.w, self.h)
+            changed = True
+        if fps and int(fps) != self.fps:
+            self.fps = int(fps)
+            changed = True
+        if changed:
+            log.info("salida en red: %dx%d a %d fps (forma y fluidez del mosaico)",
+                     self.w, self.h, self.fps)
             if self._hls_proc is not None:
                 self._hls_stop()
         self._drop_srv()
@@ -2168,6 +2184,8 @@ class IpServer:
                 with self._lk:
                     self._jpeg = data
                     self._jgen += 1
+                with self._jcond:
+                    self._jcond.notify_all()
                 self.sent += 1
             except Exception:
                 self.errors += 1
@@ -2364,6 +2382,8 @@ class IpServer:
 
     def close(self):
         self._closed = True
+        with self._jcond:
+            self._jcond.notify_all()
         self._drop_srv()
         self._drop_asrv()
         self.release()
@@ -3659,8 +3679,9 @@ class FFmpegEngine:
             else:
                 plan.pop("vcam", None)
             if plan.get("ipout") and self.ipsrv is not None and self.ipsrv.active:
-                plan["ipout"]["port"] = self.ipsrv.arm(      # un socket nuevo en cada intento,
-                    plan["ipout"].get("w"), plan["ipout"].get("h"))   # con el tamaño de ESTE mosaico
+                plan["ipout"]["port"] = self.ipsrv.arm(      # un socket nuevo en cada intento, con
+                    plan["ipout"].get("w"), plan["ipout"].get("h"),   # el tamaño y los fps de
+                    plan["ipout"].get("fps"))                         # ESTE mosaico
                 plan["ipout"]["aport"] = self.ipsrv.arm_audio()  # igual, para el sonido (si hay)
             else:
                 plan.pop("ipout", None)
@@ -6609,8 +6630,9 @@ class CamApp:
                   text="«Tamaño» es el máximo: se manda con la misma forma que el mosaico de aquí "
                        "(con su encuadre, sin añadir barras negras), lo más grande que quepa, y "
                        "nunca mayor que el propio mosaico -- así otro cam-ui que lo añada como "
-                       "«cámara de red» lo recibe con el mismo formato. Un máximo mayor da más "
-                       "resolución a cambio de más wifi/CPU. "
+                       "«cámara de red» lo recibe con el mismo formato y los mismos fps que el "
+                       "mosaico (hasta 30). Un máximo mayor da más resolución a cambio de más wifi "
+                       "(a 1280 de ancho y 30 fps, unos 40 Mbit/s). "
                        "Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
                        "(wifi) para ver el mosaico en directo, con pantalla completa; también en la "
                        "bandeja, el menú «Modo» y, en compacto y mini, el botón 🌐 (clic en la "
@@ -7896,7 +7918,9 @@ class CamApp:
             # la forma real del mosaico, dentro del máximo elegido -- sin barras negras añadidas
             iw, ih = ip_fit_size(g["W"], g["H"], getattr(self.ipsrv, "box", None) or
                                  (self.ipsrv.w, self.ipsrv.h))
-            plan["ipout"] = {"w": iw, "h": ih, "fps": self.ipsrv.fps, "pix": self.ipsrv.pix}
+            # y la fluidez del mosaico (hasta IP_FPS), no un tope aparte más bajo
+            plan["ipout"] = {"w": iw, "h": ih, "fps": max(1, min(int(plan["fps"]), IP_FPS)),
+                             "pix": self.ipsrv.pix}
         return plan
 
     def _edit_plan(self):
