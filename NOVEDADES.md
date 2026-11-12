@@ -1,5 +1,28 @@
 # Novedades de cam-ui
 
+## pack 32 — 2026.11.12
+- **«Reloj común» entre PCs encadenados.** Con «reloj común», cada fotograma de una cámara de red
+  se marcaba con la hora a la que llegaba a este PC, así que una cámara que es otro cam-ui (su
+  «En la red») cargaba con todo su viaje y se veía más tarde que las de aquí — medido en una
+  grabación con las dos en el mismo mosaico: +88 ms, +275 ms, y más de un segundo, según la vez.
+  Ahora:
+  - el PC que envía marca cada fotograma con su propia hora y enseña su reloj;
+  - el que recibe calcula la diferencia entre los dos relojes (aunque no marquen la misma hora:
+    probado con 2,5 s de diferencia) y entrega esa cámara siempre con el mismo retraso, midiendo
+    lo que tarda en llegar (los tirones de la wifi desaparecen: probado con 0-80 ms al azar,
+    entregados a ±1 ms);
+  - y le adelanta justo ese retraso más lo que tarda el ffmpeg del otro PC.
+  Medido igual que antes: desfase de -9 a +24 ms (±1 fotograma). Es automático, solo con
+  «reloj común», y solo para cámaras que son otro cam-ui de esta versión o posterior (las demás
+  cámaras de red, como un móvil, quedan igual). En la cámara, junto a «recibiendo…», pone
+  «alineada con su PC (se adelanta X ms)».
+- De paso: si el PC que envía se reinicia un momento (p. ej. al empezar a grabar), el que recibe
+  repite su último fotograma hasta 8 s en vez de darla por caída.
+- *Lo que no se puede medir desde el PC que recibe (lo que tarda el ffmpeg del otro de su
+  cámara a su salida en red) se calcula: ~3 fotogramas, calibrado con ffmpeg real a 15 y 30 fps.
+  Verificado en un solo equipo, sin wifi real ni cámaras DirectShow: conviene confirmarlo con tus
+  dos PCs.*
+
 ## pack 31 — 2026.11.12
 - **«En la red» conserva la fluidez del original.** Iba siempre a 10 fps, para ahorrar wifi:
   otro cam-ui que la encadenara recibía un vídeo de 30 fps a 10. Ahora va a los mismos fps que el

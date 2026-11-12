@@ -208,6 +208,7 @@ if os.path.exists(out8):
 #    resto -- extremo a extremo contra un FFmpegEngine real (sin Tk: _drop_bad_cam/_drop_bad_mode
 #    no lo necesitan).
 from collections import deque
+import threading
 
 
 class _FakeApp9(camui.CamApp):            # solo para heredar los métodos; no se llama a __init__
@@ -215,6 +216,8 @@ class _FakeApp9(camui.CamApp):            # solo para heredar los métodos; no s
         self.eng = camui.FFmpegEngine()
         self.cams = {}
         self._tray_q = deque()
+        self._chains, self._chain_lk, self._chain_no, self._chain_info = (
+            {}, threading.Lock(), {}, {})          # ver CamApp._chain_net_cams
 
     def _auto_modes(self, plan):
         pass

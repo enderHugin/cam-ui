@@ -51,6 +51,8 @@ import queue
 import socket
 import hashlib
 import http.server
+import http.client
+import urllib.parse
 import shutil
 import tempfile
 import webbrowser
@@ -80,7 +82,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 31                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 32                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1325,6 +1327,7 @@ IP_SIZES = (("hasta 640×360  (recomendado)", (640, 360)), ("hasta 960×540", (9
 # para ahorrar wifi -- pero así otro cam-ui que la encadenara recibía un vídeo de 30 fps a 10).
 IP_FPS = 30
 IP_PORT_DEFAULT = 8554
+CHAIN_CLOCK_PATH = "/camui/clock"     # reloj de este PC para otro cam-ui que lo encadene
 # Medido con una grabación real de cam-ui: calidad 70 se parece al original un 0,84 (SSIM), 85 un
 # 0,94 y 92 un 0,95 -- de 70 a 85 se gana mucho por un 58 % más de datos; de 85 a 92, casi nada
 # por otro 45 %. Codificar apenas cuesta (1920×1800 a 92: 14 ms por fotograma en un núcleo lento).
@@ -1638,6 +1641,10 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             self._serve_hls_playlist()
         elif path.startswith("/cast/"):
             self._serve_hls_segment(path[len("/cast/"):])
+        elif path == CHAIN_CLOCK_PATH:
+            # el reloj de este PC, para que otro cam-ui que lo encadene calcule la diferencia
+            # entre los dos (ver ChainClock); solo la hora, nada más de este equipo
+            self._send_json(200, {"camui": 1, "t": time.time()})
         else:
             self._send_404()
 
@@ -1863,7 +1870,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         try:
             while not owner._closed:
                 with owner._lk:
-                    frame, gen = owner._jpeg, owner._jgen
+                    frame, gen, ft = owner._jpeg, owner._jgen, owner._jpeg_t
                 if frame is None or gen == last:
                     with owner._jcond:          # se despierta en cuanto haya uno nuevo
                         owner._jcond.wait_for(lambda: owner._jgen != last or owner._closed, 0.5)
@@ -1871,6 +1878,9 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
                 last = gen
                 self.wfile.write(b"--" + boundary.encode() + b"\r\n")
                 self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                # hora de este PC a la que salió de su ffmpeg: con ella otro cam-ui que lo
+                # encadene lo alinea con sus propias cámaras (ver ChainClock); el resto la ignora
+                self.wfile.write(("X-Camui-T: {0:.6f}\r\n".format(ft)).encode())
                 self.wfile.write(("Content-Length: " + str(len(frame)) + "\r\n\r\n").encode())
                 self.wfile.write(frame)
                 self.wfile.write(b"\r\n")
@@ -1935,6 +1945,8 @@ class IpServer:
         self._lk = threading.Lock()
         self._ev = threading.Event()
         self._jpeg = None
+        self._jpeg_t = 0.0            # hora de este PC a la que ese fotograma salió de ffmpeg
+        self._latest_t = 0.0
         self._jgen = 0
         # avisa al instante a quien lo esté viendo de que hay un JPEG nuevo (antes cada visor
         # miraba cada 40 ms: con 30 fps solo llegaban ~22, a saltos, y a 10 fps a trompicones)
@@ -2160,11 +2172,13 @@ class IpServer:
             self.received += 1
             if self._http is None:
                 continue                       # cerrada: solo se vacía el socket
-            arr = np.frombuffer(buf, np.uint8).reshape((h, w, bpp))
+            t_arr = time.time()                # hora (de ESTE PC) a la que salió de ffmpeg -- ver
+            arr = np.frombuffer(buf, np.uint8).reshape((h, w, bpp))   # X-Camui-T, ChainClock
             with self._lk:
                 if self._latest is not None:
                     self.dropped += 1          # el anterior no llegó a codificarse
                 self._latest = arr
+                self._latest_t = t_arr
             self._ev.set()
 
     def _encode_loop(self):
@@ -2175,6 +2189,7 @@ class IpServer:
             self._ev.clear()
             with self._lk:
                 arr, self._latest = self._latest, None
+                t_arr = self._latest_t
             if arr is None or arr.shape[0] != self.h or arr.shape[1] != self.w or arr.shape[2] != self.bpp:
                 continue
             try:
@@ -2183,6 +2198,7 @@ class IpServer:
                 data = buf.getvalue()
                 with self._lk:
                     self._jpeg = data
+                    self._jpeg_t = t_arr
                     self._jgen += 1
                 with self._jcond:
                     self._jcond.notify_all()
@@ -2387,6 +2403,308 @@ class IpServer:
         self._drop_srv()
         self._drop_asrv()
         self.release()
+
+
+# ---- «Reloj común» entre PCs encadenados (la salida «En la red» de otro cam-ui usada aquí como
+# cámara de red). Con «reloj común», cada fotograma de una cámara de red se marca con la hora a
+# la que llega a ESTE PC, así que la encadenada carga con todo su viaje (procesado en el otro
+# PC, JPEG, wifi) y se ve más tarde que las cámaras de aquí -- medido: de +68 a +236 ms con la
+# salida en red a 10 fps, de +1 a +69 a 30, más lo que añada la wifi, y variable. Para
+# alinearla: el emisor marca cada fotograma con SU hora (cabecera X-Camui-T) y enseña su reloj
+# (CHAIN_CLOCK_PATH); aquí, ChainClock calcula la diferencia entre los dos relojes, mide cuánto
+# tarda cada fotograma, y se lo entrega a ffmpeg siempre con el mismo retraso fijo (absorbiendo
+# los altibajos de la wifi) -- que luego se descuenta a esa cámara (CamApp._chain_net_cams).
+CHAIN_LATENCY_DEFAULT_MS = 150      # hasta tener medidas de cuánto tarda en llegar
+CHAIN_LATENCY_MIN_MS = 60
+CHAIN_LATENCY_MAX_MS = 600
+CHAIN_LATENCY_MARGIN_MS = 40        # por encima de lo que tardan casi todos (percentil 95)
+CHAIN_HOLD_SECONDS = 8              # el emisor deja de mandar (p. ej. se reinicia): se repite el
+                                    # último fotograma como mucho esto, y luego «Sin señal»
+# Lo que no se puede medir desde aquí: lo que tarda el ffmpeg del emisor de su cámara a su salida
+# en red. Va en fotogramas, no en ms (sus filtros de fps y el mosaico retienen cada uno ~1):
+# medido con ffmpeg real, cámara local + encadenada en el mismo mosaico, ~105 ms a 30 fps y ~218
+# a 15 -- unos 3,2 fotogramas del emisor en los dos casos.
+CHAIN_PIPE_FRAMES = 3.2
+
+
+def chain_clock_url(spec):
+    """(host, puerto, ruta del reloj) del cam-ui que serviría esta cámara de red, o None."""
+    try:
+        u = urllib.parse.urlsplit((spec or "").strip())
+        if u.scheme != "http" or not u.hostname:
+            return None
+        return u.hostname, u.port or 80, CHAIN_CLOCK_PATH
+    except ValueError:
+        return None
+
+
+def chain_probe_clock(spec, timeout=1.0):
+    """Una muestra del reloj del cam-ui que sirve esta cámara: (diferencia, ida y vuelta) en
+    segundos, con diferencia = su reloj - el de este PC; o None si no es un cam-ui (o no
+    contesta). Con http.client a pelo: nada de proxies del sistema para algo de la propia red."""
+    hp = chain_clock_url(spec)
+    if not hp:
+        return None
+    c = None
+    try:
+        c = http.client.HTTPConnection(hp[0], hp[1], timeout=timeout)
+        t0 = time.time()
+        c.request("GET", hp[2])
+        r = c.getresponse()
+        body = r.read(4096)
+        t1 = time.time()
+        if r.status != 200:
+            return None
+        data = json.loads(body.decode("utf-8"))
+        if not isinstance(data, dict) or data.get("camui") != 1:
+            return None
+        return float(data["t"]) - (t0 + t1) / 2.0, t1 - t0
+    except Exception:
+        return None
+    finally:
+        if c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
+class _ChainLocalHandler(http.server.BaseHTTPRequestHandler):
+    """Solo en 127.0.0.1: aquí lee ffmpeg la cámara encadenada, ya con el retraso fijo."""
+
+    def log_message(self, *_a):
+        pass
+
+    def do_GET(self):
+        ch = self.server.chain
+        if self.path.split("?", 1)[0] != "/chain.mjpg":
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except Exception:
+                pass
+            return
+        try:
+            self.send_response(200)
+            self.send_header("Cache-Control", "no-cache, private")
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=camuichain")
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        last = 0
+        try:
+            while not ch._closed:
+                with ch._cond:
+                    ch._cond.wait_for(lambda: ch._cur_gen != last or ch._closed, 1.0)
+                    jpeg, gen, t_cur = ch._cur, ch._cur_gen, ch._cur_t
+                if jpeg is None:
+                    continue
+                if gen == last:
+                    # nada nuevo en 1 s (el emisor se está reiniciando, p. ej.): se repite el último
+                    # para que el ffmpeg de aquí no se rinda -- pero solo un rato
+                    if time.time() - t_cur > CHAIN_HOLD_SECONDS:
+                        break
+                last = gen
+                self.wfile.write(b"--camuichain\r\nContent-Type: image/jpeg\r\n")
+                self.wfile.write(("Content-Length: " + str(len(jpeg)) + "\r\n\r\n").encode())
+                self.wfile.write(jpeg)
+                self.wfile.write(b"\r\n")
+        except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+            pass
+
+
+class ChainClock:
+    """Intermediario local para una cámara de red que es otro cam-ui (ver el comentario de
+    CHAIN_LATENCY_DEFAULT_MS): lee su MJPEG con la hora de cada fotograma, mantiene la
+    diferencia entre los dos relojes, y sirve en local_url cada fotograma justo cuando le toca
+    (su hora + latency, en el reloj de este PC). Si el emisor no marca la hora (un cam-ui
+    anterior), los pasa tal cual (synced queda en False y no se compensa nada)."""
+
+    def __init__(self, spec):
+        self.spec = spec.strip()
+        self.offset = None                     # reloj del emisor - el de aquí
+        self._samples = deque(maxlen=20)       # (ida y vuelta, diferencia)
+        self._transit = deque(maxlen=300)      # cuánto tardó cada fotograma (s)
+        self._gaps = deque(maxlen=120)         # entre fotogramas seguidos, según SU reloj (s)
+        self._last_ts = None
+        self.latency = CHAIN_LATENCY_DEFAULT_MS / 1000.0
+        self.stamped = False
+        self.frames = self.late = 0
+        self._q = deque()                      # (cuándo entregarlo, jpeg)
+        self._cur, self._cur_gen, self._cur_t = None, 0, 0.0
+        self._cond = threading.Condition()
+        self._closed = False
+        self._srv = _MjpegHTTPServer(("127.0.0.1", 0), _ChainLocalHandler)
+        self._srv.chain = self
+        self.port = self._srv.server_address[1]
+        for fn in (self._srv.serve_forever, self._clock_loop, self._upstream_loop,
+                   self._release_loop):
+            threading.Thread(target=fn, daemon=True).start()
+
+    @property
+    def local_url(self):
+        return "http://127.0.0.1:{0}/chain.mjpg".format(self.port)
+
+    @property
+    def synced(self):
+        return self.stamped and self.offset is not None
+
+    def wait_ready(self, timeout):
+        """True en cuanto hay diferencia de relojes y fotogramas con hora (o False al agotarse)."""
+        t_end = time.time() + timeout
+        while time.time() < t_end and not self._closed:
+            with self._cond:
+                if self.synced and len(self._transit) >= 5:
+                    return True
+            time.sleep(0.05)
+        return self.synced
+
+    def plan_latency(self):
+        """Retraso fijo (ms) para el próximo arranque: lo que tardan en llegar casi todos los
+        fotogramas (percentil 95) más un margen. Se fija aquí y no cambia hasta el siguiente."""
+        with self._cond:
+            tr = sorted(self._transit)
+        if len(tr) >= 15:
+            p95 = tr[int(0.95 * (len(tr) - 1))] * 1000.0
+            ms = max(CHAIN_LATENCY_MIN_MS, min(CHAIN_LATENCY_MAX_MS, p95 + CHAIN_LATENCY_MARGIN_MS))
+        else:
+            ms = CHAIN_LATENCY_DEFAULT_MS
+        ms = int(round(ms / 10.0)) * 10
+        with self._cond:
+            self.latency = ms / 1000.0
+        return ms
+
+    def pipe_ms(self):
+        """Lo que tarda el ffmpeg del emisor de su cámara a su salida en red (CHAIN_PIPE_FRAMES
+        fotogramas al ritmo al que de verdad los manda, medido con sus propias horas)."""
+        with self._cond:
+            g = sorted(self._gaps)
+        frame = g[len(g) // 2] if len(g) >= 10 else 1.0 / 30
+        frame = max(1.0 / 60, min(1.0, frame))
+        return int(round(CHAIN_PIPE_FRAMES * frame * 1000))
+
+    def compensation_ms(self):
+        """(retraso fijo de entrega, tramo del emisor): lo que hay que adelantar esta cámara
+        respecto a las de aquí (su «Retardo ms» se rebaja en la suma) -- fija el retraso fijo."""
+        lat = self.plan_latency()
+        return lat, self.pipe_ms()
+
+    def close(self):
+        self._closed = True
+        with self._cond:
+            self._cond.notify_all()
+        try:
+            self._srv.shutdown()
+            self._srv.server_close()
+        except Exception:
+            pass
+
+    # -- reloj: como NTP, la muestra con menos ida y vuelta de las últimas es la más fiable
+    def _clock_loop(self):
+        n = 0
+        while not self._closed:
+            r = chain_probe_clock(self.spec, timeout=1.0)
+            if r is not None:
+                with self._cond:
+                    self._samples.append((r[1], r[0]))
+                    self.offset = min(self._samples)[1]
+            n += 1
+            time.sleep(0.1 if n < 8 else 2.0)
+
+    # -- lectura del emisor (se reconecta sola si se corta, p. ej. al reiniciarse su ffmpeg)
+    def _upstream_loop(self):
+        u = urllib.parse.urlsplit(self.spec)
+        path = (u.path or "/") + ("?" + u.query if u.query else "")
+        while not self._closed:
+            c = None
+            try:
+                c = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=NET_IO_TIMEOUT_US / 1e6)
+                c.request("GET", path)
+                r = c.getresponse()
+                if r.status == 200:
+                    self._read_parts(r.fp)
+            except Exception:
+                pass
+            finally:
+                if c is not None:
+                    try:
+                        c.close()
+                    except Exception:
+                        pass
+            if not self._closed:
+                time.sleep(0.5)
+
+    def _read_parts(self, fp):
+        while not self._closed:
+            line = fp.readline(4096)
+            if not line:
+                return
+            if not line.startswith(b"--"):
+                continue
+            hdr = {}
+            while True:
+                h = fp.readline(4096)
+                if not h:
+                    return
+                h = h.strip()
+                if not h:
+                    break
+                k, _, v = h.partition(b":")
+                hdr[k.strip().lower()] = v.strip()
+            try:
+                n = int(hdr.get(b"content-length", b"0"))
+            except ValueError:
+                continue
+            if n <= 0 or n > 32 * 1024 * 1024:
+                continue
+            data = fp.read(n)
+            if len(data) < n:
+                return
+            self._push(data, hdr.get(b"x-camui-t"), time.time())
+
+    def _push(self, jpeg, t_hdr, arrival):
+        ts = None
+        if t_hdr:
+            try:
+                ts = float(t_hdr)
+            except ValueError:
+                ts = None
+        with self._cond:
+            self.frames += 1
+            if ts is not None and ts > 0:
+                if self._last_ts is not None and 0 < ts - self._last_ts < 1.0:
+                    self._gaps.append(ts - self._last_ts)
+                self._last_ts = ts
+            if ts is not None and ts > 0 and self.offset is not None:
+                self.stamped = True
+                t_here = ts - self.offset              # su hora, en el reloj de este PC
+                self._transit.append(arrival - t_here)
+                due = t_here + self.latency
+                if due < arrival:
+                    self.late += 1                     # llegó tarde: se entrega ya
+                    due = arrival
+            else:
+                due = arrival
+            self._q.append((due, jpeg))
+            while len(self._q) > 120:
+                self._q.popleft()
+            self._cond.notify_all()
+
+    def _release_loop(self):
+        while not self._closed:
+            with self._cond:
+                if not self._q:
+                    self._cond.wait(0.2)
+                    continue
+                due, jpeg = self._q[0]
+                wait = due - time.time()
+                if wait > 0.001:
+                    self._cond.wait(min(wait, 0.2))
+                    continue
+                self._q.popleft()
+                self._cur, self._cur_t = jpeg, time.time()
+                self._cur_gen += 1
+                self._cond.notify_all()
 
 
 _METER_RE = re.compile(r"lavfi\.astats\.(\d)\.Peak_level=(\S+)")
@@ -5334,6 +5652,10 @@ class CamApp:
         self._tray_rec = False
         self._tray_title_last = ""
         self._tray_q = deque()                               # órdenes del icono de bandeja (otro hilo)
+        self._chains = {}                 # cámaras de red que son otro cam-ui (ver _chain_net_cams)
+        self._chain_lk = threading.Lock()
+        self._chain_no = {}               # las que no contestaron a su reloj, y cuándo
+        self._chain_info = {}             # etiqueta -> ms que se le adelanta (para la interfaz)
         self._hidden = False
         self._mini_drag = None
         self._mini_iconified = False
@@ -7806,6 +8128,9 @@ class CamApp:
             if (self.previewing or self.recording) and sz:
                 txt = "Auto → recibiendo {0}×{1}{2}".format(
                     sz[0], sz[1], " a {0:g} fps".format(fps) if fps else "")
+                ms = (getattr(self, "_chain_info", None) or {}).get(self.sel)
+                if ms:
+                    txt += " · alineada con su PC (se adelanta {0} ms)".format(ms)
             elif getattr(cs, "auto_mode", None):
                 txt = "Auto → {0}".format(cs.auto_mode)
         if txt != getattr(self, "_mode_now_txt", None):
@@ -8016,6 +8341,7 @@ class CamApp:
         self.eng.stop()
         self._auto_modes(plan)
         self._preflight_net_cams(plan)
+        self._chain_net_cams(plan)
         res = self.eng.start(plan, **kw)
         ok, err = res if isinstance(res, tuple) else (False, str(res))
         if not ok and plan.get("vcam") and not self.eng._abort and \
@@ -8042,6 +8368,50 @@ class CamApp:
                 break
             res = self.eng.start(plan, **kw)
         return res
+
+    def _chain_net_cams(self, plan):
+        """(hilo de fondo, antes de arrancar) «Reloj común» con cámaras de red que son otro cam-ui
+        (su «En la red»): cada una pasa por su ChainClock, que la entrega con un retraso fijo
+        conocido, y aquí se le rebaja el «Retardo ms» en ese retraso más lo que tarda el ffmpeg
+        del otro PC -- así cae a la vez que las cámaras de este PC (medido: ±1 fotograma, frente
+        a +88... más de 1000 ms sin esto). Solo con «reloj común»: con «marcas del dispositivo»
+        cada cámara va a su aire igualmente. Una cámara que no es un cam-ui (un móvil, una app
+        tipo IP Webcam) no contesta a su reloj y se queda exactamente como antes."""
+        with self._chain_lk:
+            chains = dict(self._chains)
+        used, info = set(), {}
+        if plan.get("sync", "clock") == "clock":
+            labels = plan.get("labels") or []
+            for i, c in enumerate(plan.get("cams") or []):
+                spec = (c.get("spec") or "").strip()
+                if c.get("_offline") or not _is_net_spec(spec) or not chain_clock_url(spec):
+                    continue
+                if self.eng._abort:
+                    return
+                ch = chains.get(spec)
+                if ch is None:
+                    if time.time() - self._chain_no.get(spec, 0) < 30:
+                        continue                       # hace nada que no contestó: no insistir
+                    if chain_probe_clock(spec) is None:
+                        self._chain_no[spec] = time.time()
+                        continue
+                    ch = chains[spec] = ChainClock(spec)
+                    with self._chain_lk:
+                        self._chains[spec] = ch
+                if not ch.wait_ready(2.5):
+                    continue                           # un cam-ui anterior, sin horas: tal cual
+                lat, pipe = ch.compensation_ms()
+                used.add(spec)
+                c["spec"] = ch.local_url
+                c["delay"] = float(c.get("delay", 0) or 0) - (lat + pipe)
+                lab = labels[i] if i < len(labels) else spec
+                info[lab] = lat + pipe
+                log.info("reloj común con %s: llega en %d ms fijos + %d del otro PC; "
+                         "diferencia de relojes %+.1f ms", lab, lat, pipe, (ch.offset or 0) * 1000)
+        self._chain_info = info
+        with self._chain_lk:                           # las que ya no se usan, fuera
+            for spec in [s for s in self._chains if s not in used]:
+                self._chains.pop(spec).close()
 
     def _preflight_net_cams(self, plan):
         """(hilo de fondo, llamado desde _engine_start antes de arrancar ffmpeg de verdad)
@@ -9425,6 +9795,13 @@ class CamApp:
                 pass
             try:
                 self.ipsrv.close()
+            except Exception:
+                pass
+            try:
+                with self._chain_lk:
+                    for ch in self._chains.values():
+                        ch.close()
+                    self._chains.clear()
             except Exception:
                 pass
             try:

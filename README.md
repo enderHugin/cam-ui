@@ -29,7 +29,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 - Cámara virtual (OBS Studio + `pyvirtualcam`) para usar el mosaico en videollamadas; solo vídeo.
 - Cámara de red: un móvil por wifi (http/rtsp, p. ej. «IP Webcam» en Android) como una cámara más;
   también vale la «salida en red» de otro PC con cam-ui, para encadenar varios equipos (de
-  momento solo el vídeo). Doble clic sobre ella en la lista para editar su nombre o dirección sin
+  momento solo el vídeo); con «reloj común», una cámara que es otro cam-ui se alinea sola con
+  las de este PC (aunque los dos relojes no marquen la misma hora y la wifi vaya a tirones,
+  medido a ±1 fotograma). Doble clic sobre ella en la lista para editar su nombre o dirección sin
   perder el encuadre ni el color. Si se desconecta (o cualquier otra cámara tarda demasiado en
   responder), no se cae todo el mosaico: queda un aviso «Sin señal: nombre» en su sitio, el resto
   sigue grabando, y se reconecta sola cuando vuelve.
@@ -79,7 +81,7 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_update.py`, `tests/unit_chain.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
