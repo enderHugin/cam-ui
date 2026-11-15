@@ -206,14 +206,44 @@ print("4) el emisor se calla 3 s: el intermediario aguanta repitiendo el último
       "{0:.1f} s); si se calla de más, corta para que salga «Sin señal» OK".format(max(gaps4)))
 
 
-# 5) CamApp._chain_net_cams con un "self" de mentira: solo la cámara que es otro cam-ui pasa por
-#    su intermediario y se le adelanta lo medido; una cámara local y un MJPEG cualquiera se quedan
-#    igual; con «marcas del dispositivo», nada
 def _fake_app():
     return types.SimpleNamespace(eng=types.SimpleNamespace(_abort=False), _chains={},
                                  _chain_lk=threading.Lock(), _chain_no={}, _chain_info={})
 
 
+# 4b) DESACTIVADO por defecto (pack 33, ver CHAIN_SYNC_ENABLED): con ffmpeg 7/8 adelantar la
+#     cámara encadenada hace que el mosaico deje de leer las de aquí (visto con una EOS real: su
+#     búfer sin vaciarse y la EOS grabada a 1,6 imágenes/s). Así que, por defecto, una cámara que
+#     es otro cam-ui de verdad (IpServer real) se queda EXACTAMENTE igual que en el pack 31, y
+#     cualquier intermediario que hubiera se cierra.
+assert camui.CHAIN_SYNC_ENABLED is False
+s4c = camui.IpServer()
+s4c.open(160, 120, fps=30, port=58509)
+stop4c = threading.Event()
+threading.Thread(target=_feeder, args=(s4c, 160, 120, 30, stop4c), daemon=True).start()
+time.sleep(0.5)
+app4c = _fake_app()
+old4c = camui.ChainClock("http://127.0.0.1:58509/stream.mjpg")
+app4c._chains["http://127.0.0.1:58509/stream.mjpg"] = old4c       # de un arranque anterior
+try:
+    assert camui.chain_probe_clock("http://127.0.0.1:58509/stream.mjpg") is not None  # sí es un cam-ui
+    plan4c = {"sync": "clock", "labels": ["🌐 Omen"],
+              "cams": [{"spec": "http://127.0.0.1:58509/stream.mjpg", "delay": 20}]}
+    camui.CamApp._chain_net_cams(app4c, plan4c)
+    assert plan4c["cams"][0] == {"spec": "http://127.0.0.1:58509/stream.mjpg", "delay": 20}, plan4c
+    assert app4c._chain_info == {} and app4c._chains == {} and old4c._closed
+finally:
+    stop4c.set()
+    old4c.close()
+    s4c.close()
+print("4b) alineación entre PCs desactivada por defecto: la cámara encadenada se queda tal cual "
+      "y no queda ningún intermediario abierto OK")
+
+# 5) (con la alineación activada a mano, como mecanismo -- comprobado con ffmpeg 6.1) CamApp.
+#    _chain_net_cams con un "self" de mentira: solo la cámara que es otro cam-ui pasa por su
+#    intermediario y se le adelanta lo medido; una cámara local y un MJPEG cualquiera se quedan
+#    igual; con «marcas del dispositivo», nada
+camui.CHAIN_SYNC_ENABLED = True
 s5 = camui.IpServer()
 s5.open(160, 120, fps=30, port=58507)
 stop5 = threading.Event()
@@ -338,8 +368,10 @@ def _align_run(port, fps=30):
 res6 = [_align_run(58510 + i) for i in range(2)]
 for d6, adv6 in res6:
     assert abs(d6) < 45, "la encadenada va {0:+.0f} ms respecto a la local".format(d6)
-print("6) grabación real con «reloj común», cámara local + encadenada en el mismo mosaico: "
-      "desfase {0} ms (se adelanta {1} ms) OK".format(
-          ", ".join("{0:+.0f}".format(d) for d, _ in res6), res6[0][1]))
+print("6) (ffmpeg {2}) grabación real con «reloj común», cámara local + encadenada en el mismo "
+      "mosaico: desfase {0} ms (se adelanta {1} ms) OK".format(
+          ", ".join("{0:+.0f}".format(d) for d, _ in res6), res6[0][1],
+          subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True).stdout.split()[2]))
+camui.CHAIN_SYNC_ENABLED = False
 
 print("TODO OK unit_chain")

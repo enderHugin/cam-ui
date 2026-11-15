@@ -82,7 +82,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 32                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 33                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -2425,6 +2425,16 @@ CHAIN_HOLD_SECONDS = 8              # el emisor deja de mandar (p. ej. se reinic
 # medido con ffmpeg real, cámara local + encadenada en el mismo mosaico, ~105 ms a 30 fps y ~218
 # a 15 -- unos 3,2 fotogramas del emisor en los dos casos.
 CHAIN_PIPE_FRAMES = 3.2
+# DESACTIVADO (pack 33). Validado con ffmpeg 6.1, que lee cada cámara en cuanto tiene un fotograma;
+# pero ffmpeg 7/8 (el que instala cam-ui en Windows) solo lee de cada cámara cuando el mosaico lo
+# pide, y la hora del «reloj común» se pone al LEER el fotograma, no al capturarlo. Al adelantar la
+# cámara encadenada, el mosaico se queda esperándola y deja de leer las de aquí: sus fotogramas se
+# acumulan en el búfer del driver y se marcan tarde. Visto en un equipo real con ffmpeg 8: el búfer
+# de una EOS Webcam Utility no bajó del 62-79 % en toda la grabación (frente a vaciarse en 2-3 s
+# sin esto) y la EOS quedó grabada a 1,6 imágenes por segundo, a saltos de ~600 ms. Hasta tener una
+# forma de alinear que funcione con ffmpeg 7/8 (y probada con él), no se reescribe nada: una cámara
+# encadenada va como en el pack 31. El emisor sigue mandando su hora (X-Camui-T), que no molesta.
+CHAIN_SYNC_ENABLED = False
 
 
 def chain_clock_url(spec):
@@ -8376,11 +8386,13 @@ class CamApp:
         del otro PC -- así cae a la vez que las cámaras de este PC (medido: ±1 fotograma, frente
         a +88... más de 1000 ms sin esto). Solo con «reloj común»: con «marcas del dispositivo»
         cada cámara va a su aire igualmente. Una cámara que no es un cam-ui (un móvil, una app
-        tipo IP Webcam) no contesta a su reloj y se queda exactamente como antes."""
+        tipo IP Webcam) no contesta a su reloj y se queda exactamente como antes.
+        Ahora mismo DESACTIVADO (ver CHAIN_SYNC_ENABLED): no toca nada y cierra los intermediarios
+        que hubiera."""
         with self._chain_lk:
             chains = dict(self._chains)
         used, info = set(), {}
-        if plan.get("sync", "clock") == "clock":
+        if CHAIN_SYNC_ENABLED and plan.get("sync", "clock") == "clock":
             labels = plan.get("labels") or []
             for i, c in enumerate(plan.get("cams") or []):
                 spec = (c.get("spec") or "").strip()

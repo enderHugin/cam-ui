@@ -1,5 +1,18 @@
 # Novedades de cam-ui
 
+## pack 33 — 2026.11.15
+- **Desactivada la alineación automática entre PCs del pack 32: con ffmpeg 8 estropeaba las
+  demás cámaras.** Se validó con ffmpeg 6.1, que lee cada cámara en cuanto tiene un fotograma;
+  ffmpeg 7/8 (el que instala cam-ui en Windows) solo lee de cada una cuando el mosaico lo pide, y
+  el «reloj común» marca cada fotograma al leerlo. Al adelantar la cámara encadenada, el mosaico
+  se quedaba esperándola y dejaba de leer las de este PC. Visto en un equipo real grabando con
+  una EOS Webcam Utility y otro PC encadenado: el búfer de la EOS no bajó del 62-79 % en toda la
+  grabación (sin esto se vacía en 2-3 s), salió en negro los primeros 5 s y, después, a 1,6
+  imágenes por segundo, a saltos de ~600 ms. Ahora una cámara encadenada va exactamente como en
+  el pack 31. Queda pendiente una forma de alinearla que funcione con ffmpeg 7/8, probada con él.
+- *El PC que envía sigue marcando la hora de cada fotograma (no molesta a nadie: comprobado con
+  ffmpeg y con un navegador real).*
+
 ## pack 32 — 2026.11.12
 - **«Reloj común» entre PCs encadenados.** Con «reloj común», cada fotograma de una cámara de red
   se marcaba con la hora a la que llegaba a este PC, así que una cámara que es otro cam-ui (su
