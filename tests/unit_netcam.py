@@ -263,6 +263,7 @@ class _FakeApp10(camui.CamApp):           # solo para heredar _on_died; no se ll
     def __init__(self):
         self.calls = {"start_preview": [], "set_idle": [], "finalize": [], "showerror": 0}
         self.rec_path = self.rec_final = None
+        self.hub = camui.CamHub()            # (pack 34) sin cámaras abiertas: close() no hace nada
 
     def _plan(self):
         return plan10
@@ -375,6 +376,10 @@ class _FakeEng11:
         self.in_sizes = sizes
         self.in_fps = fps or {}
         self.frame_count = 1
+        self.hub_on = False                # (pack 34) el motor de siempre
+
+    def input_info(self):
+        return self.in_sizes, self.in_fps
 
 
 class _FakeApp11(camui.CamApp):           # solo para heredar _check_sources; no se llama a __init__

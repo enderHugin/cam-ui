@@ -1,5 +1,39 @@
 # Novedades de cam-ui
 
+## pack 34 — 2026.11.15
+- **Motor nuevo, experimental: cada cámara por separado.** En Ajustes → Avanzado, «Motor nuevo
+  (experimental)»; el de siempre sigue por defecto. Hasta ahora un solo ffmpeg abría todas las
+  cámaras, una detrás de otra, y con ffmpeg 7/8 solo leía cada una cuando el mosaico se lo pedía:
+  una cámara lenta, una que se corta o la de otro PC frenaban a todas. Con el motor nuevo:
+  - cada cámara se abre en su propio proceso, **todas a la vez** (cámaras simuladas que tardan
+    0,5, 1,4 y 1,4 s en abrirse: imagen de las tres en 1,6 s, frente a 3,6 s una tras otra);
+  - **ninguna frena a las demás**: una de 10 fps se ve a 10 y el resto a 30; una que se calla
+    3 s repite su última imagen 2 s, luego «Sin señal», y vuelve sola sin reiniciar nada; el
+    búfer de la EOS no se llena;
+  - **la cámara de otro cam-ui cae a la vez que las de aquí**, por la hora a la que se captó allí,
+    aunque los relojes de los dos PCs no coincidan (probado con 543 ms de diferencia, como los
+    tuyos): de 0 a +33 ms con ffmpeg 6.1 y 7.0. En la cámara pone «alineada con su PC por la
+    hora de captura». Para que sea exacto, el otro PC también tiene que llevar el motor nuevo
+    (marca cada fotograma de «En la red» con la hora de lo que se ve); con el de siempre se estima;
+  - **reiniciar el mosaico ya no reabre las cámaras** (cambiar un ajuste, empezar o parar de
+    grabar): primera imagen en ~0,3 s;
+  - **«Cámara del móvil» entra directa**, sin servidor local ni otro ffmpeg de por medio; si el
+    móvil manda algo más grande que 1920, se decodifica ya reducido a 1920;
+  - el sonido sigue entrando como siempre: medido a -6 ms de la imagen con ffmpeg 6.1 y a +56 ms
+    con 7.0 (con el motor de siempre y 7.0, +108 ms). Alinearlo con el mismo reloj es la
+    siguiente fase;
+  - pausar la vista previa, los diagnósticos, el cuadro del driver y «Probar modos» sueltan las
+    cámaras igual que antes.
+- **Arreglado, también con el motor de siempre: con ffmpeg 7/8, «En la red» y la cámara virtual
+  salían a trompicones.** ffmpeg 7/8 saca todas las salidas al ritmo de la más lenta, y la vista
+  previa va a 20 fps (a 12 grabando): los fotogramas salían de dos en dos o de tres en tres, y
+  grabando se perdían ~10 de cada 30 por segundo al pasarlos a JPEG (medido con ffmpeg 7.0: 60 %
+  de huecos de 0 ms). Ahora, con esas salidas activas, la vista previa va a su ritmo: 3 % y 0,5
+  perdidos por segundo. Seguramente explica parte de la ingesta irregular entre tus dos PCs.
+- *Verificado con ffmpeg 6.1 y 7.0 reales, en un solo equipo y con cámaras DirectShow simuladas
+  (aquí no hay Windows ni cámaras de verdad): conviene probarlo con las tuyas. Si algo va peor
+  que con el motor de siempre, desmarca la opción.*
+
 ## pack 33 — 2026.11.15
 - **Desactivada la alineación automática entre PCs del pack 32: con ffmpeg 8 estropeaba las
   demás cámaras.** Se validó con ffmpeg 6.1, que lee cada cámara en cuanto tiene un fotograma;

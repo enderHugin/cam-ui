@@ -22,6 +22,12 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 
 ## Funciones principales
 - Sincronía de cámaras y audio con un reloj común; vúmetros L/R.
+- Motor nuevo (experimental, Ajustes → Avanzado; el de siempre sigue por defecto): cada cámara en
+  su propio proceso, abiertas todas a la vez y leídas siempre; un reloj único toma de cada una la
+  imagen captada en cada instante y se la da a ffmpeg a ritmo fijo. Una cámara lenta, cortada o
+  de otro PC ya no frena a las demás, reiniciar el mosaico (o empezar a grabar) no reabre las
+  cámaras, y la de otro cam-ui con el motor nuevo se alinea por la hora a la que se captó allí,
+  aunque los relojes de los dos PCs no coincidan.
 - Vista previa siempre activa, grabación MP4/MKV sin cortarla.
 - Encuadre, zoom, color y formato de celda por cámara; detección y prueba de modos de captura.
 - Tres modos de ventana: normal, compacto y mini (barra con Rec/Stop), con icono en la bandeja.
@@ -79,14 +85,17 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/unit_chain.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
 `tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`, `tests/ui_phonecam.py`
-(este último también necesita `qrcode`, por el mismo motivo)
+(este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
+`tests/unit_hub.py` y `tests/unit_ipout.py` usan el ffmpeg del PATH; con
+`CAMUI_FFMPEGS="ruta1:ruta2"` repiten sus pruebas de ffmpeg con otros (p. ej. un 7 u 8, que se
+comportan distinto que el 6).
 Si algo falla, adjuntar `camui.log` (se crea junto al script).
 
 ## Opinar, avisar de fallos, pedir funciones

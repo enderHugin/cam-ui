@@ -82,7 +82,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 33                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 34                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -825,8 +825,13 @@ def video_chain(i, cam, cw, ch, fps, clock, t0):
     # numera sus propios fotogramas igual que hacía "mpjpeg" -- el mismo fallo ya arreglado
     # antes para las cámaras de red, ver _rebase): necesita el mismo rebase por RTCTIME.
     net = _is_net_spec(cam.get("spec")) or bool(cam.get("_offline"))
-    f = ["setpts=" + _rebase(clock, t0, cam.get("delay", 0) / 1000.0, net=net),
-         "fps=fps={0}:start_time=0".format(fps)]
+    if cam.get("_hub"):
+        # del concentrador: ya llega a los fps del mosaico, numerada desde el tic 0 y con su
+        # «Retardo ms» aplicado (ver _HubSession) -- aquí no se toca su tiempo
+        f = ["setpts=PTS-STARTPTS", "fps=fps={0}:start_time=0".format(fps)]
+    else:
+        f = ["setpts=" + _rebase(clock, t0, cam.get("delay", 0) / 1000.0, net=net),
+             "fps=fps={0}:start_time=0".format(fps)]
     if cam.get("h"):
         f.append("hflip")
     if cam.get("v"):
@@ -894,10 +899,18 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         pre += ["-use_wallclock_as_timestamps", "1"]
 
     labels = plan.get("labels") or []
+    hub = plan.get("hub") if isinstance(plan.get("hub"), dict) and plan["hub"].get("ports") else None
     fc = []
     # ---- vídeo ----
     for i, c in enumerate(cams):
-        if c.get("_offline"):
+        if hub is not None:
+            # motor experimental: cada cámara llega del concentrador (ver CamHub) como vídeo crudo
+            # a ritmo fijo por un socket local -- ffmpeg ya no abre ni espera a ninguna cámara
+            hw, hh = hub["sizes"][i]
+            cmd += ["-thread_queue_size", "1024", "-f", "rawvideo", "-pix_fmt", hub.get("pix", HUB_PIX),
+                    "-s", "{0}x{1}".format(hw, hh), "-framerate", str(fps),
+                    "-i", "tcp://127.0.0.1:{0}".format(hub["ports"][i])]
+        elif c.get("_offline"):
             # la cámara no se pudo abrir en un intento anterior (ver _engine_start /
             # failing_cam_index): se sustituye por un marcador «sin señal» para que el resto
             # del mosaico siga funcionando en vez de que todo el proceso se caiga por ella.
@@ -1015,8 +1028,16 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
     if outfile:
         fc.append("{0}trim=start={1:.3f},setpts=PTS-STARTPTS[mrec]".format(src["rec"], warmup))
     if preview:
+        pv_fps = min(fps, 12 if outfile else 20)
+        # ffmpeg 7/8 saca los fotogramas de TODAS las salidas al ritmo de la más lenta: con la
+        # vista previa a 20 (o a 12 grabando), «En la red» y la cámara virtual salían a trompicones
+        # (de dos en dos o de tres en tres, 33-67 % de huecos de 0 ms; medido) y el emisor
+        # perdía fotogramas al codificar. Con ellas activas, la vista previa va a su ritmo.
+        side = [int(o.get("fps") or 0) for o in (vc, ip) if o]
+        if side:
+            pv_fps = max(pv_fps, min(fps, max(side)))
         fc.append("{0}fps={1},scale={2}:{3}:flags=fast_bilinear[pv]".format(
-            src["pv"], min(fps, 12 if outfile else 20), pw, ph))
+            src["pv"], pv_fps, pw, ph))
     if vc:
         vw, vh = int(vc["w"]), int(vc["h"])
         fc.append("{0}fps={1},scale={2}:{3}:force_original_aspect_ratio=decrease:flags=bilinear,"
@@ -1881,6 +1902,11 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
                 # hora de este PC a la que salió de su ffmpeg: con ella otro cam-ui que lo
                 # encadene lo alinea con sus propias cámaras (ver ChainClock); el resto la ignora
                 self.wfile.write(("X-Camui-T: {0:.6f}\r\n".format(ft)).encode())
+                lag = owner.content_lag
+                if lag is not None:
+                    # con el concentrador se sabe cuánto antes se captó lo que se ve: el cam-ui
+                    # que encadene esta salida lo usa para alinearla (ver _NetSource)
+                    self.wfile.write(("X-Camui-Lag: {0:.4f}\r\n".format(lag)).encode())
                 self.wfile.write(("Content-Length: " + str(len(frame)) + "\r\n\r\n").encode())
                 self.wfile.write(frame)
                 self.wfile.write(b"\r\n")
@@ -1947,6 +1973,9 @@ class IpServer:
         self._jpeg = None
         self._jpeg_t = 0.0            # hora de este PC a la que ese fotograma salió de ffmpeg
         self._latest_t = 0.0
+        self.content_lag = None       # antigüedad (s) de lo que se ve en él, si se sabe (X-Camui-Lag)
+        self.content_t0 = None        # con el concentrador: hora del fotograma 0 de cada conexión
+        self.content_fps = None       # ... y su ritmo (ver _read)
         self._jgen = 0
         # avisa al instante a quien lo esté viendo de que hay un JPEG nuevo (antes cada visor
         # miraba cada 40 ms: con 30 fps solo llegaban ~22, a saltos, y a 10 fps a trompicones)
@@ -2157,6 +2186,10 @@ class IpServer:
     def _read(self, conn):
         w, h, bpp = self.w, self.h, self.bpp
         fb = w * h * bpp
+        # con el concentrador, el fotograma k de esta conexión es exactamente el de la hora
+        # content_t0 + k/content_fps (ver FFmpegEngine.start): esa es su hora, sin depender de
+        # a qué ritmo los suelte ffmpeg (el 7/8 los entrega de dos en dos a ratos)
+        t0c, fpsc, k = self.content_t0, self.content_fps, 0
         while not self._closed:
             buf = bytearray(fb)
             mv = memoryview(buf)
@@ -2170,10 +2203,13 @@ class IpServer:
                     return
                 pos += n
             self.received += 1
+            k += 1
             if self._http is None:
                 continue                       # cerrada: solo se vacía el socket
-            t_arr = time.time()                # hora (de ESTE PC) a la que salió de ffmpeg -- ver
-            arr = np.frombuffer(buf, np.uint8).reshape((h, w, bpp))   # X-Camui-T, ChainClock
+            # hora (de ESTE PC) de lo que se ve: la de su captura con el concentrador, o a la que
+            # salió de ffmpeg con el motor de siempre -- ver X-Camui-T, _NetSource, ChainClock
+            t_arr = time.time() if t0c is None else t0c + (k - 1) / float(fpsc)
+            arr = np.frombuffer(buf, np.uint8).reshape((h, w, bpp))
             with self._lk:
                 if self._latest is not None:
                     self.dropped += 1          # el anterior no llegó a codificarse
@@ -3520,6 +3556,7 @@ class PhoneCamHub:
         self._new_cam_q = new_cam_q
         self._pair_q = pair_q
         self._lk = threading.Lock()
+        self._cond = threading.Condition(self._lk)    # avisa de cada fotograma (ver wait_frame)
         self._sessions = {}             # sid -> {"name", "jpeg", "ts", "gen", "announced"}
         self.token = None
         self.port = None
@@ -3598,6 +3635,7 @@ class PhoneCamHub:
         self._https_srv = self._local_srv = self._cert_srv = self.port = self.token = None
         with self._lk:
             self._sessions = {}
+            self._cond.notify_all()
 
     def new_session(self, name):
         sid = secrets.token_urlsafe(9)
@@ -3619,6 +3657,7 @@ class PhoneCamHub:
             if s is None:
                 return False
             s["jpeg"], s["ts"], s["gen"] = data, time.time(), s["gen"] + 1
+            self._cond.notify_all()
             if not s["announced"]:
                 s["announced"] = True
                 announce = s["name"]
@@ -3630,6 +3669,16 @@ class PhoneCamHub:
     def latest(self, sid):
         with self._lk:
             s = self._sessions.get(sid)
+            return None if s is None else (s["jpeg"], s["gen"], s["ts"])
+
+    def wait_frame(self, sid, gen, timeout):
+        """(jpeg, gen, hora de llegada) en cuanto haya uno más nuevo que «gen» (o el mismo si se
+        agota el tiempo); None si esa sesión ya no existe. Ver _PhoneSource."""
+        with self._cond:
+            s = self._sessions.get(sid)
+            if s is not None and s["gen"] == gen:
+                self._cond.wait(timeout)
+                s = self._sessions.get(sid)
             return None if s is None else (s["jpeg"], s["gen"], s["ts"])
 
     def session_name(self, sid):
@@ -3936,6 +3985,887 @@ class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
             pass
 
 
+# =====================================================================
+#  Concentrador (motor experimental, Ajustes → Avanzado)
+# =====================================================================
+# Con el motor de siempre, UN solo ffmpeg abre todas las cámaras (una detrás de otra: ~1,4 s cada
+# USB barata) y las lee, y con ffmpeg 7/8 solo lee de cada una cuando el mosaico se lo pide: una
+# cámara lenta (10 fps), cortada o retrasada a propósito frena a todas las demás, sus fotogramas se
+# acumulan en el búfer del driver y la hora del «reloj común» se pone al leerlos, no al captarlos.
+# El concentrador lo separa:
+#   - cada cámara se abre en SU propio proceso (o hilo, si es de red), todas a la vez, y se lee
+#     siempre, sin esperar a nadie: su fotograma lleva la hora de este PC a la que llegó (o, si
+#     es otro cam-ui, la hora a la que se captó allí pasada al reloj de aquí -- X-Camui-T);
+#   - un único reloj (los fps del mosaico) toma en cada tic, de cada cámara, el último fotograma
+#     captado hasta ese instante (menos un retraso común D, lo justo para que la de otro PC ya
+#     haya llegado) y se lo da a ffmpeg como un flujo crudo a ritmo fijo, una entrada por cámara;
+#   - ffmpeg compone y graba exactamente igual que siempre, pero ya no espera a ninguna cámara:
+#     una lenta repite su último fotograma, una cortada lo repite un rato y luego «Sin señal», y
+#     se vuelve a conectar sola, sin reiniciar nada más. Reiniciar el mosaico (cambiar un ajuste,
+#     empezar a grabar) ya no vuelve a abrir las cámaras.
+# Probado de verdad con ffmpeg 6.1 y 7.0 (aquí no hay DirectShow: cámaras simuladas). Las horas
+# de cada cámara son las de llegada al concentrador, así que la grabación va en el reloj de este
+# PC igual que con «reloj común».
+HUB_PIX = "yuv420p"                 # lo que cada cámara le da al concentrador y este a ffmpeg
+HUB_HOLD_SECONDS = 2.0              # sin fotograma nuevo: se repite el último hasta esto, luego «Sin señal»
+HUB_CHAIN_DELAY_DEFAULT = 0.25      # D con otro cam-ui encadenado, hasta medir cuánto tarda de verdad
+HUB_CHAIN_MARGIN = 0.04             # D = lo que tardan casi todos (percentil 95) + esto
+HUB_DELAY_MAX = 1.0
+HUB_DELAY_MIN = 0.05                # siempre un poco: en Windows el reloj de los hilos va a saltos
+                                    # de hasta ~15 ms, y así un tic que despierta antes de tiempo
+                                    # nunca se pierde el fotograma que acaba de llegar
+HUB_DEJITTER_N = 30                 # llegadas con las que se calcula el ritmo de cada cámara
+HUB_KEEP_EXTRA = 0.2                # cada cámara guarda D + su retardo + esto de fotogramas
+HUB_QUEUE_SECONDS = 2.0             # lo que se acumula como mucho si ffmpeg no da abasto
+HUB_RETRY_WAITS = (1.0, 2.0, 3.0, 5.0)   # entre intentos de una cámara que no abre o se corta
+HUB_DEFAULT_SIZE = (1280, 720)      # tamaño supuesto de una cámara nunca vista (se corrige solo)
+HUB_JPEG_MAX_SIDE = 1920            # un móvil que manda 4K se decodifica ya reducido (draft JPEG)
+
+_HUB_LUT_Y = np.clip(np.round(16 + np.arange(256) * 219 / 255.0), 0, 255).astype(np.uint8)
+_HUB_LUT_C = np.clip(np.round(128 + (np.arange(256) - 128) * 224 / 255.0), 0, 255).astype(np.uint8)
+_PHONE_SPEC_RE = re.compile(r"^http://127\.0\.0\.1:(\d+)/phonecam/([A-Za-z0-9_\-]+)\.mjpg$")
+
+
+def _yuv_len(w, h):
+    return w * h + 2 * ((w + 1) // 2) * ((h + 1) // 2)
+
+
+def _hub_font(size):
+    try:
+        from PIL import ImageFont
+    except Exception:
+        return None
+    for path in (PLACEHOLDER_FONT, "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        try:
+            return ImageFont.load_default()
+        except Exception:
+            return None
+
+
+def _hub_placeholder(w, h, text):
+    """Fotograma yuv420p gris con un texto centrado («Iniciando…», «Sin señal: …»), dibujado con
+    Pillow: no depende de que el ffmpeg instalado traiga drawtext."""
+    im = Image.new("L", (w, h), 57)              # ~ gris 0x30 en rango de vídeo
+    text = "".join(ch for ch in (text or "") if ord(ch) <= 0xFFFF).strip()
+    try:
+        from PIL import ImageDraw
+        d = ImageDraw.Draw(im)
+        fs = max(11, min(26, h // 11))
+        for _ in range(3):
+            font = _hub_font(fs)
+            if font is None or not text:
+                break
+            x0, y0, x1, y1 = d.textbbox((0, 0), text, font=font)
+            if x1 - x0 <= w - 24 or fs <= 9:
+                break
+            fs = max(9, int(fs * (w - 24) / float(x1 - x0)))
+        if font is not None and text:
+            x0, y0, x1, y1 = d.textbbox((0, 0), text, font=font)
+            x, y = (w - (x1 - x0)) // 2, (h - (y1 - y0)) // 2
+            d.rectangle((x - 10, y - 8, x + (x1 - x0) + 10, y + (y1 - y0) + 8), fill=24)
+            d.text((x - x0, y - y0), text, fill=206, font=font)
+    except Exception:
+        pass
+    return im.tobytes() + b"\x80" * (2 * ((w + 1) // 2) * ((h + 1) // 2))
+
+
+def _yuv_planes(data, w, h):
+    a = np.frombuffer(data, np.uint8, count=_yuv_len(w, h))
+    cw, ch = (w + 1) // 2, (h + 1) // 2
+    y = a[:w * h].reshape(h, w)
+    u = a[w * h:w * h + cw * ch].reshape(ch, cw)
+    v = a[w * h + cw * ch:].reshape(ch, cw)
+    return y, u, v
+
+
+def _yuv_resize(data, sw, sh, dw, dh):
+    """Redimensiona un fotograma yuv420p (vecino más próximo). Solo de paso: una cámara que llega
+    con otro tamaño del previsto se ve deformada un instante hasta que el mosaico se recoloca."""
+    y, u, v = _yuv_planes(data, sw, sh)
+    ry, rx = np.arange(dh) * sh // dh, np.arange(dw) * sw // dw
+    cw, ch = (sw + 1) // 2, (sh + 1) // 2
+    dcw, dch = (dw + 1) // 2, (dh + 1) // 2
+    rcy, rcx = np.arange(dch) * ch // dch, np.arange(dcw) * cw // dcw
+    return b"".join((y[ry][:, rx].tobytes(), u[rcy][:, rcx].tobytes(), v[rcy][:, rcx].tobytes()))
+
+
+def _jpeg_to_yuv(data, max_side=None):
+    """JPEG -> (ancho, alto, yuv420p en rango de vídeo). Se decodifica directamente a YCbCr
+    (sin pasar por RGB) y, si es enorme, ya reducido por el propio decodificador (draft)."""
+    im = Image.open(io.BytesIO(data))
+    w, h = im.size
+    req = (w, h)
+    if max_side and max(w, h) > max_side:
+        k = max_side / float(max(w, h))
+        req = (max(2, int(w * k)), max(2, int(h * k)))
+    try:
+        im.draft("YCbCr", req)
+    except Exception:
+        pass
+    if im.mode != "YCbCr":
+        im = im.convert("YCbCr")
+    a = np.asarray(im)
+    h, w = a.shape[0], a.shape[1]
+    return w, h, b"".join((_HUB_LUT_Y[a[:, :, 0]].tobytes(),
+                           _HUB_LUT_C[a[::2, ::2, 1]].tobytes(),
+                           _HUB_LUT_C[a[::2, ::2, 2]].tobytes()))
+
+
+def _read_exact(f, mv):
+    pos, n = 0, len(mv)
+    while pos < n:
+        k = f.readinto(mv[pos:])
+        if not k:
+            return False
+        pos += k
+    return True
+
+
+def _read_line(f, limit):
+    out = bytearray()
+    while len(out) < limit:
+        b = f.read(1)
+        if not b:
+            break
+        out += b
+        if b == b"\n":
+            break
+    return bytes(out)
+
+
+class _HubSource:
+    """Una cámara del concentrador: se lee SIEMPRE, en su propio hilo (y proceso de ffmpeg si lo
+    necesita), sin esperar a nadie; guarda sus últimos fotogramas con su hora de captura (reloj de
+    este PC). Se reconecta sola si se corta. Ver el comentario de HUB_PIX."""
+
+    reader = ""
+
+    def __init__(self, hub, key, spec, label):
+        self.hub, self.key, self.spec, self.label = hub, key, spec, label
+        self._lk = threading.Lock()
+        self._q = deque()
+        self.keep = 1.0
+        self.size = None              # (ancho, alto) de verdad, en cuanto llega el primero
+        self.state = "starting"       # starting | live | down
+        self.err = ""
+        self.frames = 0
+        self.t_first = None
+        self.t_open = time.time()
+        self._arr = deque(maxlen=90)
+        self.transit = deque(maxlen=150)   # llegada - captura (s), solo si hay hora de captura
+        self.closed = threading.Event()
+        self.done = threading.Event()
+        self.after = None             # otra fuente del mismo dispositivo que aún se está cerrando
+        self.proc = None
+        self._down_told = False
+        self._dj = []                      # (nº de fotograma, llegada) de su racha regular: dejitter
+        self.th = threading.Thread(target=self._main, daemon=True)
+
+    def start(self):
+        self.th.start()
+
+    def _main(self):
+        try:
+            if self.after is not None:     # el driver tiene que soltar la cámara antes
+                t_end = time.time() + 8.0
+                while not self.after.done.wait(0.2) and time.time() < t_end:
+                    if self.closed.is_set():
+                        return
+            if self.reader == "dshow":     # las USB tardan en soltarse (ver RELEASE_GAP)
+                gap = RELEASE_GAP - (time.time() - max(self.hub.released_at,
+                                                       self.hub._freed.get(self.spec, 0.0)))
+                if gap > 0 and self.closed.wait(gap):
+                    return
+            self.t_open = time.time()
+            self._run()
+        except Exception:
+            log.error("concentrador «%s»:\n%s", self.label, traceback.format_exc())
+        finally:
+            self._stop_proc()
+            self.hub._freed[self.spec] = time.time()
+            self.done.set()
+
+    def _run(self):
+        raise NotImplementedError
+
+    # -- fotogramas --
+    def dejitter(self, t):
+        """Hora de llegada sin el temblor de unos ms (hilos, tuberías): una cámara de 30 fps leída
+        por un reloj de 30 fps, si su fase cae cerca del límite entre dos tics, saltaría o
+        repetiría fotogramas al azar. Se ajusta una recta a sus últimas llegadas (nº de fotograma
+        -> hora) y se da la hora de la recta: simulado con ±4 ms de temblor en la peor fase, de 72
+        repeticiones en 30 s a 0-1. Un fotograma perdido cuenta como dos pasos; un hueco o un
+        adelanto que no encaja (corte, cambio de ritmo) empieza una racha nueva con la llegada tal
+        cual."""
+        pts = self._dj
+        if not pts:
+            pts.append((0, t))
+            return t
+        k_last, t_last = pts[-1]
+        fit = self._dj_fit() if len(pts) >= 5 else None
+        if fit is None:
+            pts.append((k_last + 1, t))
+            del pts[:-HUB_DEJITTER_N]
+            return t
+        a, b = fit
+        steps = int(round((t - t_last) / b))
+        pred = a + b * (k_last + max(1, steps))
+        if steps < 1 or abs(t - pred) > 0.5 * b:
+            self._dj = [(0, t)]
+            return t
+        pts.append((k_last + steps, t))
+        del pts[:-HUB_DEJITTER_N]
+        fit = self._dj_fit()
+        return t if fit is None else fit[0] + fit[1] * (k_last + steps)
+
+    def _dj_fit(self):
+        pts = self._dj
+        t0 = pts[0][1]
+        ks = np.array([p[0] for p in pts], float)
+        ts = np.array([p[1] - t0 for p in pts])
+        b, a = np.polyfit(ks, ts, 1)
+        return (a + t0, b) if 0.004 <= b <= 1.0 else None
+
+    def put(self, t, w, h, data):
+        now = time.time()
+        with self._lk:
+            q = self._q
+            q.append((t, w, h, data))
+            cut = now - self.keep
+            while len(q) > 1 and q[1][0] <= cut:    # siempre queda el último anterior al corte
+                q.popleft()
+            while len(q) > 600:
+                q.popleft()
+        self.size = (w, h)
+        self.frames += 1
+        self._arr.append(now)
+        if self.state != "live":
+            if self.t_first is None:
+                self.t_first = now
+                log.info("concentrador «%s»: primer fotograma %dx%d a los %.2f s (%s)",
+                         self.label, w, h, now - self.t_open, self.reader)
+            elif self._down_told:
+                log.info("concentrador «%s»: vuelve la señal", self.label)
+            self._down_told = False
+            self.state = "live"
+
+    def pick(self, target):
+        """El fotograma captado más cerca de «target» (t, ancho, alto, datos) entre los que ya
+        han llegado -- el último anterior o, si está más cerca, el siguiente --, o None si aún no
+        hay ninguno anterior. El más cercano, no el último anterior: así lo que se ve en el tic
+        no va de media medio fotograma por detrás del sonido."""
+        with self._lk:
+            nxt = None
+            for it in reversed(self._q):
+                if it[0] <= target:
+                    if nxt is not None and nxt[0] - target < target - it[0]:
+                        return nxt
+                    return it
+                nxt = it
+        return None
+
+    def fps(self):
+        now = time.time()
+        a = [t for t in list(self._arr) if t >= now - 2.5]
+        if len(a) < 4 or a[-1] - a[0] < 0.5:
+            return None
+        return (len(a) - 1) / (a[-1] - a[0])
+
+    def need(self):
+        """Lo que tarda (s) un fotograma desde que se captó hasta que está aquí listo -- solo se
+        sabe de otro cam-ui (lleva su hora); el resto se marca al llegar: 0."""
+        return 0.0
+
+    def went_down(self, err):
+        self.err = err or ""
+        self.state = "down"
+        if not self._down_told:
+            self._down_told = True
+            log.warning("concentrador «%s»: sin señal (se reintenta sola):\n%s", self.label,
+                        (err or "")[-400:])
+            self.hub._event("down", self, err)
+
+    # -- proceso de ffmpeg (cámaras DirectShow y de red que no son otro cam-ui) --
+    def _run_ffmpeg_once(self, in_args, retry=0):
+        """Un ffmpeg que solo lee esta cámara y la pasa tal cual (yuv420p, a su tamaño real) por su
+        salida estándar en formato y4m. (True si llegó a dar algún fotograma, últimos errores)."""
+        cmd = ([self.hub.ffmpeg(), "-hide_banner", "-nostats", "-loglevel", "info"] + list(in_args) +
+               ["-map", "0:v:0", "-an", "-sn", "-fps_mode", "passthrough", "-pix_fmt", HUB_PIX,
+                "-f", "yuv4mpegpipe", "pipe:1"])
+        (log.debug if retry else log.info)("concentrador «%s»: %s", self.label,
+                                           subprocess.list2cmdline(cmd))
+        errs = deque(maxlen=40)
+        try:
+            p = _popen_big(cmd)
+        except Exception as e:
+            return False, "No se pudo lanzar ffmpeg: {0}".format(e)
+        self.proc = p
+        if self.closed.is_set():
+            self._stop_proc()
+
+        def drain():
+            try:
+                for raw in iter(p.stderr.readline, b""):
+                    s = raw.decode("utf-8", "ignore").rstrip()
+                    if s:
+                        errs.append(s)
+            except Exception:
+                pass
+        te = threading.Thread(target=drain, daemon=True)
+        te.start()
+        got = False
+        try:
+            hdr = _read_line(p.stdout, 512)
+            m = re.search(rb" W(\d+) H(\d+)", hdr)
+            if hdr.startswith(b"YUV4MPEG2") and m:
+                w, h = int(m.group(1)), int(m.group(2))
+                n = _yuv_len(w, h)
+                while not self.closed.is_set():
+                    line = _read_line(p.stdout, 256)
+                    if not line.startswith(b"FRAME"):
+                        break
+                    buf = bytearray(n)
+                    if not _read_exact(p.stdout, memoryview(buf)):
+                        break
+                    self.put(self.dejitter(time.time()), w, h, buf)
+                    got = True
+        except Exception:
+            errs.append(traceback.format_exc().strip().splitlines()[-1])
+        finally:
+            self._stop_proc()
+            te.join(1.0)
+        return got, "\n".join(errs)
+
+    def _stop_proc(self):
+        p, self.proc = self.proc, None
+        if p is None:
+            return
+        try:
+            if p.poll() is None and p.stdin:
+                p.stdin.write(b"q")
+                p.stdin.flush()
+        except Exception:
+            pass
+        try:
+            # ya nadie lee su salida: si se quedara escribiendo en la tubería llena, no llegaría a
+            # ver la «q» (medido: 2 s esperando hasta matarlo); así termina al momento
+            p.stdout.close()
+        except Exception:
+            pass
+        try:
+            p.wait(timeout=2.0)
+        except Exception:
+            try:
+                p.kill()
+                p.wait(timeout=2.0)
+            except Exception:
+                pass
+        FFmpegEngine._close(p)
+
+    def close(self):
+        self.closed.set()
+        p = self.proc
+        if p is not None:
+            try:
+                if p.poll() is None and p.stdin:
+                    p.stdin.write(b"q")
+                    p.stdin.flush()
+            except Exception:
+                pass
+
+    def _retry_wait(self, n):
+        return self.closed.wait(HUB_RETRY_WAITS[min(n, len(HUB_RETRY_WAITS) - 1)])
+
+
+class _DshowSource(_HubSource):
+    reader = "dshow"
+
+    def __init__(self, hub, key, spec, label, mode):
+        _HubSource.__init__(self, hub, key, spec, label)
+        self.mode = mode or ""
+
+    def _run(self):
+        n = 0
+        while not self.closed.is_set():
+            got, err = self._run_ffmpeg_once(self.hub.input_fn("video", self.spec, self.mode or None), n)
+            if self.closed.is_set():
+                return
+            if got:
+                n = 0
+            if self.mode and not got and is_mode_error(err):
+                log.warning("concentrador «%s» rechaza el modo %s: modo de fábrica", self.label, self.mode)
+                self.hub._event("badmode", self, self.mode)
+                self.mode = ""
+                continue
+            self.went_down(err)
+            if self._retry_wait(n):
+                return
+            n += 1
+
+
+class _NetSource(_HubSource):
+    """Cámara de red. Si es otro cam-ui (contesta a CHAIN_CLOCK_PATH), se lee su MJPEG aquí mismo
+    con la hora de captura de cada fotograma (X-Camui-T menos X-Camui-Lag, pasada al reloj de este
+    PC con la diferencia de relojes medida): así cae a la vez que las cámaras de aquí. Cualquier
+    otra (un móvil con IP Webcam, rtsp…) va por su propio ffmpeg, con la hora de llegada."""
+
+    reader = "red"
+
+    def __init__(self, hub, key, spec, label):
+        _HubSource.__init__(self, hub, key, spec, label)
+        self.offset = None            # su reloj - el de aquí (s)
+        self._offs = deque(maxlen=20)
+        self.decided = threading.Event()
+        self.reader = ""
+        self._conn = None
+
+    def close(self):
+        _HubSource.close(self)
+        c = self._conn
+        if c is not None and c.sock is not None:
+            try:
+                c.sock.shutdown(socket.SHUT_RDWR)     # que no se quede esperando al siguiente
+            except OSError:
+                pass
+
+    def need(self):
+        if self.reader != "camui":
+            return 0.0 if self.reader else (HUB_CHAIN_DELAY_DEFAULT if chain_clock_url(self.spec) else 0.0)
+        tr = sorted(self.transit)
+        if len(tr) < 20:
+            return HUB_CHAIN_DELAY_DEFAULT
+        return tr[int(0.95 * (len(tr) - 1))] + HUB_CHAIN_MARGIN
+
+    def _run(self):
+        n = 0
+        while not self.closed.is_set():
+            r = chain_probe_clock(self.spec, 1.0) if chain_clock_url(self.spec) else None
+            if r is not None:
+                self.reader = "camui"
+                self._offs.append((r[1], r[0]))
+                self.offset = min(self._offs)[1]
+                self.decided.set()
+                got, err = self._run_camui()
+            else:
+                self.reader = "ffmpeg"
+                self.decided.set()
+                got, err = self._run_ffmpeg_once(self.hub.input_fn("video", self.spec, None), n)
+            if self.closed.is_set():
+                return
+            if got:
+                n = 0
+            self.went_down(err)
+            if self._retry_wait(n):
+                return
+            n += 1
+
+    def _clock_loop(self, alive):
+        while alive.is_set() and not self.closed.is_set():
+            r = chain_probe_clock(self.spec, 1.0)
+            if r is not None:
+                self._offs.append((r[1], r[0]))
+                self.offset = min(self._offs)[1]     # la de menos ida y vuelta: la más fiable
+            if self.closed.wait(0.1 if len(self._offs) < 8 else 2.0):
+                return
+
+    def _run_camui(self):
+        u = urllib.parse.urlsplit(self.spec.strip())
+        path = (u.path or "/") + ("?" + u.query if u.query else "")
+        alive = threading.Event()
+        alive.set()
+        threading.Thread(target=self._clock_loop, args=(alive,), daemon=True).start()
+        c = None
+        got = False
+        gaps, last_ts = deque(maxlen=60), None
+        try:
+            c = self._conn = http.client.HTTPConnection(u.hostname, u.port or 80,
+                                                        timeout=NET_IO_TIMEOUT_US / 1e6)
+            c.request("GET", path)
+            resp = c.getresponse()                  # que no se cierre mientras se lee
+            if resp.status != 200:
+                return False, "HTTP {0}".format(resp.status)
+            fp = resp.fp
+            while not self.closed.is_set():
+                line = fp.readline(512)
+                if not line:
+                    return got, "el otro cam-ui cerró la conexión"
+                if not line.startswith(b"--"):
+                    continue
+                hdr = {}
+                while True:
+                    hl = fp.readline(2048).strip()
+                    if not hl:
+                        break
+                    k, _sep, v = hl.partition(b":")
+                    hdr[k.strip().lower()] = v.strip()
+                ln = int(hdr.get(b"content-length", b"0") or 0)
+                if ln <= 0 or ln > 64 * 1024 * 1024:
+                    return got, "fotograma sin tamaño"
+                data = fp.read(ln)
+                if len(data) < ln:
+                    return got, "fotograma cortado"
+                arrival = time.time()
+                try:
+                    w, h, yuv = _jpeg_to_yuv(data, HUB_JPEG_MAX_SIDE)
+                except Exception:
+                    continue
+                t_cap = self.dejitter(arrival)          # sin hora de captura: la de llegada
+                ts, off = hdr.get(b"x-camui-t"), self.offset
+                if ts is not None and off is not None:
+                    t_send = float(ts)
+                    if last_ts is not None and 0 < t_send - last_ts < 1.0:
+                        gaps.append(t_send - last_ts)
+                    last_ts = t_send
+                    if b"x-camui-lag" in hdr:
+                        lag = float(hdr[b"x-camui-lag"])
+                    else:                           # cam-ui con el motor de siempre (pack 32-33)
+                        g = sorted(gaps)
+                        lag = CHAIN_PIPE_FRAMES * (g[len(g) // 2] if len(g) >= 10 else 1.0 / 30)
+                    t_cap = min(arrival, t_send - lag - off)
+                self.put(t_cap, w, h, yuv)
+                if ts is not None and off is not None:
+                    self.transit.append(time.time() - t_cap)
+                got = True
+            return got, ""
+        except Exception as e:
+            return got, "{0}: {1}".format(type(e).__name__, e)
+        finally:
+            alive.clear()
+            self._conn = None
+            if c is not None:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+
+
+class _PhoneSource(_HubSource):
+    """«Cámara del móvil» directa: los JPEG que manda el navegador del móvil se toman de
+    PhoneCamHub en el mismo programa (sin pasar por HTTP local ni por otro ffmpeg)."""
+
+    reader = "móvil"
+
+    def __init__(self, hub, key, spec, label, sid):
+        _HubSource.__init__(self, hub, key, spec, label)
+        self.sid = sid
+
+    def _run(self):
+        pc = self.hub.phonecam
+        gen = 0
+        while not self.closed.is_set():
+            r = pc.wait_frame(self.sid, gen, 0.5) if pc is not None else None
+            if r is None:
+                self.went_down("el móvil no está conectado")
+                if self.closed.wait(1.0):
+                    return
+                continue
+            jpeg, g, ts = r
+            if g == gen or jpeg is None:
+                continue
+            gen = g
+            try:
+                w, h, yuv = _jpeg_to_yuv(jpeg, HUB_JPEG_MAX_SIDE)
+            except Exception:
+                continue
+            self.put(self.dejitter(ts), w, h, yuv)
+
+
+class _HubSession:
+    """Un arranque del ffmpeg del mosaico: un socket local por cámara (ffmpeg se conecta como
+    cliente) y el reloj que, en cada tic, le da a cada una su fotograma. El tic j corresponde al
+    instante t_start + j/fps y muestra lo captado hasta t_start + j/fps - D - el «Retardo ms» de
+    esa cámara: ffmpeg recibe todas al mismo ritmo, numeradas por orden, y no espera a ninguna."""
+
+    def __init__(self, slots, fps, delay, t_start):
+        self.fps, self.delay, self.t_start = max(1, int(fps)), float(delay), float(t_start)
+        self._stop = threading.Event()
+        self.ticks = self.late = self.dropped = 0
+        self.slots = []
+        maxq = int(HUB_QUEUE_SECONDS * self.fps)
+        for sl in slots:
+            d = dict(sl)
+            ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ls.bind(("127.0.0.1", 0))
+            ls.listen(1)
+            ls.settimeout(0.5)
+            d.update(ls=ls, port=ls.getsockname()[1], q=deque(), cv=threading.Condition(),
+                     conn=None, rs=(None, None), maxq=maxq,
+                     ph_start=_hub_placeholder(d["w"], d["h"], "Iniciando {0}…".format(d["label"])),
+                     ph_off=_hub_placeholder(d["w"], d["h"], "Sin señal: {0}".format(d["label"])))
+            src = d["src"]
+            src.keep = max(0.2, self.delay + max(0.0, d["delay"]) + HUB_KEEP_EXTRA)
+            self.slots.append(d)
+        self.ports = [d["port"] for d in self.slots]
+
+    def start(self):
+        for d in self.slots:
+            threading.Thread(target=self._writer, args=(d,), daemon=True).start()
+        threading.Thread(target=self._clock, daemon=True).start()
+
+    def _frame(self, d, target):
+        src = d["src"]
+        it = src.pick(target)
+        if it is None:
+            return d["ph_off"] if src.state == "down" else d["ph_start"]
+        t, w, h, data = it
+        if target - t > HUB_HOLD_SECONDS:
+            return d["ph_off"]
+        if w != d["w"] or h != d["h"]:
+            c = d["rs"]
+            if c[0] is data:
+                return c[1]
+            try:
+                out = _yuv_resize(data, w, h, d["w"], d["h"])
+            except Exception:
+                return d["ph_off"]
+            d["rs"] = (data, out)
+            return out
+        return data
+
+    def _clock(self):
+        per = 1.0 / self.fps
+        j = 0
+        while not self._stop.is_set():
+            tj = self.t_start + j * per
+            wait = tj - time.time()
+            if wait > 0:
+                if self._stop.wait(wait):
+                    return
+            elif wait < -HUB_QUEUE_SECONDS:
+                # el PC se quedó parado (suspensión, un atasco enorme): no se mandan segundos y
+                # segundos de golpe; se sigue desde ahora (desfasa el audio lo que duró el parón)
+                log.warning("concentrador: el reloj iba %.1f s tarde; se salta al presente", -wait)
+                j = int((time.time() - self.t_start) * self.fps)
+                continue
+            elif wait < -per:
+                self.late += 1
+            for d in self.slots:
+                fr = self._frame(d, tj - self.delay - d["delay"])
+                with d["cv"]:
+                    q = d["q"]
+                    q.append(fr)
+                    if len(q) > d["maxq"]:
+                        q.popleft()
+                        self.dropped += 1
+                        if self.dropped == 1:
+                            log.warning("concentrador: ffmpeg no da abasto (lleva %.1f s de "
+                                        "retraso); se descartan fotogramas", HUB_QUEUE_SECONDS)
+                    d["cv"].notify()
+            j += 1
+            self.ticks = j
+
+    def _writer(self, d):
+        conn = None
+        while not self._stop.is_set() and conn is None:
+            try:
+                conn, _a = d["ls"].accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+        if conn is None:
+            return
+        try:
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
+        except OSError:
+            pass
+        d["conn"] = conn
+        try:
+            while not self._stop.is_set():
+                with d["cv"]:
+                    while not d["q"] and not self._stop.is_set():
+                        d["cv"].wait(0.5)
+                    if self._stop.is_set():
+                        break
+                    fr = d["q"].popleft()
+                conn.sendall(fr)
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def stop(self):
+        self._stop.set()
+        for d in self.slots:
+            with d["cv"]:
+                d["cv"].notify_all()
+            for s in (d.get("conn"), d["ls"]):
+                if s is None:
+                    continue
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    s.close()
+                except OSError:
+                    pass
+            d["q"].clear()
+
+
+class CamHub:
+    """El concentrador (ver el comentario de HUB_PIX): las cámaras viven aquí, cada una por su
+    lado, y sobreviven a los reinicios del ffmpeg del mosaico. ensure() pone en marcha a la vez
+    las que falten; start_session() las sirve a un ffmpeg; close() las suelta todas (para que
+    otro programa, los diagnósticos o el cuadro del driver puedan abrirlas)."""
+
+    def __init__(self, ffmpeg=None, phonecam=None, on_event=None, input_fn=None):
+        self._ffmpeg = ffmpeg
+        self.phonecam = phonecam
+        self.on_event = on_event
+        self.input_fn = input_fn or _dshow_input
+        self._lk = threading.Lock()
+        self.sources = {}
+        self._closing = {}
+        self._freed = {}              # dispositivo -> cuándo lo soltó su último proceso
+        self.released_at = 0.0        # cuándo soltó las cámaras el ffmpeg del motor de siempre
+        self.session = None
+
+    def ffmpeg(self):
+        f = self._ffmpeg() if callable(self._ffmpeg) else self._ffmpeg
+        return f or FFMPEG
+
+    @staticmethod
+    def source_key(cam):
+        spec = (cam.get("spec") or "").strip()
+        if _is_net_spec(spec):
+            return ("net", spec)
+        return ("dshow", spec, cam.get("mode") or "")
+
+    def _phone_sid(self, spec):
+        m = _PHONE_SPEC_RE.match(spec or "")
+        pc = self.phonecam
+        if not m or pc is None or not getattr(pc, "active", False):
+            return None
+        return m.group(2) if str(pc.local_port) == m.group(1) else None
+
+    def _make(self, key, label):
+        if key[0] == "net":
+            sid = self._phone_sid(key[1])
+            if sid:
+                return _PhoneSource(self, key, key[1], label, sid)
+            return _NetSource(self, key, key[1], label)
+        return _DshowSource(self, key, key[1], label, key[2])
+
+    def ensure(self, cams, labels=None, keep=False):
+        """Las fuentes de estas cámaras, en orden: las que ya estaban siguen tal cual (no se
+        vuelven a abrir), las nuevas arrancan TODAS A LA VEZ y las que sobran se sueltan (salvo
+        con keep: la vista de edición de una cámara deja abiertas las demás)."""
+        labels = labels or []
+        want, new = [], []
+        with self._lk:
+            for i, c in enumerate(cams):
+                key = self.source_key(c)
+                lab = labels[i] if i < len(labels) else (c.get("spec") or "?")
+                src = self.sources.get(key)
+                if src is None or src.done.is_set():
+                    src = self.sources[key] = self._make(key, lab)
+                    new.append(src)
+                src.label = lab
+                want.append(src)
+            keys = set(s.key for s in want)
+            for k in [k for k in self.sources if k not in keys and not (
+                    keep and not any(s.spec == self.sources[k].spec for s in want))]:
+                old = self.sources.pop(k)
+                old.close()
+                self._closing[old.spec] = old
+            for spec in [s for s, o in self._closing.items() if o.done.is_set()]:
+                del self._closing[spec]
+            for src in new:
+                prev = self._closing.get(src.spec)
+                if prev is not None and prev is not src:
+                    src.after = prev
+        for src in new:
+            src.start()
+        return want
+
+    def wait_decided(self, srcs, timeout):
+        """Espera (poco) a saber si cada cámara de red nueva es otro cam-ui: decide el retraso D."""
+        t_end = time.time() + timeout
+        for s in srcs:
+            ev = getattr(s, "decided", None)
+            if ev is not None:
+                ev.wait(max(0.0, t_end - time.time()))
+
+    @staticmethod
+    def plan_delay(slots):
+        """D: lo justo para que, en cada tic, el fotograma que toca de cada cámara ya esté aquí
+        (otro cam-ui tarda lo suyo en llegar; un «Retardo ms» negativo adelanta esa cámara)."""
+        need = HUB_DELAY_MIN
+        for sl in slots:
+            need = max(need, sl["src"].need() - sl["delay"])
+        return min(HUB_DELAY_MAX, need)
+
+    def start_session(self, slots, fps, delay, t_start):
+        self.end_session()
+        s = _HubSession(slots, fps, delay, t_start)
+        self.session = s
+        s.start()
+        return list(s.ports)
+
+    def end_session(self):
+        s, self.session = self.session, None
+        if s is not None:
+            s.stop()
+
+    def wanted_delay(self):
+        s = self.session
+        return None if s is None else self.plan_delay(s.slots)
+
+    def info(self):
+        """{índice: (tamaño real, fps medidos, fuente, tamaño de su entrada en ffmpeg)} de la
+        sesión en marcha."""
+        s = self.session
+        if s is None:
+            return {}
+        return dict((i, (d["src"].size, d["src"].fps(), d["src"], (d["w"], d["h"])))
+                    for i, d in enumerate(s.slots))
+
+    def pids(self):
+        with self._lk:
+            srcs = list(self.sources.values()) + list(self._closing.values())
+        out = []
+        for s in srcs:
+            p = s.proc
+            if p is not None and p.poll() is None:
+                out.append(p.pid)
+        return out
+
+    def close(self, wait=True, timeout=6.0):
+        """Suelta todas las cámaras. wait: no volver hasta que sus procesos hayan terminado."""
+        self.end_session()
+        with self._lk:
+            srcs = list(self.sources.values())
+            for s in srcs:
+                self._closing[s.spec] = s
+            self.sources = {}
+            srcs += [s for s in self._closing.values() if s not in srcs]
+        for s in srcs:
+            s.close()
+        if wait:
+            t_end = time.time() + timeout
+            for s in srcs:
+                s.done.wait(max(0.0, t_end - time.time()))
+        return len(srcs)
+
+    def _event(self, kind, src, detail):
+        if self.on_event is not None:
+            try:
+                self.on_event(kind, src.label, detail)
+            except Exception:
+                pass
+
+
 class FFmpegEngine:
     def __init__(self, ffmpeg=None):
         self.ffmpeg = ffmpeg or FFMPEG
@@ -3962,6 +4892,9 @@ class FFmpegEngine:
         self._abort = False          # el botón de pánico cancela los reintentos en curso
         self.vcam = None             # VirtualCam que recibe la salida RGB (o None)
         self.ipsrv = None            # IpServer que recibe la salida en red (o None)
+        self.hub = None              # CamHub (motor experimental), si CamApp lo enlaza
+        self.hub_on = False          # el ffmpeg en marcha toma las cámaras del concentrador
+        self.hub_delay = 0.0         # su retraso común D (s)
 
     # -- comandos en vivo (ffmpeg los lee por stdin: "c<filtro> -1 <orden> <valor>") --
     def send_filter_commands(self, cmds):
@@ -3990,11 +4923,15 @@ class FFmpegEngine:
         self.stop()
         last = ""
         attempt = 0
+        hub_on = bool(plan.get("hub")) and self.hub is not None
+        if not hub_on and self.hub is not None and (self.hub.sources or self.hub.session):
+            self.hub.close(wait=True)      # el motor de siempre abre él mismo las cámaras
+            self._released = time.time()
         while True:
             if self._abort:
                 return False, "cancelado"
             gap = RELEASE_GAP - (time.time() - self._released)
-            if gap > 0:
+            if gap > 0 and not hub_on:
                 time.sleep(gap)            # las cámaras USB tardan en soltarse
             if self._abort:
                 return False, "cancelado"
@@ -4013,7 +4950,18 @@ class FFmpegEngine:
                 plan["ipout"]["aport"] = self.ipsrv.arm_audio()  # igual, para el sonido (si hay)
             else:
                 plan.pop("ipout", None)
-            cmd, meta = build_command(plan, outfile, warmup, time.time(), True,
+            t0 = self._hub_prepare(plan) if hub_on else time.time()
+            self.hub_on = hub_on
+            if self.ipsrv is not None:
+                # con el concentrador, cada fotograma de «En la red» lleva la hora exacta a la que
+                # se captó lo que se ve (ver IpServer._read) y antigüedad 0 (X-Camui-Lag); con el
+                # motor de siempre, la de salida de ffmpeg, y el cam-ui que lo encadene la estima
+                ip = plan.get("ipout") or {}
+                hub_ip = bool(hub_on and ip.get("fps"))
+                self.ipsrv.content_t0 = t0 if hub_ip else None
+                self.ipsrv.content_fps = float(ip["fps"]) if hub_ip else None
+                self.ipsrv.content_lag = 0.0 if hub_ip else None
+            cmd, meta = build_command(plan, outfile, warmup, t0, True,
                                       input_fn, self.ffmpeg)
             self.cmd, self.meta, self.outfile = cmd, meta, outfile
             self._nlog = 0
@@ -4039,7 +4987,9 @@ class FFmpegEngine:
             tc.start()
             t_end = time.time() + 1.6
             while time.time() < t_end and p.poll() is None:
-                time.sleep(0.1)
+                if hub_on and self.frame_count > 0:
+                    break      # con el concentrador ya no hay cámaras que puedan fallar al abrir
+                time.sleep(0.05 if hub_on else 0.1)
             if p.poll() is None:
                 return True, ""
             te.join(1.0)
@@ -4048,6 +4998,8 @@ class FFmpegEngine:
             self._close(p)
             self.proc = None
             self._released = time.time()
+            if hub_on:
+                self.hub.end_session()
             busy = is_busy_error(last)
             limit = len(BUSY_WAITS) if busy else retries
             if attempt >= limit:
@@ -4055,6 +5007,58 @@ class FFmpegEngine:
             time.sleep(BUSY_WAITS[min(attempt, len(BUSY_WAITS) - 1)] if busy else 0.6)
             attempt += 1
         return False, last or "ffmpeg terminó al iniciar."
+
+    def _hub_prepare(self, plan):
+        """(motor experimental) Pone en marcha -- todas a la vez -- las cámaras que aún no lo estén,
+        abre una sesión del concentrador y deja el plan listo para build_command. Devuelve el t0
+        del audio: el instante cuya imagen es el fotograma 0 (ver _HubSession)."""
+        cams, labels = plan["cams"], plan.get("labels") or []
+        fps = int(plan["fps"])
+        srcs = self.hub.ensure(cams, labels, keep=bool(plan.get("_hub_keep")))
+        self.hub.wait_decided(srcs, 1.2)     # ¿cada cámara de red nueva es otro cam-ui?
+        slots = []
+        for i, (c, src) in enumerate(zip(cams, srcs)):
+            size = src.size or (tuple(c["src"]) if c.get("src") else None) or HUB_DEFAULT_SIZE
+            w, h = max(2, int(size[0])), max(2, int(size[1]))
+            c["src"], c["_hub"] = (w, h), True
+            c.pop("_offline", None)
+            slots.append({"src": src, "w": w, "h": h,
+                          "delay": float(c.get("delay", 0) or 0) / 1000.0,
+                          "label": labels[i] if i < len(labels) else src.label})
+        d = self.hub.plan_delay(slots)
+        t_start = time.time()
+        ports = self.hub.start_session(slots, fps, d, t_start)
+        plan["hub"] = {"ports": ports, "sizes": [(sl["w"], sl["h"]) for sl in slots],
+                       "pix": HUB_PIX, "delay": d}
+        self.hub_delay = d
+        log.info("concentrador: %d cámara(s), D=%d ms, tamaños %s", len(slots), int(d * 1000),
+                 plan["hub"]["sizes"])
+        return t_start - d
+
+    def input_info(self):
+        """({índice: (ancho, alto)}, {índice: fps}) de lo que llega de verdad de cada cámara."""
+        if self.hub_on and self.hub is not None:
+            sizes, fps = {}, {}
+            now = time.time()
+            for i, (sz, f, src, _slot) in self.hub.info().items():
+                if sz:
+                    sizes[i] = tuple(sz)
+                if f and src.t_first and now - src.t_first > 3.0:    # ya asentada
+                    fps[i] = f
+            return sizes, fps
+        return self.in_sizes, self.in_fps
+
+    def hub_slot_size(self, idx):
+        """Tamaño con el que ffmpeg recibe esa cámara del concentrador (o None)."""
+        it = self.hub.info().get(idx) if (self.hub_on and self.hub is not None) else None
+        return it[3] if it else None
+
+    def release_devices(self, wait=True):
+        """Para ffmpeg y suelta también las cámaras del concentrador (si las tiene abiertas)."""
+        self.stop()
+        if self.hub is not None and (self.hub.sources or self.hub.session):
+            self.hub.close(wait=wait)
+            self._released = time.time()
 
     def _drain_err(self, p):
         try:
@@ -4084,7 +5088,7 @@ class FFmpegEngine:
                     continue
                 if _OUTPUT_RE.match(s):
                     self._in_output = True
-                elif not self._in_output:
+                elif not self._in_output and not self.hub_on:
                     mv = _VSTREAM_RE.match(s)
                     if mv:
                         self.in_sizes[int(mv.group(1))] = (int(mv.group(2)), int(mv.group(3)))
@@ -4177,6 +5181,11 @@ class FFmpegEngine:
         log.info("engine.stop: graceful=%s rc=%s", graceful, self.last_rc)
         self._close(p)
         self._released = time.time()
+        if self.hub is not None:
+            self.hub.end_session()           # las cámaras siguen abiertas: ver release_devices
+            if not self.hub_on:
+                self.hub.released_at = self._released   # este sí tenía las cámaras abiertas
+        self.hub_on = False
         if self.vcam is not None:
             self.vcam._drop_srv()
         if self.ipsrv is not None:
@@ -5688,6 +6697,10 @@ class CamApp:
         self.phonecam = PhoneCamHub(self._phonecam_q, self._phonecam_pair_q)  # cámara del móvil
         self.ipsrv.phonecam = self.phonecam    # para el botón «Añadir cámara del móvil» de /
         self.ipsrv.phonecam_remote_q = self._phonecam_remote_q   # para que ese botón la encienda
+        # motor experimental (Ajustes → Avanzado): cada cámara por su lado, ver CamHub
+        self.hub = CamHub(lambda: self.eng.ffmpeg, self.phonecam, self._hub_event)
+        self.eng.hub = self.hub
+        self._hub_restart_t = 0.0
         self.phonecam_on = False
         self._phonecam_pair_shown_at = 0.0
         self._phonecam_qr_dialog = None                      # diálogo flotante del QR (ver más abajo)
@@ -5899,7 +6912,7 @@ class CamApp:
         if self._idle_mini():
             if self.previewing:
                 self.previewing = False
-                self._bg(self.eng.stop, lambda r: self._set_idle("Listo para grabar."))
+                self._bg(self.eng.release_devices, lambda r: self._set_idle("Listo para grabar."))
             else:
                 self._set_status("Listo para grabar.")
         elif not self.previewing and not self.paused and self.order:
@@ -6158,6 +7171,8 @@ class CamApp:
                     self._on_badmode(*arg)
                 elif cmd == "cam_offline":
                     self._on_cam_offline(arg)
+                elif cmd == "hub_down":
+                    self._on_hub_down(arg)
                 elif cmd == "probe_prog":
                     lab, i, n, m = arg
                     self._set_status("Probando «{0}»: {1}/{2} · {3}".format(lab, i, n, m))
@@ -6342,6 +7357,7 @@ class CamApp:
         self.v_preset = t(value=c.get("preset", "veryfast"))
         self.v_container = t(value=c.get("container", "mp4"))
         self.v_sync = t(value=_pair_label(SYNCS, c.get("sync", "clock")))
+        self.v_hub = tk.BooleanVar(value=bool(c.get("hub", False)))
         self.v_dir = t(value=c.get("dir", DEF_DIR))
         self.v_name = t(value=c.get("name", "Multivista"))
         vs = (self._cfg.get("vcam") or {}).get("size") if isinstance(self._cfg.get("vcam"), dict) else None
@@ -6374,7 +7390,7 @@ class CamApp:
                      "R": AudioRow(a.get("R"), self._on_change)}
         for v in (self.v_struct, self.v_trans, self.v_canvas, self.v_cwidth, self.v_fps,
                   self.v_quality, self.v_preset, self.v_container, self.v_sync, self.v_avoff,
-                  self.v_abuf):
+                  self.v_abuf, self.v_hub):
             v.trace_add("write", self._on_change)
         self._dummy = {"b": tk.BooleanVar(), "s": tk.StringVar(), "i": tk.IntVar(),
                        "d": tk.DoubleVar()}
@@ -7042,6 +8058,16 @@ class CamApp:
                   text="«Reloj común» alinea todas las cámaras y el audio en una misma línea "
                        "de tiempo. Si una cámara se comporta raro, prueba «Marcas del dispositivo»."
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
+        ttk.Checkbutton(sf, text="Motor nuevo (experimental): cada cámara por separado",
+                        variable=self.v_hub).grid(row=2, column=0, columnspan=2, sticky="w",
+                                                  padx=6, pady=(4, 0))
+        ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Abre todas las cámaras a la vez, cada una por su lado: una lenta (10 fps), "
+                       "una que se corta o la de otro PC ya no frenan a las demás, y reiniciar el "
+                       "mosaico o empezar a grabar no vuelve a abrirlas. La de otro cam-ui se "
+                       "alinea por la hora a la que se captó allí. Si algo va peor que con el "
+                       "motor de siempre, desmárcalo."
+                  ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
 
     # ------------------------------------------------------------ dispositivos
     def _refresh_devices(self, first=False):
@@ -7325,7 +8351,7 @@ class CamApp:
         self._set_status("Probando los modos de «{0}»…".format(lab))
 
         def work():
-            self.eng.stop()
+            self.eng.release_devices()
             time.sleep(RELEASE_GAP)
             modes = list(cs.modes) or list_camera_modes(spec)
             prog = lambda i, n, m: self._tray_q.append(("probe_prog", (lab, i, n, m)))
@@ -7967,7 +8993,7 @@ class CamApp:
         mode = cs.mode.get()                 # las variables de Tk solo se leen en el hilo principal
 
         def work():
-            self.eng.stop()
+            self.eng.release_devices()
             cam = {"spec": spec, "mode": mode}
             self._auto_modes({"labels": [lab], "cams": [cam], "fps": fps})
             time.sleep(RELEASE_GAP)
@@ -8028,7 +9054,7 @@ class CamApp:
         ffmpeg = self.eng.ffmpeg
 
         def work():
-            self.eng.stop()
+            self.eng.release_devices()
             time.sleep(RELEASE_GAP)
             return run_diagnostics(ffmpeg, cams, audios)
 
@@ -8100,7 +9126,7 @@ class CamApp:
         ffmpeg = self.eng.ffmpeg
 
         def work():
-            self.eng.stop()
+            self.eng.release_devices()
             time.sleep(0.6)
             cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "dshow",
                    "-show_video_device_dialog", "true", "-i", "video=" + spec,
@@ -8134,13 +9160,18 @@ class CamApp:
         else:
             txt = "Auto: se elige el modo más rápido que ofrezca la cámara"
             idx = self._run_labels.index(self.sel) if self.sel in self._run_labels else -1
-            sz, fps = self.eng.in_sizes.get(idx), self.eng.in_fps.get(idx)
+            sizes, fpss = self.eng.input_info()
+            sz, fps = sizes.get(idx), fpss.get(idx)
             if (self.previewing or self.recording) and sz:
                 txt = "Auto → recibiendo {0}×{1}{2}".format(
-                    sz[0], sz[1], " a {0:g} fps".format(fps) if fps else "")
+                    sz[0], sz[1], (" a ~{0:.0f} fps" if self.eng.hub_on else " a {0:g} fps").format(fps)
+                    if fps else "")
                 ms = (getattr(self, "_chain_info", None) or {}).get(self.sel)
                 if ms:
                     txt += " · alineada con su PC (se adelanta {0} ms)".format(ms)
+                it = self.hub.info().get(idx) if self.eng.hub_on else None
+                if it and it[2].reader == "camui":
+                    txt += " · alineada con su PC por la hora de captura"
             elif getattr(cs, "auto_mode", None):
                 txt = "Auto → {0}".format(cs.auto_mode)
         if txt != getattr(self, "_mode_now_txt", None):
@@ -8157,19 +9188,41 @@ class CamApp:
         ("Ajustando el mosaico al formato real de las cámaras…" todo el rato, sin asentarse)."""
         if not (self.previewing or self.recording) or self.eng.frame_count == 0:
             return
-        sizes = self.eng.in_sizes
+        hub = self.eng.hub_on
+        sizes, fpss = self.eng.input_info()
+        if hub:
+            self._hub_check_delay()
         if not sizes:
             return
         for idx, lab in enumerate(self._run_labels):
-            f = self.eng.in_fps.get(idx)
+            f = fpss.get(idx)
             if f and f < 15 and lab not in self._slow_warned:
                 self._slow_warned.add(lab)
-                log.warning("cámara lenta: «%s» anuncia %.1f fps con %s", lab, f, sizes.get(idx))
-                self._set_status("⚠ «{0}» solo da {1:g} fps con este modo y frena el mosaico. "
-                                 "Cámaras → Captura → «Detectar» y elige uno de 30 fps.".format(lab, f))
+                log.warning("cámara lenta: «%s» %s %.1f fps con %s", lab,
+                            "da" if hub else "anuncia", f, sizes.get(idx))
+                if hub:     # con el concentrador ya no frena a nadie: solo se ve a saltos ella
+                    self._set_status("⚠ «{0}» solo da {1:.0f} fps con este modo (el resto del "
+                                     "mosaico no se frena). Cámaras → Captura → «Detectar» y elige "
+                                     "uno de 30 fps.".format(lab, f))
+                else:
+                    self._set_status("⚠ «{0}» solo da {1:g} fps con este modo y frena el mosaico. "
+                                     "Cámaras → Captura → «Detectar» y elige uno de 30 fps.".format(lab, f))
         changed = False
         for idx, lab in enumerate(self._run_labels):
             sz, cs = sizes.get(idx), self.cams.get(lab)
+            if hub:
+                # su entrada en ffmpeg tiene el tamaño previsto; si llega otro, se ve reescalada
+                # de paso (ver _HubSession._frame) hasta recolocar -- que ahora no reabre nada,
+                # así que se recoloca siempre (nunca grabando: eso, al parar)
+                if not sz or cs is None:
+                    continue
+                if cs.src != sz:
+                    cs.src = sz
+                slot = self.eng.hub_slot_size(idx)
+                if slot and sz != tuple(slot) and not self.recording and \
+                        time.time() - self._hub_restart_t > 5.0:
+                    changed = True
+                continue
             if sz and cs is not None and cs.src != sz:
                 known_by_mode = mode_size(cs.mode.get()) is not None
                 jitter = cs.src is not None and _same_shape(cs.src, sz)
@@ -8178,12 +9231,43 @@ class CamApp:
                     changed = True
         if changed:
             log.info("formatos de cámara detectados: %s", sizes)
+            if hub:
+                self._hub_restart_t = time.time()
             self.save_config()
             if not self.recording and not self.editing:
                 self._set_status("Ajustando el mosaico al formato real de las cámaras…")
                 self._on_change()
             elif self.editing:
                 self._schedule_restart()
+
+    def _hub_check_delay(self):
+        """(motor experimental) Si la cámara de otro PC llega más tarde que el retraso común D con
+        el que arrancó, se vuelve a arrancar el mosaico (sin reabrir las cámaras) con uno mayor
+        -- nunca mientras se graba (cambiaría la sincronía con el audio a mitad)."""
+        s = self.hub.session
+        if s is None or self.recording or self.busy or not self.previewing:
+            return
+        want = self.hub.wanted_delay()
+        if want is None or want <= s.delay + max(0.05, 1.5 / s.fps):
+            return
+        if time.time() - self._hub_restart_t < 10.0:
+            return
+        self._hub_restart_t = time.time()
+        log.info("concentrador: la cámara de otro PC llega más tarde de lo previsto "
+                 "(D %d -> %d ms): se reajusta", s.delay * 1000, want * 1000)
+        self._schedule_restart(200)
+
+    def _hub_event(self, kind, label, detail):
+        """(hilos del concentrador) Avisos de las cámaras: se pasan al hilo de Tk."""
+        if kind == "down":
+            self._tray_q.append(("hub_down", label))
+        elif kind == "badmode":
+            self._tray_q.append(("badmode", (label, detail, "")))
+
+    def _on_hub_down(self, lab):
+        if self.previewing or self.recording:
+            self._set_status("«{0}» sin señal: el resto sigue igual y ella se vuelve a "
+                             "conectar sola en cuanto pueda.".format(lab))
 
     # ------------------------------------------------------------ audio presets
     def _first_adev(self, idx=0):
@@ -8249,6 +9333,8 @@ class CamApp:
         if self.vcam_on and self.vcam.active:
             plan["vcam"] = {"w": self.vcam.w, "h": self.vcam.h, "fps": min(30, self._fps()),
                             "pix": self.vcam.pix}
+        if self.v_hub.get():
+            plan["hub"] = True                 # el motor experimental (ver CamHub)
         if self.ipout_on and self.ipsrv.active:
             # la forma real del mosaico, dentro del máximo elegido -- sin barras negras añadidas
             iw, ih = ip_fit_size(g["W"], g["H"], getattr(self.ipsrv, "box", None) or
@@ -8267,11 +9353,15 @@ class CamApp:
         cam = cs.to_plan(self.vdev[lab]["spec"])
         cam.update(tile="auto", zoom=100.0, cx=50.0, cy=50.0)
         qual = dict(QUALITIES).get(self.v_quality.get(), 23)
-        return {"cams": [cam], "geom": {"W": tw, "H": th, "tiles": [(0, 0, tw, th)]},
+        plan = {"cams": [cam], "geom": {"W": tw, "H": th, "tiles": [(0, 0, tw, th)]},
                 "labels": [lab], "run_color": {lab: color_params(cs.color_values())},
                 "fps": self._fps(), "sync": _pair_value(SYNCS, self.v_sync.get()),
                 "crf": qual, "preset": self.v_preset.get(), "meter": False,
                 "audio": {"L": None, "R": None, "offset": 0}}
+        if self.v_hub.get():
+            plan["hub"] = True
+            plan["_hub_keep"] = True           # las demás cámaras siguen abiertas mientras tanto
+        return plan
 
     def save_config(self):
         cfg = {"version": 3, "order": list(self.order),
@@ -8280,7 +9370,7 @@ class CamApp:
                "canvas": self.v_canvas.get(), "cwidth": self._cwidth(), "fps": self._fps(),
                "quality": self.v_quality.get(), "preset": self.v_preset.get(),
                "container": self.v_container.get(),
-               "sync": _pair_value(SYNCS, self.v_sync.get()),
+               "sync": _pair_value(SYNCS, self.v_sync.get()), "hub": bool(self.v_hub.get()),
                "dir": self.v_dir.get(), "name": self.v_name.get(),
                "av_offset": _geti(self.v_avoff), "abuf": max(0, _geti(self.v_abuf, 50)),
                "audio": {"L": self.arow["L"].to_cfg(), "R": self.arow["R"].to_cfg()}}
@@ -8350,6 +9440,26 @@ class CamApp:
         por último, con el de fábrica del driver, en vez de tratarlo como cámara ocupada."""
         self.eng.stop()
         self._auto_modes(plan)
+        if plan.get("hub"):
+            # motor experimental: cada cámara se abre (todas a la vez) y se reconecta sola en el
+            # concentrador, así que ni la prueba previa de red ni el intermediario de las
+            # encadenadas hacen falta -- y ffmpeg ya no puede fallar por una cámara
+            self._chain_net_cams({"sync": "-"})          # cierra intermediarios que quedaran
+            self._chain_info = {}
+            res = self.eng.start(plan, **kw)
+            ok, err = res if isinstance(res, tuple) else (False, str(res))
+            for key, kind, what in (("vcam", "vcam_off", "la cámara virtual"),
+                                    ("ipout", "ip_off", "la salida en red")):
+                port = str((plan.get(key) or {}).get("port") or "")
+                if not ok and port and not self.eng._abort and ":" + port in err:
+                    log.warning("%s no conecta; se arranca sin ella:\n%s", what, err[-300:])
+                    plan.pop(key, None)
+                    self._tray_q.append((kind, "ffmpeg no pudo conectar con {0} (¿cortafuegos?).".format(what)))
+                    res = self.eng.start(plan, **kw)
+                    ok, err = res if isinstance(res, tuple) else (False, str(res))
+            if not ok:
+                self.hub.close(wait=False)     # no arrancó: que las cámaras no queden abiertas
+            return res
         self._preflight_net_cams(plan)
         self._chain_net_cams(plan)
         res = self.eng.start(plan, **kw)
@@ -8730,7 +9840,11 @@ class CamApp:
         log.warning("PÁNICO: cerrando ffmpeg")
 
         def work():
-            pids = set(ffmpeg_pids())
+            try:
+                self.hub.close(wait=False)       # que sus cámaras no se vuelvan a abrir solas
+            except Exception:
+                pass
+            pids = set(ffmpeg_pids()) | set(self.hub.pids())
             p = self.eng.proc
             if p is not None and p.poll() is None:
                 pids.add(p.pid)
@@ -8738,6 +9852,7 @@ class CamApp:
             n = sum(1 for pid in sorted(pids) if kill_pid(pid))
             try:
                 self.eng.stop(timeout_wait=2.0)
+                self.hub.close(wait=True, timeout=3.0)
             except Exception:
                 log.error("pánico, stop:\n%s", traceback.format_exc())
             shown = ""
@@ -8766,7 +9881,8 @@ class CamApp:
 
     def _stop_preview(self):
         self.previewing = False
-        self._bg(self.eng.stop, lambda r: self._set_idle("Vista previa detenida."))
+        # también suelta las cámaras del motor experimental: pausar es para liberarlas
+        self._bg(self.eng.release_devices, lambda r: self._set_idle("Vista previa detenida."))
 
     def _restart_preview(self):
         self._restart_job = None
@@ -8784,7 +9900,7 @@ class CamApp:
 
         def work():
             self.eng.stop()
-            time.sleep(0.5)
+            time.sleep(0.0 if plan.get("hub") else 0.5)   # el concentrador no suelta las cámaras
             return self._engine_start(plan)
 
         def done(res):
@@ -9436,7 +10552,7 @@ class CamApp:
 
         def work():
             self.eng.stop()
-            time.sleep(0.5)
+            time.sleep(0.0 if plan.get("hub") else 0.5)
             return self._engine_start(plan, outfile=outfile, warmup=warm)
 
         def done(res):
@@ -9464,7 +10580,10 @@ class CamApp:
         path, final = self.rec_path, self.rec_final
 
         def work():
-            self.eng.stop()
+            if self._idle_mini():
+                self.eng.release_devices()       # mini: sin vista previa, las cámaras quedan libres
+            else:
+                self.eng.stop()
             return self._finalize(path, final)
 
         def done(res):
@@ -9746,6 +10865,7 @@ class CamApp:
                 self.previewing = False
                 self._start_preview(auto=True)
                 return
+        self.hub.close(wait=False)        # parado del todo: las cámaras, libres
         self._set_idle("ffmpeg se detuvo.")
         msg = "ffmpeg se detuvo de forma inesperada (¿cámara desconectada?).\n\n" + err
         if was_rec:
@@ -9767,6 +10887,7 @@ class CamApp:
         log.error("vista previa: ffmpeg sigue vivo pero no entregó ningún fotograma en %gs. "
                  "Últimas líneas:\n%s", STUCK_PREVIEW_SECONDS, err)
         self.eng.stop()
+        self.hub.close(wait=False)
         self.previewing = False
         self.paused = True          # evita reintentar en bucle; F5 para reanudar, igual que _start_preview
         self._set_idle("No se pudo iniciar: ffmpeg se quedó colgado. Pulsa F5 para reintentar.")
@@ -9796,7 +10917,7 @@ class CamApp:
                 self.root.update_idletasks()
             rec_path, rec_final = (self.rec_path, self.rec_final) if self.recording else (None, None)
             self.recording = self.previewing = False
-            self.eng.stop()
+            self.eng.release_devices()
             if rec_path:                          # que el vídeo quede cerrado y en el contenedor elegido
                 ok, shown, msg = self._finalize(rec_path, rec_final)
                 log.info("grabación cerrada al salir: %s %s", shown, msg)

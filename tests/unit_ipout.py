@@ -521,7 +521,7 @@ def _plan13(geom):
         editing=None, order=list(geom["labels"]), vdev={l: {"spec": l} for l in geom["labels"]},
         cams={l: _Cam13() for l in geom["labels"]}, v_quality=_Var13("Media"),
         v_sync=_Var13(""), v_preset=_Var13("veryfast"), vcam_on=False, vcam=None,
-        ipout_on=True, ipsrv=srv_)
+        ipout_on=True, ipsrv=srv_, v_hub=_Var13(False))
     f_._geometry = lambda: geom
     f_._fps = lambda: 30
     f_._audio_plan = lambda: {"L": None, "R": None, "offset": 0}
@@ -544,7 +544,7 @@ def _plan13_fps(mosaic_fps):
     f_ = types.SimpleNamespace(
         editing=None, order=["HP"], vdev={"HP": {"spec": "HP"}}, cams={"HP": _Cam13()},
         v_quality=_Var13("Media"), v_sync=_Var13(""), v_preset=_Var13("veryfast"), vcam_on=False,
-        vcam=None, ipout_on=True, ipsrv=srv_)
+        vcam=None, ipout_on=True, ipsrv=srv_, v_hub=_Var13(False))
     f_._geometry = lambda: g_
     f_._fps = lambda: mosaic_fps
     f_._audio_plan = lambda: {"L": None, "R": None, "offset": 0}
@@ -699,5 +699,84 @@ q15 = Image.open(io.BytesIO(last_jpeg15)).quantization[0][0]
 assert q15 <= 6, "el JPEG llega con calidad baja (cuantización {0}; 85 -> 5, 70 -> 10)".format(q15)
 print("15) de punta a punta a 30 fps: llegan {0:.1f} fps, uno cada {1:.0f} ms, en JPEG de calidad "
       "85 OK".format(got_fps15, med15))
+
+# 16) (pack 34) con ffmpeg 7/8, todas las salidas salen al ritmo de la más lenta: con la vista
+#     previa a 20 fps (12 grabando), «En la red» llegaba de dos en dos / tres en tres y el emisor
+#     perdía ~10 fotogramas por segundo al codificar (medido con 7.0: 60 % de huecos de 0 ms
+#     grabando). Ahora la vista previa va al ritmo de la salida en red / cámara virtual.
+g16 = {"W": 640, "H": 360, "tiles": [(0, 0, 640, 360)]}
+c16 = {"spec": "x", "mode": None, "h": False, "v": False, "rot": 0, "delay": 0, "tile": "auto",
+       "zoom": 100.0, "cx": 50.0, "cy": 50.0, "color": {}}
+for outfile16, extra16, want16 in ((None, {}, 20), ("r.mkv", {}, 12),
+                                   ("r.mkv", {"ipout": {"w": 640, "h": 360, "fps": 30, "pix": "rgb24", "port": 1}}, 30),
+                                   (None, {"vcam": {"w": 640, "h": 360, "fps": 30, "pix": "rgb24", "port": 1}}, 30),
+                                   (None, {"ipout": {"w": 640, "h": 360, "fps": 10, "pix": "rgb24", "port": 1}}, 20)):
+    p16 = dict({"sync": "clock", "fps": 30, "crf": 23, "preset": "ultrafast", "cams": [dict(c16)], "geom": g16,
+                "audio": {"L": None, "R": None, "offset": 0}}, **extra16)
+    cmd16, _m = camui.build_command(p16, outfile=outfile16)
+    fc16 = cmd16[cmd16.index("-filter_complex") + 1]
+    got16 = re.search(r"fps=(\d+),scale=\d+:\d+:flags=fast_bilinear\[pv\]", fc16)
+    assert got16 and int(got16.group(1)) == want16, (outfile16, extra16, got16 and got16.group(1))
+print("16a) la vista previa va al ritmo de «En la red» / la cámara virtual cuando están activas OK")
+
+FF16 = ["ffmpeg"] + [p for p in os.environ.get("CAMUI_FFMPEGS", "").split(":") if p]
+for ff16 in FF16:
+    W16, H16 = 640, 360
+    stop16 = threading.Event()
+    lp16 = socket.socket()
+    lp16.bind(("127.0.0.1", 0))
+    P16 = lp16.getsockname()[1]
+    lp16.close()
+
+    def cam16():
+        so = None
+        while so is None and not stop16.is_set():
+            try:
+                so = socket.create_connection(("127.0.0.1", P16), timeout=1)
+            except OSError:
+                time.sleep(0.01)
+        k, t0 = 0, time.time()
+        while not stop16.is_set():
+            k += 1
+            time.sleep(max(0, t0 + k / 30.0 - time.time()))
+            try:
+                so.sendall(np.full((H16, W16), (k * 5) % 255, np.uint8).tobytes())
+            except OSError:
+                return
+    threading.Thread(target=cam16, daemon=True).start()
+    srv16 = camui.IpServer()
+    srv16.open(W16, H16, fps=30, port=58816)
+    arr16 = []
+    _set16 = srv16._ev.set
+
+    def mark16(_s=_set16):
+        arr16.append(time.time())
+        _s()
+    srv16._ev.set = mark16
+    eng16 = camui.FFmpegEngine(ff16)
+    eng16.ipsrv = srv16
+    p16 = {"sync": "clock", "fps": 30, "crf": 23, "preset": "ultrafast", "cams": [dict(c16, spec="cam16")],
+           "geom": g16, "labels": ["cam16"], "audio": {"L": None, "R": None, "offset": 0},
+           "ipout": {"w": W16, "h": H16, "fps": 30, "pix": "rgb24"}}
+    out16 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "t", "ip16.mkv")
+    ok16, err16 = eng16.start(p16, outfile=out16, input_fn=lambda k, s, o=None: [
+        "-f", "rawvideo", "-pix_fmt", "gray", "-s", "{0}x{1}".format(W16, H16), "-framerate", "30",
+        "-i", "tcp://127.0.0.1:{0}?listen=1".format(P16)])
+    assert ok16, err16
+    time.sleep(3)
+    r0_, d0_, a0_ = srv16.received, srv16.dropped, len(arr16)
+    time.sleep(6)
+    r1_, d1_ = srv16.received, srv16.dropped
+    g16_ = np.diff(arr16[a0_:]) * 1000
+    eng16.stop()
+    stop16.set()
+    srv16.close()
+    ver16 = subprocess.run([ff16, "-version"], capture_output=True, text=True).stdout.split()[2]
+    burst16 = 100 * (g16_ < 5).mean()
+    drop16 = (d1_ - d0_) / 6.0
+    assert burst16 < 10 and drop16 < 2.5, "ffmpeg {0}: {1:.0f} % de fotogramas a la vez, {2:.1f} " \
+        "perdidos/s".format(ver16, burst16, drop16)
+    print("16b) (ffmpeg {0}) grabando, «En la red» sale regular: {1:.0f} % de huecos de 0 ms, {2:.1f} "
+          "perdidos/s OK".format(ver16, burst16, drop16))
 
 print("TODO OK unit_ipout")
