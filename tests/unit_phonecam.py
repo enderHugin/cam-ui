@@ -359,6 +359,81 @@ print("13d) la CA se sirve de verdad por HTTP normal (sin cifrar, visible en la 
       "aparte del de 127.0.0.1), con el tipo exacto que hace que Safari ofrezca instalarla como "
       "perfil, y es byte a byte la misma que firma los certificados OK")
 
+# 13e) caso real (iPad, 15-11-2026): quien ya usaba «Cámara del móvil» antes del pack 24 tenía un
+#      certificado AUTOFIRMADO que seguía cubriendo su IP y no caducaba, así que se reutilizaba
+#      tal cual: la CA nunca llegaba a crearse y «Instalar certificado» descargaba un archivo
+#      vacío («certificado.txt», 0 bytes). Ahora solo se reutiliza si lo firmó la CA actual.
+import datetime as _dt
+import ipaddress as _ipa
+from cryptography.hazmat.primitives import serialization as _ser
+from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+from cryptography.x509.oid import NameOID as _NameOID
+
+for f in _phonecam_pem_files:
+    if os.path.exists(f):
+        os.remove(f)
+try:
+    _k = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _n = x509.Name([x509.NameAttribute(_NameOID.COMMON_NAME, "cam-ui (red local)")])
+    _now = _dt.datetime.now(_dt.timezone.utc)
+    _alt = [x509.DNSName("localhost"), x509.IPAddress(_ipa.ip_address("127.0.0.1"))] + [
+        x509.IPAddress(_ipa.ip_address(ip)) for ip in camui._local_ips() if ip]
+    _old = (x509.CertificateBuilder().subject_name(_n).issuer_name(_n).public_key(_k.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(_now - _dt.timedelta(days=1)).not_valid_after(_now + _dt.timedelta(days=700))
+            .add_extension(x509.SubjectAlternativeName(_alt), critical=False)
+            .sign(_k, _hashes.SHA256()))
+    with open(camui.PHONECAM_KEY_FILE, "wb") as f:
+        f.write(_k.private_bytes(_ser.Encoding.PEM, _ser.PrivateFormat.TraditionalOpenSSL,
+                                 _ser.NoEncryption()))
+    with open(camui.PHONECAM_CERT_FILE, "wb") as f:
+        f.write(_old.public_bytes(_ser.Encoding.PEM))
+    assert not os.path.exists(camui.PHONECAM_CA_CERT_FILE)
+    hub13e = camui.PhoneCamHub(deque(), deque())
+    hub13e.start(58632)
+    try:
+        assert os.path.exists(camui.PHONECAM_CA_CERT_FILE), "la CA tiene que existir al arrancar"
+        with open(camui.PHONECAM_CERT_FILE, "rb") as f:
+            leaf13e = x509.load_pem_x509_certificate(f.read())
+        with open(camui.PHONECAM_CA_CERT_FILE, "rb") as f:
+            ca13e = x509.load_pem_x509_certificate(f.read())
+        assert leaf13e.issuer == ca13e.subject and leaf13e.issuer != leaf13e.subject, \
+            "el certificado autofirmado de antes debe rehacerse firmado por la CA"
+        with urllib.request.urlopen("http://127.0.0.1:{0}/certificado".format(hub13e.cert_port),
+                                    timeout=5) as r:
+            der13e = r.read()
+            disp13e = r.headers.get("Content-Disposition", "")
+        assert len(der13e) > 300 and x509.load_der_x509_certificate(der13e) == ca13e, len(der13e)
+        assert "attachment" in disp13e and disp13e.endswith(".cer"), disp13e
+        # 13f) el QR lo abre el navegador predeterminado: en iPhone/iPad, si no es Safari, la
+        #      página lo dice (y qué escribir en Safari) -- en Safari o Android, no
+        ua = {"chrome_ios": "Mozilla/5.0 (iPad; CPU OS 18_1 like Mac OS X) AppleWebKit/605.1.15 "
+                            "(KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1",
+              "safari_ios": "Mozilla/5.0 (iPad; CPU OS 18_1 like Mac OS X) AppleWebKit/605.1.15 "
+                            "(KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+              "chrome_android": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+                                "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"}
+        pages = {}
+        for k_, v_ in ua.items():
+            req = urllib.request.Request("http://127.0.0.1:{0}/".format(hub13e.cert_port),
+                                         headers={"User-Agent": v_})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                pages[k_] = r.read().decode("utf-8")
+        want = "http://127.0.0.1:{0}/".format(hub13e.cert_port)
+        assert "Esto no es Safari" in pages["chrome_ios"] and want in pages["chrome_ios"]
+        assert "Esto no es Safari" not in pages["safari_ios"] and "%%NOSAFARI%%" not in pages["safari_ios"]
+        assert "Esto no es Safari" not in pages["chrome_android"]
+    finally:
+        hub13e.stop()
+finally:
+    for f in _phonecam_pem_files:
+        if os.path.exists(f):
+            os.remove(f)
+print("13e) un certificado autofirmado de antes del pack 24 se rehace firmado por la CA, y "
+      "«/certificado» sirve esa CA (no un archivo vacío) como .cer OK")
+print("13f) en iPhone/iPad con Chrome u otro navegador que no es Safari, la página avisa y dice "
+      "qué dirección escribir en Safari; en Safari y en Android, no OK")
+
 # 14-16) Si falta el paquete «cryptography» (hace falta para el certificado HTTPS, ver
 #        _phonecam_ensure_cert más arriba), antes se veía solo el mensaje interno de Python ("No
 #        module named 'cryptography'") y sin ninguna salida -- caso real, reportado por un

@@ -50,6 +50,7 @@ import argparse
 import queue
 import socket
 import hashlib
+import html
 import http.server
 import http.client
 import urllib.parse
@@ -82,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 34                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 35                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -3141,6 +3142,24 @@ def _phonecam_cert_fresh(cert_path, days_left=60):
         return False
 
 
+def _phonecam_cert_signed_by(cert_path, ca_cert):
+    """True si el certificado guardado lo firmó de verdad esa CA. Los de antes del pack 24 eran
+    autofirmados: reutilizarlos dejaba sin crear la CA (y «Instalar certificado» descargaba un
+    archivo vacío) y, aunque existiera, el iPhone/iPad seguiría sin fiarse de ese certificado."""
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives.asymmetric import padding
+        with open(cert_path, "rb") as f:
+            leaf = x509.load_pem_x509_certificate(f.read())
+        if leaf.issuer != ca_cert.subject:
+            return False
+        ca_cert.public_key().verify(leaf.signature, leaf.tbs_certificate_bytes,
+                                    padding.PKCS1v15(), leaf.signature_hash_algorithm)
+        return True
+    except Exception:
+        return False
+
+
 def _phonecam_ensure_ca():
     """La CA local de cam-ui (ver el comentario junto a PHONECAM_CA_CERT_FILE): se reutiliza
     para siempre si ya existe y se puede leer -- solo se genera una nueva si falta o está
@@ -3198,16 +3217,17 @@ def _phonecam_ensure_cert():
     más veces de las necesarias."""
     import ipaddress
     ips = [ip for ip in _local_ips() if ip]
+    ca_cert, ca_key = _phonecam_ensure_ca()       # la CA, siempre: es lo que se instala en iOS
     if (os.path.isfile(PHONECAM_CERT_FILE) and os.path.isfile(PHONECAM_KEY_FILE) and
             _phonecam_cert_covers(PHONECAM_CERT_FILE, ips) and
-            _phonecam_cert_fresh(PHONECAM_CERT_FILE)):
+            _phonecam_cert_fresh(PHONECAM_CERT_FILE) and
+            _phonecam_cert_signed_by(PHONECAM_CERT_FILE, ca_cert)):
         return PHONECAM_CERT_FILE, PHONECAM_KEY_FILE
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 
-    ca_cert, ca_key = _phonecam_ensure_ca()
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "cam-ui (red local)")])
     alt_names = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
@@ -3917,15 +3937,19 @@ a.btn{display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;
 .muted{color:#8d949e;font-size:14px}
 ol{padding-left:20px}
 li{margin-bottom:10px}
+.warn{background:#3a2a10;border:1px solid #d9a441;border-radius:8px;padding:12px 14px;margin:16px 0}
+.warn code{display:block;background:#16181c;color:#fff;font-size:18px;padding:8px 10px;
+           margin-top:8px;border-radius:6px;user-select:all;-webkit-user-select:all;word-break:break-all}
 </style></head>
 <body>
 <h1>Certificado de cam-ui</h1>
-<p>Esto hace falta <strong>solo en iPhone/iPad</strong> para que Safari deje usar la cámara del
+%%NOSAFARI%%<p>Esto hace falta <strong>solo en iPhone/iPad</strong> para que Safari deje usar la cámara del
 móvil con «Cámara del móvil». <strong>En Android no hace falta nada de esto</strong> -- con
 «Avanzado → Continuar» en el aviso del navegador ya funciona.</p>
 <p><a class="btn" href="/certificado">⬇ Instalar certificado</a></p>
 <ol>
-<li>Toca el enlace de arriba y luego «Permitir» / «Instalar». Puede avisar de que el perfil «no
+<li>En <strong>Safari</strong> (en iPhone/iPad, Chrome y los demás navegadores solo lo descargan
+como un archivo que no sirve), toca el enlace de arriba y luego «Permitir» / «Instalar». Puede avisar de que el perfil «no
 está firmado» o que su autenticidad «no se puede verificar» -- es normal aquí: lo genera tu
 propio ordenador, no hace falta que lo firme nadie más. Sigue con «Instalar» (puede pedirlo dos
 veces).</li>
@@ -3936,7 +3960,23 @@ junto a «cam-ui (red local)».</li>
 cambie de red.</p>
 </body></html>
 """
-_PHONECAM_CERT_PAGE = _PHONECAM_CERT_PAGE.encode("utf-8")
+# en iPhone/iPad solo Safari instala un certificado desde una web: Chrome (CriOS), Firefox
+# (FxiOS), Edge (EdgiOS), Opera (OPiOS) o la app de Google (GSA) lo descargan como un archivo
+# suelto -- y el lector de QR del sistema abre el navegador predeterminado, que puede ser Chrome
+_IOS_NOT_SAFARI_RE = re.compile(r"\b(CriOS|FxiOS|EdgiOS|OPiOS|GSA|DuckDuckGo|YaBrowser)/")
+_PHONECAM_NOSAFARI = """<div class="warn"><strong>⚠ Esto no es Safari.</strong> En iPhone/iPad solo
+Safari puede instalar el certificado: aquí solo se descargaría un archivo que no sirve. Abre
+<strong>Safari</strong> y escribe esta dirección (o mantén el dedo sobre ella, «Copiar», y pégala
+en Safari):<code>{url}</code></div>
+"""
+
+
+def _phonecam_cert_page(user_agent, host):
+    """La página de «Instalar certificado», con el aviso de arriba si es iPhone/iPad y no Safari."""
+    warn = ""
+    if _IOS_NOT_SAFARI_RE.search(user_agent or ""):
+        warn = _PHONECAM_NOSAFARI.format(url=html.escape("http://{0}/".format(host or "")))
+    return _PHONECAM_CERT_PAGE.replace("%%NOSAFARI%%", warn).encode("utf-8")
 
 
 class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
@@ -3956,26 +3996,36 @@ class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/certificado":
             try:
-                from cryptography import x509
                 from cryptography.hazmat.primitives.serialization import Encoding
-                with open(PHONECAM_CA_CERT_FILE, "rb") as f:
-                    pem = f.read()
-                der = x509.load_pem_x509_certificate(pem).public_bytes(Encoding.DER)
-            except Exception:
-                self._send(404, b"", "text/plain")
+                # la misma que firma el certificado HTTPS (y, si faltara, se crea: nunca más un
+                # archivo vacío como antes, cuando seguía en uso uno de antes del pack 24)
+                der = _phonecam_ensure_ca()[0].public_bytes(Encoding.DER)
+            except Exception as e:
+                log.error("«Instalar certificado»: no se pudo servir la CA:\n%s",
+                          traceback.format_exc())
+                self._send(500, ("<!doctype html><meta charset='utf-8'><p>cam-ui no pudo preparar "
+                                 "el certificado ({0}). Mira camui.log en el ordenador.</p>").format(
+                                     html.escape(type(e).__name__)).encode("utf-8"),
+                           "text/html; charset=utf-8", cache=False)
                 return
             # application/x-x509-ca-cert: el tipo que hace que Safari, al descargarlo, ofrezca
-            # "Instalar perfil" en vez de un archivo suelto cualquiera (mismo tipo que usa
-            # mitmproxy para esto mismo, ver mitmproxy/addons/onboardingapp)
-            self._send(200, der, "application/x-x509-ca-cert", cache=False)
+            # "Instalar perfil" en vez de un archivo suelto cualquiera (mismo tipo y misma
+            # Content-Disposition que usa mitmproxy para esto mismo, ver
+            # mitmproxy/addons/onboardingapp)
+            self._send(200, der, "application/x-x509-ca-cert", cache=False,
+                       disposition="attachment; filename=cam-ui-certificado.cer")
             return
-        self._send(200, _PHONECAM_CERT_PAGE, "text/html; charset=utf-8", cache=False)
+        self._send(200, _phonecam_cert_page(self.headers.get("User-Agent"),
+                                            self.headers.get("Host")),
+                   "text/html; charset=utf-8", cache=False)
 
-    def _send(self, code, body, ctype, cache=True):
+    def _send(self, code, body, ctype, cache=True, disposition=None):
         try:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            if disposition:
+                self.send_header("Content-Disposition", disposition)
             if not cache:
                 self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -6507,8 +6557,9 @@ class PhoneCamCertDialog:
         ttk.Label(frm, style="Muted.TLabel", wraplength=320, justify="left",
                  text="En Android no hace falta nada de esto (con «Avanzado → Continuar» en el "
                       "aviso del navegador ya funciona). En iPhone/iPad: apunta con la Cámara a "
-                      "este código y sigue las instrucciones de esa página -- solo hay que "
-                      "hacerlo una vez, no hace falta repetirlo."
+                      "este código y abre la página en Safari (Chrome u otro navegador solo "
+                      "descargan un archivo que no sirve; si se te abre en otro, la página te "
+                      "dice qué escribir en Safari). Solo hay que hacerlo una vez."
                  ).pack(pady=(4, 0))
         ttk.Button(frm, text="Cerrar", command=self.close).pack(pady=(14, 0))
         try:

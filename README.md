@@ -53,8 +53,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   20 fps) y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un certificado
   propio (aviso de "conexión no privada" la primera vez, normal). En iPhone/iPad hace falta,
   además, instalar una vez el certificado de cam-ui (botón «Instalar certificado» en esa misma
-  pestaña, con su propio QR) — sin eso, Safari no deja usar la cámara ahí en absoluto; en
-  Android no hace falta. De momento solo vídeo, sin el sonido del móvil. Si ya tienes abierta la
+  pestaña, con su propio QR, abriendo esa página en Safari: Chrome y los demás navegadores de
+  iPhone/iPad solo lo descargan como un archivo) — sin eso, Safari no deja usar la cámara ahí en
+  absoluto; en Android no hace falta. De momento solo vídeo, sin el sonido del móvil. Si ya tienes abierta la
   página de «En la red» (puerto
   distinto, sin certificado) en el móvil, ahí también hay un botón «Añadir cámara del móvil» que
   lleva directo a esa misma dirección `/add`, sin tener que teclear ni recordar el otro puerto.

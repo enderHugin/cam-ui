@@ -1,5 +1,17 @@
 # Novedades de cam-ui
 
+## pack 35 — 2026.11.15
+- **Arreglado: «Instalar certificado» (iPhone/iPad) descargaba un archivo vacío.** Si ya usabas
+  «Cámara del móvil» antes del pack 24, cam-ui seguía reutilizando el certificado de entonces
+  (autofirmado), que aún valía para tu IP: el certificado raíz que hay que instalar en el iPad no
+  llegaba a crearse nunca, y la descarga salía vacía («certificado.txt», 0 bytes). Ahora el
+  certificado solo se reutiliza si lo firmó ese certificado raíz; si no, se rehace al activar
+  «Cámara del móvil» (en Android saldrá una vez más el aviso de "conexión no privada").
+- **En iPhone/iPad, el certificado solo se puede instalar desde Safari.** El lector de QR abre el
+  navegador predeterminado; si es Chrome (u otro), la página ahora lo avisa arriba y muestra la
+  dirección exacta para escribirla o pegarla en Safari. La descarga se llama
+  «cam-ui-certificado.cer».
+
 ## pack 34 — 2026.11.15
 - **Motor nuevo, experimental: cada cámara por separado.** En Ajustes → Avanzado, «Motor nuevo
   (experimental)»; el de siempre sigue por defecto. Hasta ahora un solo ffmpeg abría todas las
