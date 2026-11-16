@@ -141,14 +141,18 @@ try:
     with open(camui.CONFIG, encoding="utf-8") as f:
         assert json.load(f).get("hub") is False
     print("5) desmarcada: vuelve el motor de siempre, y se guarda OK")
-    # 5b) con el motor de siempre, los fps se miran en la propia vista previa («~»)
+    # 5b) con el motor de siempre, los fps («~») se cuentan en lo que llega de ffmpeg, en CADA
+    #     fotograma: aunque la ventana se redibuje bastante menos (aquí ~8 veces por segundo; en
+    #     Windows nunca llega a 30), una cámara de 30 fps en un mosaico de 25 no sale a «~8»
     def _approx_fps():
         for t in overlay_texts():
             m5 = re.search(r"red .*~(\d+) fps", t.replace("\n", " "))
             if m5:
                 return int(m5.group(1))
         return -1
-    assert pump(lambda: _approx_fps() >= 8, 10), (overlay_texts(), app._tile_infos())
+    seen5 = []
+    assert pump(lambda: seen5.append(_approx_fps()) or _approx_fps() >= 18, 12, step=0.12), \
+        (seen5[-6:], overlay_texts(), app.eng.cmd)
     print("5b) con el motor de siempre, el rótulo da los fps vistos en la vista previa: «{0}» OK".format(
         " / ".join(overlay_texts()).replace("\n", " | ")))
 finally:

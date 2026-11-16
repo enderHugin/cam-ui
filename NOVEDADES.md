@@ -1,5 +1,11 @@
 # Novedades de cam-ui
 
+## pack 41 — 2026.11.16
+- Rótulo de la vista previa, con el motor de siempre: los fps con «~» se cuentan en todos los
+  fotogramas que llegan de ffmpeg, no solo en los que la ventana alcanza a dibujar. Antes el
+  número no podía pasar de las veces por segundo que se redibuja la ventana (menos de 30): una
+  cámara de 30 fps podía salir a «~19».
+
 ## pack 40 — 2026.11.16
 - **Rótulo sobre cada cámara del mosaico, solo en la vista previa** (no sale en la grabación, ni
   en la cámara virtual, ni en «En la red»): su nombre, cómo llega (local, red, otro cam-ui,

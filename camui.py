@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 40                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 41                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -5505,6 +5505,11 @@ class FFmpegEngine:
         self.err = deque(maxlen=60)
         self.latest = None
         self.frame_count = 0
+        # motor de siempre: momentos en que cambió lo que se ve en cada casilla, mirado en CADA
+        # fotograma que llega de ffmpeg (ver _tile_changes): los fps «~» del rótulo de la vista
+        # previa. Antes se miraba solo en los fotogramas que la ventana llegaba a dibujar, y la
+        # ventana no redibuja a 30 por segundo: una cámara de 30 fps salía a «~19».
+        self.tile_chg = []
         self.levels = [-90.0, -90.0]
         self.startup_time = 2.5      # s hasta el primer fotograma (se mide)
         self.meta = {}
@@ -5609,8 +5614,12 @@ class FFmpegEngine:
             self._in_output = False
             self._cmdq = queue.Queue()
             te = threading.Thread(target=self._drain_err, args=(p,), daemon=True)
-            tr = threading.Thread(target=self._read_frames, args=(p, meta["pw"], meta["ph"]),
-                                  daemon=True)
+            with self.lock:
+                self.tile_chg = ([] if hub_on else
+                                 [deque(maxlen=150) for _ in (meta.get("tiles") or ())])
+            tr = threading.Thread(target=self._read_frames, daemon=True,
+                                  args=(p, meta["pw"], meta["ph"], meta.get("tiles"),
+                                        meta.get("W"), self.tile_chg))
             tc = threading.Thread(target=self._cmd_writer, args=(p, self._cmdq), daemon=True)
             self._threads = [te, tr, tc]
             te.start()
@@ -5733,11 +5742,12 @@ class FFmpegEngine:
         except Exception:
             pass
 
-    def _read_frames(self, p, w, h):
+    def _read_frames(self, p, w, h, tiles=None, W=None, chg=None):
         fb = w * h * 3
         buf = bytearray(fb)
         mv = memoryview(buf)
         pos = 0
+        sig = [None] * len(chg or ())
         while True:
             try:
                 n = p.stdout.readinto(mv[pos:])
@@ -5750,7 +5760,10 @@ class FFmpegEngine:
                 arr = np.frombuffer(buf, np.uint8).reshape((h, w, 3))
                 buf = bytearray(fb)           # el fotograma entregado ya no se toca
                 mv = memoryview(buf)
+                ch = _tile_changes(arr, tiles, W, sig) if chg and W else ()
                 with self.lock:
+                    for i in ch:
+                        chg[i].append(time.time())
                     self.latest = arr
                     self.frame_count += 1
                     if self.frame_count == 1:
@@ -7275,6 +7288,28 @@ class PhoneCamDevicesDialog:
             pass
 
 
+def _tile_changes(frame, tiles, W, sig):
+    """Índices de las casillas del mosaico cuyo contenido cambió respecto al fotograma anterior
+    (sig: la firma de cada una, se actualiza aquí). Con el motor de siempre no se sabe a cuántos
+    fps llega de verdad cada cámara local o de red (ffmpeg solo dice lo que anuncia): se cuenta
+    cuántas veces por segundo cambia lo que se ve en cada casilla -- una rejilla de ~64×64
+    puntos (con menos, algo pequeño que se mueve podía caer entre dos y no contarse)."""
+    h, w = frame.shape[:2]
+    sc = w / float(W)
+    out = []
+    for i, (tx, ty, tw, th) in enumerate(tiles):
+        if i >= len(sig):
+            break
+        x0, y0, x1, y1 = int(tx * sc), int(ty * sc), int((tx + tw) * sc), int((ty + th) * sc)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            continue
+        s = hash(frame[y0:y1:max(1, (y1 - y0) // 64), x0:x1:max(1, (x1 - x0) // 64)].tobytes())
+        if s != sig[i]:
+            sig[i] = s
+            out.append(i)
+    return out
+
+
 def _fit_text(font, text, maxw):
     """El texto, recortado con «…» si no cabe en maxw píxeles con esa fuente."""
     if font.measure(text) <= maxw:
@@ -7332,7 +7367,6 @@ class CamApp:
         self._tinfo = []               # (nombre, detalle, ¿aviso?) por casilla (ver _tile_infos)
         self._tinfo_t = 0.0
         self._tinfo_font = None
-        self._tile_sig, self._tile_chg = [], []    # fps «a ojo» por casilla (ver _measure_tiles)
         self._run_color = {}
         self._color_jobs = {}
         self._pickers = []
@@ -9613,37 +9647,17 @@ class CamApp:
             return None
         return m.group(2)
 
-    def _measure_tiles(self, frame):
-        """Con el motor de siempre no se sabe a cuántos fps llega de verdad cada cámara local o de
-        red (ffmpeg solo dice lo que anuncia): se mira en la propia vista previa cuántas veces por
-        segundo cambia lo que se ve en cada casilla (unos cientos de píxeles: casi nada)."""
-        m = self.eng.meta
-        tiles, W = m.get("tiles"), m.get("W")
-        if not tiles or not W or self.editing:
-            return
-        if len(self._tile_sig) != len(tiles):
-            self._tile_sig = [None] * len(tiles)
-            self._tile_chg = [deque(maxlen=120) for _ in tiles]
-        h, w = frame.shape[:2]
-        sc = w / float(W)
-        now = time.time()
-        for i, (tx, ty, tw, th) in enumerate(tiles):
-            x0, y0, x1, y1 = int(tx * sc), int(ty * sc), int((tx + tw) * sc), int((ty + th) * sc)
-            if x1 - x0 < 8 or y1 - y0 < 8:
-                continue
-            # una rejilla de ~64×64 puntos: con menos, algo pequeño que se mueve podía caer
-            # entre dos puntos y no contarse
-            sig = hash(frame[y0:y1:max(1, (y1 - y0) // 64), x0:x1:max(1, (x1 - x0) // 64)].tobytes())
-            if sig != self._tile_sig[i]:
-                self._tile_sig[i] = sig
-                self._tile_chg[i].append(now)
-
     def _tile_fps(self, i):
-        if i >= len(self._tile_chg):
+        """fps «~» de la casilla i con el motor de siempre (ver FFmpegEngine.tile_chg): cambios
+        en los últimos 2 s (o desde que arrancó, si aún no hace tanto)."""
+        with self.eng.lock:
+            chg = self.eng.tile_chg
+            ts = list(chg[i]) if i < len(chg) else None
+        if ts is None:
             return None
         now = time.time()
-        n = sum(1 for t in self._tile_chg[i] if t >= now - 2.0)
-        return n / 2.0
+        span = max(0.5, min(2.0, now - ts[0])) if ts else 2.0
+        return sum(1 for t in ts if t >= now - span) / span
 
     def _dim_photo(self, nw, nh, X0, Y0, X1, Y1):
         """Velo oscuro semitransparente sobre la imagen, con un hueco donde queda el marco."""
@@ -11613,7 +11627,6 @@ class CamApp:
         if self._ph_visible:
             self.view.itemconfig(self._ph, state="hidden")
             self._ph_visible = False
-        self._measure_tiles(frame)
         self._redraw_overlay()
         m = self.eng.meta
         info = "Vista previa {0}×{1}  ·  salida {2}×{3}  ·  {4} fps  ·  audio {5}".format(
