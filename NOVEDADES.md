@@ -1,5 +1,23 @@
 # Novedades de cam-ui
 
+## pack 39 — 2026.11.16
+- **Direcciones sin número de puerto.** Si el 80 y el 443 de este PC están libres, cam-ui
+  también atiende ahí y reparte cada petición al servidor que toca:
+  - «En la red»: `http://ender-rog.local/` (o con la IP), en vez de `…:8554/`;
+  - añadir un móvil: `https://…/movil` (escrito sin `https://` también llega: se redirige);
+  - certificado de iPhone/iPad: `http://…/certificado`, en vez de un puerto que cambiaba cada vez.
+  Ajustes, los QR y los botones ya enseñan estas direcciones. Las de siempre (8554, 8555…)
+  siguen funcionando igual, p. ej. para otro cam-ui encadenado. Si otro programa usa ya el 80 o el
+  443, esa parte no se enciende y todo sigue con su número. El certificado de la cámara del móvil
+  ahora cubre también el nombre del PC (`ender-rog` y `ender-rog.local`), así que se rehace una
+  vez: en Android volverá a salir una vez el aviso de «conexión no privada»; en iPhone/iPad, con
+  el certificado ya instalado, nada.
+- **Calidad en la página del móvil:** selector «Auto» (por defecto) / 1080p / 720p / 540p. El
+  móvil reduce y comprime antes de enviar: menos wifi y menos batería. «Auto» empieza en 1080p y
+  baja un escalón si en 3 s no pasa de 14 fps; sube solo si cabe con holgura. Con una wifi
+  simulada lenta (80 ms, 8 Mbit/s) pasa sola a 360p y va a 10 fps (en 1080p, 2 fps); con una
+  buena (30 ms, 60 Mbit/s) se queda en 1080p a 20 fps. La página muestra la resolución en uso.
+
 ## pack 38 — 2026.11.16
 - **«📺 Ver lo que sale del PC» en la página de la cámara del móvil**: deja de mandar la cámara
   (la suelta de verdad) y vuelve a la página «En la red» de ese mismo PC. Desde allí, «Añadir

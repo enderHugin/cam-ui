@@ -22,6 +22,10 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 
 ## Funciones principales
 - Sincronía de cámaras y audio con un reloj común; vúmetros L/R.
+- Direcciones sin número de puerto cuando el 80 y el 443 de este PC están libres: «En la red» en
+  `http://nombre-del-pc.local/`, el certificado de iPhone/iPad en `/certificado`, añadir un móvil
+  en `https://…/movil` (escrito sin `https://` también llega). Los puertos de siempre (8554,
+  8555…) siguen funcionando igual, p. ej. para otro cam-ui encadenado.
 - Motor nuevo (experimental, Ajustes → Avanzado; el de siempre sigue por defecto): cada cámara en
   su propio proceso, abiertas todas a la vez y leídas siempre; un reloj único toma de cada una la
   imagen captada en cada instante y se la da a ffmpeg a ritmo fijo. Una cámara lenta, cortada o
@@ -40,8 +44,10 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   responder), no se cae todo el mosaico: queda un aviso «Sin señal: nombre» en su sitio, el resto
   sigue grabando, y se reconecta sola cuando vuelve.
 - Cámara del móvil, sin instalar nada y siempre activa (no hay que encenderla a mano): pestaña
-  Ajustes → «Cámara del móvil» muestra, ya listas, todas las direcciones fijas `/add` de este
-  equipo (una por cada tarjeta de red y el nombre del equipo, cada una clicable para probarla
+  Ajustes → «Cámara del móvil» muestra, ya listas, todas las direcciones fijas `/movil` de este
+  equipo, sin número de puerto si el 443 está libre (p. ej. `https://192.168.1.129/movil` o
+  `https://ender-rog.local/movil`; con número y `/add` si no — las dos valen siempre), una por
+  cada tarjeta de red y el nombre del equipo, cada una clicable para probarla
   desde este PC) para abrir cualquiera de ellas en el navegador del móvil; esa página pide
   permiso de cámara y, en cuanto lo concede, usa esa misma cámara para leer un QR. El QR que debe
   leer aparece en ese momento en la propia ventana del PC (en un diálogo flotante, al instante,
@@ -53,7 +59,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   que vuelva a pedir el QR). Al leerlo, el móvil navega solo a la página de captura (1080p a
   20 fps, que manda por una conexión que se reutiliza y con hasta dos fotogramas en camino a la
   vez; la propia página dice a qué PC manda y a cuántos fps de verdad, y avisa si la wifi no da
-  para más; su botón «📺 Ver lo que sale del PC» vuelve a «En la red») y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un certificado
+  para más; un selector de calidad —«Auto», que baja la resolución en el propio móvil si la wifi
+  no da para más, o 1080p/720p/540p fijas— reduce y comprime antes de enviar; su botón «📺 Ver
+  lo que sale del PC» vuelve a «En la red») y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un certificado
   propio (aviso de "conexión no privada" la primera vez, normal). En iPhone/iPad hace falta,
   además, instalar una vez el certificado de cam-ui (botón «Instalar certificado» en esa misma
   pestaña, con su propio QR, abriendo esa página en Safari: Chrome y los demás navegadores de

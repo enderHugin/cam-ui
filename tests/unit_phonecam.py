@@ -341,7 +341,7 @@ try:
             assert r.status == 200 and "text/html" in r.headers.get("Content-Type", "")
         assert "iPhone/iPad" in landing and "/certificado" in landing
         with urllib.request.urlopen(
-                "http://127.0.0.1:{0}/certificado".format(hub13d.cert_port), timeout=5) as r:
+                "http://127.0.0.1:{0}/certificado.cer".format(hub13d.cert_port), timeout=5) as r:
             der = r.read()
             assert r.headers.get("Content-Type") == "application/x-x509-ca-cert"
         served = x509.load_der_x509_certificate(der)
@@ -399,7 +399,7 @@ try:
             ca13e = x509.load_pem_x509_certificate(f.read())
         assert leaf13e.issuer == ca13e.subject and leaf13e.issuer != leaf13e.subject, \
             "el certificado autofirmado de antes debe rehacerse firmado por la CA"
-        with urllib.request.urlopen("http://127.0.0.1:{0}/certificado".format(hub13e.cert_port),
+        with urllib.request.urlopen("http://127.0.0.1:{0}/certificado.cer".format(hub13e.cert_port),
                                     timeout=5) as r:
             der13e = r.read()
             disp13e = r.headers.get("Content-Disposition", "")
@@ -680,7 +680,8 @@ ips20 = camui._local_ips()
 urls20 = camui.CamApp._phonecam_add_url_list(app20)
 assert len(urls20) == (len(ips20) if ips20 else 1) + 1, (urls20, ips20)
 assert all(u.startswith("https://") and u.endswith(":58699/add") for u in urls20), urls20
-assert urls20[-1] == "https://{0}:58699/add".format(camui.socket.gethostname()), urls20
+# (pack 39) el nombre, como «nombre.local»: el que entienden iPhone/iPad sin más
+assert urls20[-1] == "https://{0}:58699/add".format(camui._host_local()), urls20
 assert urls20[0] == camui.CamApp._phonecam_add_url(app20), \
     (urls20[0], camui.CamApp._phonecam_add_url(app20))
 print("20) la lista de direcciones de «/add» es exhaustiva (una por IP real + el nombre del "
@@ -900,6 +901,106 @@ finally:
     hub25.stop()
 print("25) «Ver lo que sale del PC» lleva a «En la red» del mismo PC (por IP o por nombre), y "
       "sabe cuándo está apagada OK")
+
+# 26) (pack 39) direcciones sin número de puerto: FrontDoor escucha en el «80» y el «443» (aquí,
+#     puertos de prueba) y pasa cada conexión, tal cual, al servidor de siempre: por http según
+#     la ruta (/certificado → el del certificado; /movil escrito sin https → redirige; lo demás →
+#     «En la red», incluido /camui/clock); por https, todo a «Cámara del móvil», sin descifrar
+import socket as _socket  # noqa: E402
+
+
+def _free_port():
+    s_ = _socket.socket()
+    s_.bind(("127.0.0.1", 0))
+    p_ = s_.getsockname()[1]
+    s_.close()
+    return p_
+
+
+ip26 = camui.IpServer()
+ip26.open(320, 240, port=_free_port())
+hub26 = camui.PhoneCamHub(deque(), deque())
+p26, t26 = hub26.start(58700)
+hub26.viewer = ip26
+ip26.phonecam = hub26
+fake26 = type("A", (), {})()
+fake26.phonecam, fake26.ipsrv = hub26, ip26
+fd26 = camui.FrontDoor(_free_port(), _free_port())
+fd26.http_route = lambda path: camui.CamApp._front_http_route(fake26, path)
+fd26.https_target = lambda: hub26.port if hub26.active else None
+old_front26 = camui.FRONT
+camui.FRONT = fd26
+fd26.start()
+try:
+    assert fd26.http_ok and fd26.https_ok
+    H, S = fd26.http_port, fd26.https_port
+    with urllib.request.urlopen("http://127.0.0.1:{0}/".format(H), timeout=5) as r:
+        assert r.status == 200 and "Añadir cámara del móvil" in r.read().decode("utf-8")
+    with urllib.request.urlopen("http://127.0.0.1:{0}/camui/clock".format(H), timeout=5) as r:
+        assert json.loads(r.read().decode("utf-8")).get("camui") == 1
+    with urllib.request.urlopen("http://127.0.0.1:{0}/certificado".format(H), timeout=5) as r:
+        cert_page26 = r.read().decode("utf-8")
+    assert "Instalar certificado" in cert_page26 and 'href="/certificado.cer"' in cert_page26
+    with urllib.request.urlopen("http://127.0.0.1:{0}/certificado.cer".format(H), timeout=5) as r:
+        der26 = r.read()
+        assert r.headers.get("Content-Disposition", "").endswith(".cer") and len(der26) > 300
+    x509.load_der_x509_certificate(der26)
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+    try:
+        urllib.request.build_opener(_NoRedirect).open(
+            urllib.request.Request("http://127.0.0.1:{0}/movil".format(H),
+                                   headers={"Host": "ender-rog.local"}), timeout=5)
+        raise SystemExit("debería redirigir a https")
+    except urllib.error.HTTPError as e:
+        assert e.code == 302 and e.headers["Location"] == "https://ender-rog.local:{0}/movil".format(S), \
+            (e.code, e.headers.get("Location"))
+    # https: la página de añadir y la cámara, con keep-alive de punta a punta por el proxy
+    c26 = http.client.HTTPSConnection("127.0.0.1", S, context=CTX, timeout=5)
+    c26.request("GET", "/movil")
+    r26 = c26.getresponse()
+    assert r26.status == 200 and "camuiDeviceLabel" in r26.read().decode("utf-8")
+    c26.request("GET", "/cam?t=" + t26, headers={"Host": "ender-rog.local:{0}".format(S)})
+    page26 = c26.getresponse().read().decode("utf-8")
+    assert 'var viewerUrl = "http://ender-rog.local:{0}/";'.format(H) in page26, \
+        re.search(r"var viewerUrl = [^;]*;", page26).group(0)
+    sid26 = re.search(r'var sid = "([^"]+)"', page26).group(1)
+    for k26 in range(3):
+        c26.request("POST", "/cam/ingest/" + sid26, body=_jpeg(k26), headers={"X-Camui-Seq": str(k26 + 1)})
+        r26 = c26.getresponse()
+        r26.read()
+        assert r26.status == 200 and not r26.will_close
+    c26.close()
+    assert hub26.latest(sid26)[1] == 3
+    # las direcciones que enseña cam-ui ya van sin el número de siempre
+    assert camui._add_path() == "/movil"
+    assert camui._https_url("192.168.1.129", 8555, "/movil") == "https://192.168.1.129:{0}/movil".format(S)
+    assert camui._http_url("192.168.1.129", 8554, "/") == "http://192.168.1.129:{0}/".format(H)
+    # el certificado HTTPS también vale para el nombre del PC (y su .local)
+    with open(camui.PHONECAM_CERT_FILE, "rb") as f:
+        san26 = x509.load_pem_x509_certificate(f.read()).extensions.get_extension_for_class(
+            x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    assert all(n in san26 for n in camui._phonecam_host_names()), san26
+    # un puerto ya ocupado por otro programa: esa parte no se enciende y todo lleva su número
+    busy26 = _socket.socket()
+    busy26.bind(("0.0.0.0", 0))
+    busy26.listen(1)
+    fd26b = camui.FrontDoor(busy26.getsockname()[1], None)
+    camui.FRONT = fd26b
+    fd26b.start()
+    assert not fd26b.http_ok and camui._http_url("10.0.0.2", 8554) == "http://10.0.0.2:8554/"
+    assert camui._add_path() == "/add"
+    busy26.close()
+finally:
+    camui.FRONT = old_front26
+    fd26.stop()
+    hub26.stop()
+    ip26.close()
+print("26) sin número de puerto: «/», «/camui/clock», «/certificado» (página) y «.cer», «/movil» "
+      "por http redirige a https, y por https la página y los fotogramas (keep-alive) llegan "
+      "tal cual; certificado con el nombre del PC; con el puerto ocupado, todo como antes OK")
 
 import glob  # noqa: E402
 for f in list(_phonecam_pem_files) + glob.glob(os.path.join(HERE, "_unit_phonecam_devices*.json")):

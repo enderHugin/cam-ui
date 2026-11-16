@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 38                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 39                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1728,7 +1728,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
         if not phonecam.active:
             self._send_json(503, {"error": "No se pudo encender la cámara del móvil."})
             return
-        url = "https://{0}:{1}/add".format(self._this_host(), phonecam.port)
+        url = _https_url(self._this_host(), phonecam.port, _add_path())
         self._send_json(200, {"url": url})
 
     def _send_404(self):
@@ -1790,7 +1790,7 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
             # pide por su cuenta que se encienda sola (ver /addcam/start, _addcam_start) en vez
             # de decir que hay que ir antes a Ajustes a mano
             phonecam = getattr(owner, "phonecam", None)
-            add_url = ("https://{0}:{1}/add".format(host, phonecam.port)
+            add_url = (_https_url(host, phonecam.port, _add_path())
                        if phonecam is not None and phonecam.active else "")
             body = (_VIEWER_HTML.replace(b"__CAM_UI_LABEL__", label.encode("utf-8"))
                                  .replace(b"__CAM_CAST_URL__", cast_url.encode("utf-8"))
@@ -1947,6 +1947,188 @@ class _MjpegHandler(http.server.BaseHTTPRequestHandler):
 class _MjpegHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+
+# ---- Direcciones sin número de puerto (pack 39): «http://ender-rog.local/» en vez de
+# «http://ender-rog.local:8554/», «https://…/movil» en vez de «https://…:8555/add»,
+# «http://…/certificado» en vez de un puerto que cambiaba cada vez. Los navegadores solo omiten
+# el número con los puertos estándar (80 para http, 443 para https), así que FrontDoor escucha en
+# ellos y pasa cada conexión, tal cual, al servidor de siempre que le toca: por http, según la
+# dirección pedida (/certificado → el del certificado; lo demás → «En la red»); por https, todo a
+# «Cámara del móvil» (sin descifrar nada: su certificado es el mismo de siempre). Los puertos de
+# siempre siguen funcionando igual (otros PCs encadenados, enlaces guardados). Si 80 o 443 ya
+# los usa otro programa de este PC, esa parte no se enciende y todo sigue con su número.
+FRONT_HTTP_PORT = 80
+FRONT_HTTPS_PORT = 443
+
+
+class FrontDoor:
+    def __init__(self, http_port=FRONT_HTTP_PORT, https_port=FRONT_HTTPS_PORT):
+        self.http_port, self.https_port = http_port, https_port
+        self.http_ok = self.https_ok = False
+        self.http_route = None        # f(ruta) -> puerto local del servidor que la atiende, o None
+        self.https_target = None      # f() -> puerto local de «Cámara del móvil», o None
+        self._socks = []
+        self._closed = False
+
+    def start(self):
+        self._closed = False
+        for port, kind in ((self.http_port, "http"), (self.https_port, "https")):
+            if not port or getattr(self, kind + "_ok"):
+                continue
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                else:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("0.0.0.0", port))
+                s.listen(64)
+            except OSError as e:
+                s.close()
+                log.info("direcciones sin puerto: el %d (%s) no está libre (%r); se sigue con "
+                         "los números de siempre", port, kind, e)
+                continue
+            self._socks.append(s)
+            setattr(self, kind + "_ok", True)
+            threading.Thread(target=self._accept, args=(s, kind), daemon=True).start()
+        log.info("direcciones sin puerto: http %s, https %s",
+                 "sí ({0})".format(self.http_port) if self.http_ok else "no",
+                 "sí ({0})".format(self.https_port) if self.https_ok else "no")
+
+    def stop(self):
+        self._closed = True
+        for s in self._socks:
+            try:
+                s.close()
+            except OSError:
+                pass
+        self._socks = []
+        self.http_ok = self.https_ok = False
+
+    def suffix(self, kind):
+        """":puerto" si hace falta en la dirección (no es el estándar), o ""."""
+        port = self.http_port if kind == "http" else self.https_port
+        return "" if port == (80 if kind == "http" else 443) else ":{0}".format(port)
+
+    def _accept(self, ls, kind):
+        while not self._closed:
+            try:
+                c, _a = ls.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(c, kind), daemon=True).start()
+
+    def _handle(self, c, kind):
+        head = b""
+        try:
+            if kind == "https":
+                port = self.https_target() if self.https_target else None
+            else:
+                c.settimeout(10.0)
+                while b"\r\n\r\n" not in head and len(head) < 16384:
+                    d = c.recv(4096)
+                    if not d:
+                        break
+                    head += d
+                parts = head.split(b"\r\n", 1)[0].split(b" ")
+                path = parts[1].decode("latin-1") if len(parts) >= 2 else "/"
+                port = self.http_route(path) if self.http_route else None
+                if port == "https" and self.https_ok:
+                    # «ender-rog.local/movil» escrito a mano llega por http: se manda a https
+                    m = re.search(rb"(?im)^host:\s*([^\r\n]+)", head)
+                    host = m.group(1).decode("latin-1").strip() if m else ""
+                    host = host[:host.find("]") + 1] if host.startswith("[") else host.split(":")[0]
+                    loc = "https://{0}{1}{2}".format(host, self.suffix("https"), path)
+                    c.sendall(("HTTP/1.0 302 Found\r\nLocation: {0}\r\nContent-Length: 0\r\n"
+                               "Connection: close\r\n\r\n").format(loc).encode("latin-1"))
+                    port = None
+                elif port == "https":
+                    port = None
+                elif port is None:
+                    body = ("<!doctype html><meta charset='utf-8'><meta name='viewport' "
+                            "content='width=device-width'><p style='font:16px sans-serif'>Esto "
+                            "es cam-ui, pero esta parte está apagada ahora mismo en el PC.</p>"
+                            ).encode("utf-8")
+                    c.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: text/html; "
+                              b"charset=utf-8\r\nContent-Length: " + str(len(body)).encode() +
+                              b"\r\nConnection: close\r\n\r\n" + body)
+            if port is None:
+                c.close()
+                return
+            b = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+            c.settimeout(None)
+            b.settimeout(None)
+            if head:
+                b.sendall(head)
+        except OSError:
+            try:
+                c.close()
+            except OSError:
+                pass
+            return
+        _pipe_both(c, b)
+
+
+def _pipe_both(a, b):
+    """Copia a<->b hasta que los dos lados terminen (o, cuando uno termina, el otro tarda >10 s)."""
+    done = threading.Event()
+
+    def one(src, dst):
+        try:
+            while True:
+                d = src.recv(65536)
+                if not d:
+                    break
+                dst.sendall(d)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+            done.set()
+
+    t = threading.Thread(target=one, args=(b, a), daemon=True)
+    t.start()
+    t2 = threading.Thread(target=one, args=(a, b), daemon=True)
+    t2.start()
+    done.wait()
+    t.join(10.0)
+    t2.join(10.0)
+    for s_ in (a, b):
+        try:
+            s_.close()
+        except OSError:
+            pass
+
+
+FRONT = FrontDoor()                   # lo arranca CamApp; sin arrancar, todo lleva su número
+
+
+def _http_url(host, port, path="/"):
+    if FRONT.http_ok:
+        return "http://{0}{1}{2}".format(host, FRONT.suffix("http"), path)
+    return "http://{0}:{1}{2}".format(host, port, path)
+
+
+def _https_url(host, port, path):
+    if FRONT.https_ok:
+        return "https://{0}{1}{2}".format(host, FRONT.suffix("https"), path)
+    return "https://{0}:{1}{2}".format(host, port, path)
+
+
+def _add_path():
+    """La página para añadir un móvil: «/movil» sin número de puerto; «/add» con él (las dos
+    valen siempre)."""
+    return "/movil" if FRONT.https_ok else "/add"
+
+
+def _host_local():
+    """«nombre-del-pc.local»: el nombre que iPhone/iPad (y muchos otros) resuelven solos."""
+    name = re.sub(r"[^a-z0-9\-]", "", (socket.gethostname() or "").split(".")[0].lower())
+    return (name + ".local") if name else ""
 
 
 class IpServer:
@@ -3115,6 +3297,7 @@ PHONECAM_STALE_SECONDS = 8             # sin fotogramas nuevos este tiempo: la c
 PHONECAM_STATS_SECONDS = 5.0           # cada cuánto se anota en camui.log cómo llega cada móvil
 PHONECAM_INFLIGHT = 2                  # fotogramas que el móvil puede estar enviando a la vez
 PHONECAM_SLOW_FPS = 10                 # por debajo, la página del móvil avisa de que va lenta
+PHONECAM_AUTO_LOW_FPS = 14             # «Auto»: por debajo, baja un escalón de resolución
 PHONECAM_KEEPALIVE_S = 20              # una conexión del móvil sin usar se cierra tras esto
 PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan del todo (no acumular)
 PHONECAM_PAIR_TIMEOUT = 90             # sin escanear este QR de emparejamiento en este tiempo, se retira solo
@@ -3139,7 +3322,14 @@ PHONECAM_LEAF_DAYS = 800       # <= 825 días: lo que exige iOS 13+/macOS 10.15+
                                 # (soporte.apple.com/103769), o Safari deja de confiar en él sin más
 
 
-def _phonecam_cert_covers(cert_path, ips):
+def _phonecam_host_names():
+    """Nombres de este PC que también debe cubrir el certificado (para entrar por nombre, p. ej.
+    «https://ender-rog.local/movil», y que un iPhone/iPad con la CA instalada se fíe igual)."""
+    base = re.sub(r"[^a-z0-9\-]", "", (socket.gethostname() or "").split(".")[0].lower())
+    return [base, base + ".local"] if base else []
+
+
+def _phonecam_cert_covers(cert_path, ips, names=()):
     """True si el certificado ya guardado cubre (en su SAN) todas las IPs dadas -- si el
     equipo cambió de red/IP desde que se generó, hay que rehacerlo o el navegador se queja de
     un fallo distinto (nombre no coincide) en vez del aviso normal de "no privada"."""
@@ -3149,7 +3339,8 @@ def _phonecam_cert_covers(cert_path, ips):
             cert = x509.load_pem_x509_certificate(f.read())
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         have = set(str(ip) for ip in san.get_values_for_type(x509.IPAddress))
-        return all(ip in have for ip in ips)
+        have_n = set(n.lower() for n in san.get_values_for_type(x509.DNSName))
+        return all(ip in have for ip in ips) and all(n in have_n for n in names)
     except Exception:
         return False
 
@@ -3250,7 +3441,7 @@ def _phonecam_ensure_cert():
     ips = [ip for ip in _local_ips() if ip]
     ca_cert, ca_key = _phonecam_ensure_ca()       # la CA, siempre: es lo que se instala en iOS
     if (os.path.isfile(PHONECAM_CERT_FILE) and os.path.isfile(PHONECAM_KEY_FILE) and
-            _phonecam_cert_covers(PHONECAM_CERT_FILE, ips) and
+            _phonecam_cert_covers(PHONECAM_CERT_FILE, ips, _phonecam_host_names()) and
             _phonecam_cert_fresh(PHONECAM_CERT_FILE) and
             _phonecam_cert_signed_by(PHONECAM_CERT_FILE, ca_cert)):
         return PHONECAM_CERT_FILE, PHONECAM_KEY_FILE
@@ -3262,6 +3453,7 @@ def _phonecam_ensure_cert():
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "cam-ui (red local)")])
     alt_names = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+    alt_names += [x509.DNSName(n) for n in _phonecam_host_names()]
     for ip in ips:
         try:
             alt_names.append(x509.IPAddress(ipaddress.ip_address(ip)))
@@ -3324,6 +3516,8 @@ button:disabled{opacity:.6}
      text-align:center;font-size:15px;line-height:1.5;background:#20242b;
      border:1px solid #4a4f58;border-radius:10px;padding:18px 22px}
 #big button{margin-top:14px}
+select{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:7px;padding:9px 8px;
+       font-size:15px}
 </style></head>
 <body>
 <div id="stage">
@@ -3340,6 +3534,12 @@ button:disabled{opacity:.6}
   <div id="bar">
     <button id="flip">&#128260; Cambiar c&aacute;mara</button>
     <button id="stop">&#9208;&#65039; Detener</button>
+    <select id="quality" title="Calidad de lo que se env&iacute;a">
+      <option value="auto">Auto</option>
+      <option value="1920">1080p</option>
+      <option value="1280">720p</option>
+      <option value="960">540p</option>
+    </select>
     <button class="view">&#128250; Ver el PC</button>
   </div>
 </div>
@@ -3363,6 +3563,39 @@ var lastStats = "";   // lo que tardó el fotograma anterior: va en X-Camui-Stat
 // mismo uno de 200 KB que uno de 500 (camui.log, pack 36): no era la wifi, eran las esperas.
 // Van numerados (X-Camui-Seq) para que cam-ui descarte uno viejo que llegue tarde.
 var MAX_INFLIGHT = __PHONECAM_INFLIGHT__;
+// Calidad: el lado largo de lo que se envía (el móvil reduce y comprime ANTES de mandarlo, así
+// que gasta menos wifi y menos batería). «Auto» empieza en 1080p y baja un escalón si en 3 s no
+// pasa de LOW_FPS fps; sube uno solo si, por lo que tarda cada envío, el siguiente cabría con
+// holgura -- y nunca cambia más de una vez cada pocos segundos (cada cambio de tamaño le cuesta
+// un pequeño salto al mosaico). Se recuerda en este móvil.
+var LEVELS = [1920, 1280, 960, 640], level = 0, levelSince = 0, postMs = [];
+var LOW_FPS = __PHONECAM_LOW_FPS__, TARGET_FPS = __PHONECAM_FPS__;
+var quality = "auto";
+try { quality = localStorage.getItem("camui_quality") || "auto"; } catch (e) {}
+function longSide() {
+  return quality === "auto" ? LEVELS[level] : parseInt(quality, 10) || 1920;
+}
+function qualityLabel() {
+  var l = longSide();
+  var p = l >= 1920 ? "1080p" : l >= 1280 ? "720p" : l >= 960 ? "540p" : "360p";
+  return quality === "auto" ? p + " auto" : p;
+}
+function adapt(fps, span) {
+  if (quality !== "auto") { return; }
+  var now = performance.now();
+  if (now - levelSince < 3000 || span < 2.5) { return; }
+  if (fps < LOW_FPS && level < LEVELS.length - 1) {
+    level += 1; levelSince = now; sentTimes = []; postMs = [];
+    return;
+  }
+  if (level > 0 && now - levelSince > 8000 && postMs.length >= 10) {
+    var avg = postMs.reduce(function (a, b) { return a + b; }, 0) / postMs.length;
+    var ratio = Math.pow(LEVELS[level - 1] / LEVELS[level], 2);
+    if (MAX_INFLIGHT * 1000 / (avg * ratio) >= TARGET_FPS * 1.2) {
+      level -= 1; levelSince = now; sentTimes = []; postMs = [];
+    }
+  }
+}
 
 // Guarda el secreto de este móvil (distinto del "sid" de esta sesión, y del token, que cambia
 // cada vez que se enciende "Cámara del móvil") para que la próxima vez que se abra "/add" en
@@ -3385,8 +3618,9 @@ function sendFrame() {
   if (encoding || inflight >= MAX_INFLIGHT || !stream || v.videoWidth === 0) { return; }
   encoding = true;
   var t0 = performance.now();
-  canvas.width = v.videoWidth;
-  canvas.height = v.videoHeight;
+  var vw = v.videoWidth, vh = v.videoHeight, k = Math.min(1, longSide() / Math.max(vw, vh));
+  canvas.width = Math.max(2, Math.round(vw * k / 2) * 2);
+  canvas.height = Math.max(2, Math.round(vh * k / 2) * 2);
   ctx2d.drawImage(v, 0, 0, canvas.width, canvas.height);
   var w = canvas.width, h = canvas.height;
   canvas.toBlob(function (blob) {
@@ -3405,10 +3639,14 @@ function sendFrame() {
         // lo que de verdad llega, no solo «va bien»: antes ponía ✅ aunque fueran 3 fps
         var now = performance.now();
         sentTimes.push(now);
+        postMs.push(now - t1);
+        if (postMs.length > 30) { postMs.shift(); }
         while (sentTimes.length && now - sentTimes[0] > 3000) { sentTimes.shift(); }
         var span = sentTimes.length > 1 ? (now - sentTimes[0]) / 1000 : 0;
         var fps = span > 0.8 ? (sentTimes.length - 1) / span : 0;
-        var txt = "Enviando a " + pcName + (fps ? " · " + Math.round(fps) + " fps" : "");
+        adapt(fps, span);
+        var txt = "Enviando a " + pcName + (fps ? " · " + Math.round(fps) + " fps" : "") +
+                  " · " + qualityLabel();
         if (fps && fps < __PHONECAM_SLOW_FPS__ && span > 2) {
           setStatus("⚠️ " + txt + " — la wifi no da para más: acércate al router o usa la de 5 GHz",
                     "slow");
@@ -3464,6 +3702,13 @@ document.getElementById("start").onclick = function () {
   startCapture();
 };
 document.getElementById("stop").onclick = stopCapture;
+var qsel = document.getElementById("quality");
+qsel.value = quality;
+qsel.onchange = function () {
+  quality = qsel.value;
+  level = 0; levelSince = performance.now(); sentTimes = []; postMs = [];
+  try { localStorage.setItem("camui_quality", quality); } catch (e) {}
+};
 // «Ver lo que sale del PC»: deja de mandar la cámara (la suelta de verdad) y vuelve a la página
 // de «En la red» -- desde allí, «Añadir cámara del móvil» trae de vuelta aquí, sin QR
 Array.prototype.forEach.call(document.querySelectorAll("button.view"), function (b) {
@@ -3491,6 +3736,7 @@ document.addEventListener("visibilitychange", function () {
 """
 _PHONECAM_HTML = _PHONECAM_HTML.replace("__PHONECAM_INFLIGHT__", str(PHONECAM_INFLIGHT)).replace(
     "__PHONECAM_SLOW_FPS__", str(PHONECAM_SLOW_FPS)).replace(
+    "__PHONECAM_LOW_FPS__", str(PHONECAM_AUTO_LOW_FPS)).replace(
     "__PHONECAM_INTERVAL_MS__", str(int(round(1000.0 / PHONECAM_FPS)))
 ).replace("__PHONECAM_JPEG_QUALITY__", str(PHONECAM_JPEG_QUALITY)
 ).replace("__PHONECAM_FPS__", str(PHONECAM_FPS)).encode("utf-8")
@@ -4014,7 +4260,7 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
         if not host:
             ips = [ip for ip in _local_ips() if ip]
             host = ips[0] if ips else "127.0.0.1"
-        return "http://{0}:{1}/".format(host, v.port)
+        return _http_url(host, v.port, "/")
 
     def _drain_body(self):
         """Lee y tira el cuerpo de una petición que no lo usa: con keep-alive, si se quedara en
@@ -4046,7 +4292,7 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         hub = self.server.hub
         path, _, qs = self.path.partition("?")
-        if path == "/add":
+        if path in ("/add", "/movil"):
             # dirección fija, fácil de teclear a mano -- no hace falta ningún token para
             # llegar hasta aquí porque, por sí sola, esta página no añade ninguna cámara: solo
             # pide el permiso de cámara del móvil para leer el QR que de verdad emparejará (ver
@@ -4101,7 +4347,7 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
                 self.headers.get("User-Agent"), self._parse_qs(qs).get("label", "")))
             ips = [ip for ip in _local_ips() if ip]
             host = ips[0] if ips else socket.gethostname()
-            pair_url = "https://{0}:{1}/cam?t={2}&sid={3}".format(host, hub.port, hub.token, sid)
+            pair_url = _https_url(host, hub.port, "/cam?t={0}&sid={1}".format(hub.token, sid))
             hub._pair_q.append(pair_url)
             self._send(200, b"", "text/plain")
             return
@@ -4256,7 +4502,7 @@ li{margin-bottom:10px}
 %%NOSAFARI%%<p>Esto hace falta <strong>solo en iPhone/iPad</strong> para que Safari deje usar la cámara del
 móvil con «Cámara del móvil». <strong>En Android no hace falta nada de esto</strong> -- con
 «Avanzado → Continuar» en el aviso del navegador ya funciona.</p>
-<p><a class="btn" href="/certificado">⬇ Instalar certificado</a></p>
+<p><a class="btn" href="/certificado.cer">⬇ Instalar certificado</a></p>
 <ol>
 <li>En <strong>Safari</strong> (en iPhone/iPad, Chrome y los demás navegadores solo lo descargan
 como un archivo que no sirve), toca el enlace de arriba y luego «Permitir».</li>
@@ -4283,11 +4529,12 @@ en Safari):<code>{url}</code></div>
 """
 
 
-def _phonecam_cert_page(user_agent, host):
-    """La página de «Instalar certificado», con el aviso de arriba si es iPhone/iPad y no Safari."""
+def _phonecam_cert_page(user_agent, host, path="/"):
+    """La página de «Instalar certificado» (en «/» de su puerto, o en «/certificado» sin número
+    de puerto), con el aviso de arriba si es iPhone/iPad y no Safari."""
     warn = ""
     if _IOS_NOT_SAFARI_RE.search(user_agent or ""):
-        warn = _PHONECAM_NOSAFARI.format(url=html.escape("http://{0}/".format(host or "")))
+        warn = _PHONECAM_NOSAFARI.format(url=html.escape("http://{0}{1}".format(host or "", path)))
     return _PHONECAM_CERT_PAGE.replace("%%NOSAFARI%%", warn).encode("utf-8")
 
 
@@ -4306,7 +4553,7 @@ class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         hub = self.server.hub
         path = self.path.split("?", 1)[0]
-        if path == "/certificado":
+        if path == "/certificado.cer":
             try:
                 from cryptography.hazmat.primitives.serialization import Encoding
                 # la misma que firma el certificado HTTPS (y, si faltara, se crea: nunca más un
@@ -4328,7 +4575,7 @@ class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
                        disposition="attachment; filename=cam-ui-certificado.cer")
             return
         self._send(200, _phonecam_cert_page(self.headers.get("User-Agent"),
-                                            self.headers.get("Host")),
+                                            self.headers.get("Host"), path),
                    "text/html; charset=utf-8", cache=False)
 
     def _send(self, code, body, ctype, cache=True, disposition=None):
@@ -7103,6 +7350,10 @@ class CamApp:
         self.phonecam = PhoneCamHub(self._phonecam_q, self._phonecam_pair_q)  # cámara del móvil
         self.ipsrv.phonecam = self.phonecam    # para el botón «Añadir cámara del móvil» de /
         self.phonecam.viewer = self.ipsrv      # ... y, al revés, «Ver lo que sale del PC» en /cam
+        # direcciones sin número de puerto (80/443), ver FrontDoor
+        FRONT.http_route = self._front_http_route
+        FRONT.https_target = lambda: self.phonecam.port if self.phonecam.active else None
+        FRONT.start()
         self.ipsrv.phonecam_remote_q = self._phonecam_remote_q   # para que ese botón la encienda
         # motor experimental (Ajustes → Avanzado): cada cámara por su lado, ver CamHub
         self.hub = CamHub(lambda: self.eng.ffmpeg, self.phonecam, self._hub_event)
@@ -8417,7 +8668,7 @@ class CamApp:
         self.lbl_phonecamqr.grid(row=2, column=0, padx=6, pady=(2, 4), sticky="w")
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
                   text="Siempre activa: entra en el móvil a cualquiera de las direcciones de abajo "
-                       "(con «/add» al final) y toca «Escanear»: en cuanto dé el permiso de "
+                       "(con «/movil» o «/add» al final) y toca «Escanear»: en cuanto dé el permiso de "
                        "cámara, aquí mismo aparecerá un código QR para que lo lea con la propia cámara "
                        "del móvil -- en cuanto lo lea, se añade solo al mosaico, sin tocar nada más "
                        "aquí. La primera vez el navegador avisará de que la conexión «no es privada» "
@@ -10450,10 +10701,12 @@ class CamApp:
         nombre del equipo -- más fácil de recordar; funciona en muchas redes Windows sin más,
         pero no siempre desde un móvil). Ver _ip_urls() para la versión en un solo texto."""
         ips = _local_ips()
-        urls = ["http://{0}:{1}/".format(ip, port) for ip in ips]
+        urls = [_http_url(ip, port, "/") for ip in ips]
         if not urls:
-            urls = ["http://(la IP de este equipo):{0}/".format(port)]
-        urls.append("http://{0}:{1}/".format(socket.gethostname(), port))
+            urls = [_http_url("(la IP de este equipo)", port, "/")]
+        urls.append(_http_url(socket.gethostname(), port, "/"))
+        if _host_local():
+            urls.append(_http_url(_host_local(), port, "/"))
         return urls
 
     def _ip_urls(self, port):
@@ -10496,7 +10749,7 @@ class CamApp:
         al portapapeles con un solo clic."""
         ips = _local_ips()
         host = ips[0] if ips else socket.gethostname()
-        return "http://{0}:{1}/".format(host, self.ipsrv.port)
+        return _http_url(host, self.ipsrv.port, "/")
 
     def _ip_dual_url(self):
         """IP + nombre del equipo, las dos en formato URL, para sitios con poco espacio (barra
@@ -10504,8 +10757,8 @@ class CamApp:
         mano sin tener que ir a Ajustes a buscarla."""
         ips = _local_ips()
         port = self.ipsrv.port
-        urls = ["http://{0}:{1}/".format(ips[0], port)] if ips else []
-        urls.append("http://{0}:{1}/".format(socket.gethostname(), port))
+        urls = [_http_url(ips[0], port, "/")] if ips else []
+        urls.append(_http_url(socket.gethostname(), port, "/"))
         return ", ".join(urls)
 
     def _open_ip_url(self, *_a):
@@ -10637,7 +10890,16 @@ class CamApp:
     def _phonecam_url(self):
         ips = _local_ips()
         host = ips[0] if ips else socket.gethostname()
-        return "https://{0}:{1}/cam?t={2}".format(host, self.phonecam.port, self.phonecam.token)
+        return _https_url(host, self.phonecam.port, "/cam?t={0}".format(self.phonecam.token))
+
+    def _front_http_route(self, path):
+        """(hilos de FrontDoor) A qué servidor de siempre va una petición que llega por el 80."""
+        p = path.split("?", 1)[0]
+        if p in ("/certificado", "/certificado.cer"):
+            return self.phonecam.cert_port if self.phonecam.active else None
+        if p in ("/movil", "/add", "/cam") or p.startswith("/cam/"):   # ojo: /camui/clock no
+            return "https"                    # escrito sin «https://»: se redirige
+        return self.ipsrv.port if self.ipsrv.active else None
 
     def _phonecam_add_url(self):
         """Dirección fija (sin ningún código al final) para que un móvil se empareje -- ver el
@@ -10646,17 +10908,19 @@ class CamApp:
         se genera para cada emparejamiento nuevo."""
         ips = _local_ips()
         host = ips[0] if ips else socket.gethostname()
-        return "https://{0}:{1}/add".format(host, self.phonecam.port)
+        return _https_url(host, self.phonecam.port, _add_path())
 
     def _phonecam_add_url_list(self):
         """Todas las direcciones de «/add», una por cada IP de este equipo (y al final el
         nombre del equipo), para que se vean todas en Ajustes -- no solo la primera que se
         adivina -- igual que ya se hace en «En la red» (ver _ip_url_list)."""
         ips = _local_ips()
-        urls = ["https://{0}:{1}/add".format(ip, self.phonecam.port) for ip in ips]
+        urls = [_https_url(ip, self.phonecam.port, _add_path()) for ip in ips]
         if not urls:
-            urls = ["https://(la IP de este equipo):{0}/add".format(self.phonecam.port)]
-        urls.append("https://{0}:{1}/add".format(socket.gethostname(), self.phonecam.port))
+            urls = [_https_url("(la IP de este equipo)", self.phonecam.port, _add_path())]
+        # el nombre: «.local» es el que entienden iPhone/iPad (y muchos Android) sin más
+        urls.append(_https_url(_host_local() or socket.gethostname(), self.phonecam.port,
+                               _add_path()))
         return urls
 
     def _phonecam_cert_url(self):
@@ -10665,6 +10929,8 @@ class CamApp:
         de cam-ui. Solo existe mientras «Cámara del móvil» está activa."""
         ips = _local_ips()
         host = ips[0] if ips else socket.gethostname()
+        if FRONT.http_ok:
+            return _http_url(host, None, "/certificado")
         return "http://{0}:{1}/".format(host, self.phonecam.cert_port)
 
     def _phonecam_qr_photo(self, url):
@@ -11347,6 +11613,10 @@ class CamApp:
                 pass
             try:
                 self.phonecam.stop()
+            except Exception:
+                pass
+            try:
+                FRONT.stop()
             except Exception:
                 pass
             try:

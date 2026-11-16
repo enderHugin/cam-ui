@@ -40,6 +40,21 @@ camui.HERE = HOME
 # aisla nada y acaba escribiendo en el config.json real del proyecto). Se deja aquí el nombre
 # correcto para que esta prueba quede de verdad aislada en su propia carpeta.
 camui.CONFIG = os.path.join(HOME, "config.json")
+# (pack 39) direcciones sin número de puerto: aquí, en puertos de prueba libres en vez del 80 y
+# el 443 (que pueden estar ocupados, o exigir permisos, en la máquina de pruebas) -- todo lo de
+# abajo funciona igual con o sin ellos, salvo la forma de las direcciones
+import socket as _sock  # noqa: E402
+
+
+def _free_port_ui():
+    s_ = _sock.socket()
+    s_.bind(("127.0.0.1", 0))
+    p_ = s_.getsockname()[1]
+    s_.close()
+    return p_
+
+
+camui.FRONT = camui.FrontDoor(_free_port_ui(), _free_port_ui())
 camui.LOGFILE = os.path.join(HOME, "camui.log")
 camui.PHONECAM_CERT_FILE = os.path.join(HOME, "phonecam_cert.pem")
 camui.PHONECAM_KEY_FILE = os.path.join(HOME, "phonecam_key.pem")
@@ -102,7 +117,9 @@ app.v_phonecamport.set("58620")
 ok = app._phonecam_enable()
 assert ok and app.phonecam_on and app.phonecam.active
 add_url = app._phonecam_add_url()
-assert add_url.startswith("https://") and add_url.endswith("/add") and "?" not in add_url
+assert camui.FRONT.https_ok and camui._add_path() == "/movil"
+assert add_url.startswith("https://") and add_url.endswith(
+    ":{0}/movil".format(camui.FRONT.https_port)) and "?" not in add_url, add_url
 texts1 = frame_texts(app.frm_phonecamurl)
 assert add_url in texts1, (add_url, texts1)
 assert "No está activa." not in texts1
@@ -417,7 +434,12 @@ assert dlg_cert.photo is not None, "con «qrcode» instalado de verdad, debería
 cert_url = app._phonecam_cert_url()
 assert cert_url.startswith("http://") and not cert_url.startswith("https://"), \
     "la dirección del certificado tiene que ser HTTP normal, nunca HTTPS (huevo y gallina)"
-assert str(app.phonecam.cert_port) in cert_url
+# (pack 39) sin número de puerto propio: «/certificado» por el «80» (aquí, el de prueba), que
+# FrontDoor pasa al servidor del certificado -- y de verdad llega a su página
+assert cert_url.endswith(":{0}/certificado".format(camui.FRONT.http_port)), cert_url
+with urllib.request.urlopen(
+        "http://127.0.0.1:{0}/certificado".format(camui.FRONT.http_port), timeout=5) as r:
+    assert "Instalar certificado" in r.read().decode("utf-8")
 # igual que el resto de esta prueba habla con PhoneCamHub por 127.0.0.1 en vez de la IP "pública"
 # detectada (no siempre alcanzable desde dentro de esta caja), aquí también -- no es lo que se
 # prueba aquí (la IP de verdad ya se prueba sola, en unit_phonecam.py)
