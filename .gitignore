@@ -14,6 +14,8 @@ __pycache__/
 config.json
 tests/t/
 tests/_*_home/
+tests/_*.mp4
+tests/_*.mkv
 !VERSION
 !.github/
 !.github/**
