@@ -4,6 +4,7 @@ IpServer real alimentado aquí) entra por el concentrador: vista previa en march
 dice que se alinea por la hora de captura, reiniciar no la reabre, pausar la suelta y desmarcar la
 opción vuelve al motor de siempre."""
 import os
+import re
 import sys
 import json
 import time
@@ -103,6 +104,19 @@ try:
         app._mode_now_txt
     print("2) la cámara de otro cam-ui entra por el concentrador: «{0}» OK".format(app._mode_now_txt))
 
+    # 2b) (pack 40) rótulo sobre su casilla, solo en la vista previa: nombre, cómo llega, tamaño
+    #     y fps de verdad -- un elemento del lienzo de la ventana, no del vídeo
+    def overlay_texts():
+        return [app.view.itemcget(i, "text") for i in app.view.find_withtag("ov")
+                if app.view.type(i) == "text"]
+    app.root.geometry("1100x760")
+    assert pump(lambda: any("otro cam-ui" in t and "320×240" in t and " fps" in t and "~" not in t
+                            for t in overlay_texts()), 10), (overlay_texts(), app._tile_infos())
+    fps2b = re.search(r"(\d+) fps", [t for t in overlay_texts() if "otro cam-ui" in t][0])
+    assert fps2b and 25 <= int(fps2b.group(1)) <= 32, overlay_texts()
+    print("2b) rótulo sobre la casilla, solo en la vista previa: «{0}» OK".format(
+        " / ".join(overlay_texts()).replace("\n", " | ")))
+
     # 3) cambiar un ajuste reinicia el mosaico sin reabrir la cámara
     n0 = app.eng.frame_count
     app.v_fps.set("25")
@@ -127,6 +141,16 @@ try:
     with open(camui.CONFIG, encoding="utf-8") as f:
         assert json.load(f).get("hub") is False
     print("5) desmarcada: vuelve el motor de siempre, y se guarda OK")
+    # 5b) con el motor de siempre, los fps se miran en la propia vista previa («~»)
+    def _approx_fps():
+        for t in overlay_texts():
+            m5 = re.search(r"red .*~(\d+) fps", t.replace("\n", " "))
+            if m5:
+                return int(m5.group(1))
+        return -1
+    assert pump(lambda: _approx_fps() >= 8, 10), (overlay_texts(), app._tile_infos())
+    print("5b) con el motor de siempre, el rótulo da los fps vistos en la vista previa: «{0}» OK".format(
+        " / ".join(overlay_texts()).replace("\n", " | ")))
 finally:
     stop.set()
     try:

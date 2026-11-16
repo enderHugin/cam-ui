@@ -1,5 +1,13 @@
 # Novedades de cam-ui
 
+## pack 40 — 2026.11.16
+- **Rótulo sobre cada cámara del mosaico, solo en la vista previa** (no sale en la grabación, ni
+  en la cámara virtual, ni en «En la red»): su nombre, cómo llega (local, red, otro cam-ui,
+  móvil por wifi), a cuántos fps y su resolución real; «sin señal» en amarillo si no llega. Con
+  el motor nuevo, los fps son los que manda de verdad cada cámara; con el de siempre, los de un
+  móvil también, y los del resto se miden en la propia vista previa (con «~»: lo que se ve).
+  Si la casilla es estrecha, va en dos líneas y se cae antes la resolución que los fps.
+
 ## pack 39 — 2026.11.16
 - **Direcciones sin número de puerto.** Si el 80 y el 443 de este PC están libres, cam-ui
   también atiende ahí y reparte cada petición al servidor que toca:

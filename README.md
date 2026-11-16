@@ -22,6 +22,8 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 
 ## Funciones principales
 - Sincronía de cámaras y audio con un reloj común; vúmetros L/R.
+- En la vista previa (solo ahí), un rótulo sobre cada cámara: nombre, cómo llega (local, red,
+  otro cam-ui, móvil), fps reales y resolución.
 - Direcciones sin número de puerto cuando el 80 y el 443 de este PC están libres: «En la red» en
   `http://nombre-del-pc.local/`, el certificado de iPhone/iPad en `/certificado`, añadir un móvil
   en `https://…/movil` (escrito sin `https://` también llega). Los puertos de siempre (8554,

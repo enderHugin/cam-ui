@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 39                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 40                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -4124,6 +4124,7 @@ class PhoneCamHub:
             if seq:
                 s["seq"] = seq
             s["jpeg"], s["ts"], s["gen"] = data, time.time(), s["gen"] + 1
+            s.setdefault("arr", deque(maxlen=90)).append(s["ts"])
             self._cond.notify_all()
             if not s["announced"]:
                 s["announced"] = True
@@ -4137,6 +4138,19 @@ class PhoneCamHub:
         with self._lk:
             s = self._sessions.get(sid)
             return None if s is None else (s["jpeg"], s["gen"], s["ts"])
+
+    def session_fps(self, sid):
+        """Fotogramas por segundo que llegan de verdad de ese móvil (últimos 3 s), o None."""
+        with self._lk:
+            s = self._sessions.get(sid)
+            arr = list(s.get("arr") or ()) if s else None
+        if arr is None:
+            return None
+        now = time.time()
+        a = [t for t in arr if t >= now - 3.0]
+        if len(a) < 2 or a[-1] <= a[0]:
+            return 0.0
+        return (len(a) - 1) / (now - a[0]) if now - a[-1] > 1.0 else (len(a) - 1) / (a[-1] - a[0])
 
     def wait_frame(self, sid, gen, timeout):
         """(jpeg, gen, hora de llegada) en cuanto haya uno más nuevo que «gen» (o el mismo si se
@@ -7261,6 +7275,15 @@ class PhoneCamDevicesDialog:
             pass
 
 
+def _fit_text(font, text, maxw):
+    """El texto, recortado con «…» si no cabe en maxw píxeles con esa fuente."""
+    if font.measure(text) <= maxw:
+        return text
+    while text and font.measure(text + "…") > maxw:
+        text = text[:-1]
+    return text + "…" if text else ""
+
+
 class CamApp:
     def __init__(self, root):
         self.root = root
@@ -7305,6 +7328,11 @@ class CamApp:
         self._ov_btn = None
         self._img_rect = None
         self._run_labels = []          # cámaras que hay en el ffmpeg en marcha (en orden)
+        self._run_plan = None          # su plan (specs, «sin señal»...): rótulos de la vista previa
+        self._tinfo = []               # (nombre, detalle, ¿aviso?) por casilla (ver _tile_infos)
+        self._tinfo_t = 0.0
+        self._tinfo_font = None
+        self._tile_sig, self._tile_chg = [], []    # fps «a ojo» por casilla (ver _measure_tiles)
         self._run_color = {}
         self._color_jobs = {}
         self._pickers = []
@@ -9490,6 +9518,132 @@ class CamApp:
                 tx, ty, tw, th = m["tiles"][i]
                 v.create_rectangle(ix + tx * sc + 1, iy + ty * sc + 1, ix + (tx + tw) * sc - 1,
                                    iy + (ty + th) * sc - 1, outline=ACC, width=2, tags="ov")
+        self._draw_tile_info(v, ix, iy, nw)
+
+    def _draw_tile_info(self, v, ix, iy, nw):
+        """Rótulo abajo de cada casilla, SOLO en la vista previa (es dibujo de la ventana: no sale
+        en la grabación, ni en la cámara virtual, ni en «En la red»): de qué cámara se trata, cómo
+        llega (local, red, móvil, otro cam-ui), su resolución real y a cuántos fps."""
+        m = self.eng.meta
+        if not m.get("tiles") or not m.get("W"):
+            return
+        if self._tinfo_font is None:
+            import tkinter.font as tkfont
+            self._tinfo_font = tkfont.Font(family="Segoe UI", size=-11)
+        f = self._tinfo_font
+        sc = nw / float(m["W"])
+        infos = self._tile_infos()
+        for i, (tx, ty, tw, th) in enumerate(m["tiles"]):
+            if i >= len(infos):
+                break
+            name, parts, warn = infos[i]
+            maxw = tw * sc - 12
+            if maxw < 40 or th * sc < 30:
+                continue
+            one = "  ·  ".join([name] + parts)
+            if f.measure(one) <= maxw:
+                text = one
+            else:                      # en dos líneas; si aún no cabe, se cae el tamaño
+                parts = list(parts)
+                while len(parts) > 2 and f.measure("  ·  ".join(parts)) > maxw:
+                    parts.pop()
+                text = "\n".join(_fit_text(f, t, maxw) for t in (name, "  ·  ".join(parts)))
+            tid = v.create_text(ix + tx * sc + 7, iy + (ty + th) * sc - 5, anchor="sw", text=text,
+                                fill=WARN if warn else "#e9ecf0", font=f, tags="ov")
+            bb = v.bbox(tid)
+            if bb:
+                rid = v.create_rectangle(bb[0] - 4, bb[1] - 2, bb[2] + 4, bb[3] + 1, fill="#000000",
+                                         outline="", tags="ov")
+                v.tag_lower(rid, tid)
+
+    def _tile_infos(self):
+        """[(nombre, [cómo llega, fps, tamaño], ¿aviso?)] por casilla; se recalcula como mucho 2
+        veces por segundo."""
+        now = time.time()
+        if now - self._tinfo_t < 0.5 and len(self._tinfo) == len(self._run_labels):
+            return self._tinfo
+        self._tinfo_t = now
+        sizes, _f = self.eng.input_info()
+        hubinfo = self.hub.info() if self.eng.hub_on else {}
+        cams = (self._run_plan or {}).get("cams") or []
+        out = []
+        for i, lab in enumerate(self._run_labels):
+            c = cams[i] if i < len(cams) else {}
+            spec = (c.get("spec") or "").strip()
+            sid = self._phone_sid_of(spec)
+            it = hubinfo.get(i)
+            reader = it[2].reader if it else ""
+            kind = ("móvil (wifi)" if sid or reader == "móvil" else
+                    "otro cam-ui" if reader == "camui" else
+                    "red" if _is_net_spec(spec) else "local")
+            state, fps, approx = "", None, False
+            if it:
+                src = it[2]
+                last = src._arr[-1] if src._arr else None
+                if src.state == "down" or (last is not None and now - last > HUB_HOLD_SECONDS):
+                    state = "sin señal"
+                elif src.state == "starting":
+                    state = "iniciando…"
+                fps = src.fps()
+            elif c.get("_offline"):
+                state = "sin señal"
+            elif sid:
+                fps = self.phonecam.session_fps(sid)
+                if fps == 0.0:
+                    state = "sin señal"
+            else:
+                fps, approx = self._tile_fps(i), True
+            parts = [kind]
+            if state:
+                parts.append(state)
+            else:
+                if fps is not None:
+                    parts.append(("~{0:.0f} fps" if approx else "{0:.0f} fps").format(fps)
+                                 if fps >= 0.5 or not approx else "imagen fija")
+                sz = sizes.get(i)
+                if sz:
+                    parts.append("{0}×{1}".format(sz[0], sz[1]))
+            out.append((lab, parts, bool(state)))
+        self._tinfo = out
+        return out
+
+    def _phone_sid_of(self, spec):
+        m = _PHONE_SPEC_RE.match(spec or "")
+        if not m or not self.phonecam.active or str(self.phonecam.local_port) != m.group(1):
+            return None
+        return m.group(2)
+
+    def _measure_tiles(self, frame):
+        """Con el motor de siempre no se sabe a cuántos fps llega de verdad cada cámara local o de
+        red (ffmpeg solo dice lo que anuncia): se mira en la propia vista previa cuántas veces por
+        segundo cambia lo que se ve en cada casilla (unos cientos de píxeles: casi nada)."""
+        m = self.eng.meta
+        tiles, W = m.get("tiles"), m.get("W")
+        if not tiles or not W or self.editing:
+            return
+        if len(self._tile_sig) != len(tiles):
+            self._tile_sig = [None] * len(tiles)
+            self._tile_chg = [deque(maxlen=120) for _ in tiles]
+        h, w = frame.shape[:2]
+        sc = w / float(W)
+        now = time.time()
+        for i, (tx, ty, tw, th) in enumerate(tiles):
+            x0, y0, x1, y1 = int(tx * sc), int(ty * sc), int((tx + tw) * sc), int((ty + th) * sc)
+            if x1 - x0 < 8 or y1 - y0 < 8:
+                continue
+            # una rejilla de ~64×64 puntos: con menos, algo pequeño que se mueve podía caer
+            # entre dos puntos y no contarse
+            sig = hash(frame[y0:y1:max(1, (y1 - y0) // 64), x0:x1:max(1, (x1 - x0) // 64)].tobytes())
+            if sig != self._tile_sig[i]:
+                self._tile_sig[i] = sig
+                self._tile_chg[i].append(now)
+
+    def _tile_fps(self, i):
+        if i >= len(self._tile_chg):
+            return None
+        now = time.time()
+        n = sum(1 for t in self._tile_chg[i] if t >= now - 2.0)
+        return n / 2.0
 
     def _dim_photo(self, nw, nh, X0, Y0, X1, Y1):
         """Velo oscuro semitransparente sobre la imagen, con un hueco donde queda el marco."""
@@ -10366,6 +10520,7 @@ class CamApp:
             return
         self.save_config()
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
+        self._run_plan, self._tinfo_t = plan, 0.0
         self._slow_warned = set()
         self._stuck_warned = False     # cada intento nuevo merece su propio plazo (ver _on_stuck)
         self._set_status("Abriendo dispositivos…" if retry == 0 else
@@ -10555,6 +10710,7 @@ class CamApp:
             self._stop_preview()
             return
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
+        self._run_plan, self._tinfo_t = plan, 0.0
         self.previewing = False
 
         def work():
@@ -11221,6 +11377,7 @@ class CamApp:
         warm = max(1.0, self.eng.startup_time + 0.3)
         self.save_config()
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
+        self._run_plan, self._tinfo_t = plan, 0.0
         self.previewing = False
         self._set_status("Abriendo dispositivos para grabar…")
 
@@ -11456,6 +11613,7 @@ class CamApp:
         if self._ph_visible:
             self.view.itemconfig(self._ph, state="hidden")
             self._ph_visible = False
+        self._measure_tiles(frame)
         self._redraw_overlay()
         m = self.eng.meta
         info = "Vista previa {0}×{1}  ·  salida {2}×{3}  ·  {4} fps  ·  audio {5}".format(
