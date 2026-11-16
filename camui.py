@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 35                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 36                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -3085,6 +3085,7 @@ PHONECAM_FPS = 20
 PHONECAM_JPEG_QUALITY = 0.82
 PHONECAM_JPEG_MAX = 6 * 1024 * 1024    # tope de tamaño por fotograma recibido, contra abusos
 PHONECAM_STALE_SECONDS = 8             # sin fotogramas nuevos este tiempo: la cámara se da por caída
+PHONECAM_STATS_SECONDS = 5.0           # cada cuánto se anota en camui.log cómo llega cada móvil
 PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan del todo (no acumular)
 PHONECAM_PAIR_TIMEOUT = 90             # sin escanear este QR de emparejamiento en este tiempo, se retira solo
 # Dispositivos ya emparejados antes (ver PhoneCamHub.add_device/known_device y PhoneCamDevicesDialog):
@@ -3318,6 +3319,7 @@ var bar = document.getElementById("bar");
 var canvas = document.createElement("canvas");
 var ctx2d = canvas.getContext("2d");
 var stream = null, timer = null, sending = false, facing = "environment", wakeLock = null;
+var lastStats = "";   // lo que tardó el fotograma anterior: va en X-Camui-Stats (solo diagnóstico)
 
 // Guarda el secreto de este móvil (distinto del "sid" de esta sesión, y del token, que cambia
 // cada vez que se enciende "Cámara del móvil") para que la próxima vez que se abra "/add" en
@@ -3337,19 +3339,26 @@ function setStatus(txt, cls) {
 
 function sendFrame() {
   if (sending || !stream || v.videoWidth === 0) { return; }
+  var t0 = performance.now();
   canvas.width = v.videoWidth;
   canvas.height = v.videoHeight;
   ctx2d.drawImage(v, 0, 0, canvas.width, canvas.height);
   canvas.toBlob(function (blob) {
     if (!blob) { return; }
     sending = true;
-    fetch("/cam/ingest/" + sid, {method: "POST", body: blob})
+    var t1 = performance.now();
+    var hdr = {"X-Camui-Stats": lastStats};
+    fetch("/cam/ingest/" + sid, {method: "POST", body: blob, headers: hdr})
       .then(function (r) {
         setStatus(r.ok ? "Enviando a cam-ui ✅" : "cam-ui no aceptó el fotograma (" + r.status + ")",
                    r.ok ? "ok" : "err");
       })
       .catch(function () { setStatus("Sin conexión con cam-ui ahora mismo…", "err"); })
-      .finally(function () { sending = false; });
+      .finally(function () {
+        sending = false;
+        lastStats = "enc=" + Math.round(t1 - t0) + ";post=" + Math.round(performance.now() - t1) +
+                    ";w=" + canvas.width + ";h=" + canvas.height;
+      });
   }, "image/jpeg", __PHONECAM_JPEG_QUALITY__);
 }
 
@@ -3560,6 +3569,49 @@ def _phonecam_save_devices(devices):
         log.warning("no se pudo guardar la lista de móviles recordados: %r", e)
 
 
+class _PhoneStats:
+    """Cómo llega un móvil (solo para camui.log, cada PHONECAM_STATS_SECONDS): fotogramas por
+    segundo y el mayor hueco entre dos, tamaño y caudal, resolución, y lo que el propio móvil dice
+    que tardó en codificar cada JPEG y en enviarlo (cabecera X-Camui-Stats de su página)."""
+
+    def __init__(self):
+        self.t0, self.n, self.bytes, self.gap, self.last = None, 0, 0, 0.0, None
+        self.enc, self.post, self.wh, self.ua_told = [], [], None, False
+
+    def add(self, now, size, stats, ua):
+        out = []
+        if not self.ua_told and ua:
+            self.ua_told = True
+            out.append("conectado desde «{0}»".format(ua[:160]))
+        if self.t0 is None:
+            self.t0 = now
+        if self.last is not None:
+            self.gap = max(self.gap, now - self.last)
+        self.last = now
+        self.n += 1
+        self.bytes += size
+        kv = dict(p.split("=", 1) for p in (stats or "").split(";") if "=" in p)
+        try:
+            self.enc.append(int(kv["enc"]))
+            self.post.append(int(kv["post"]))
+            self.wh = (int(kv["w"]), int(kv["h"]))
+        except (KeyError, ValueError):
+            pass
+        el = now - self.t0
+        if el >= PHONECAM_STATS_SECONDS:
+            avg = lambda a: (sum(a) / float(len(a))) if a else 0.0
+            out.append("{0:.1f} fps recibidos (hueco máx. {1:.0f} ms), {2}{3:.0f} KB por fotograma "
+                       "({4:.1f} Mbit/s); en el móvil, de media: codificar {5:.0f} ms, enviar "
+                       "{6:.0f} ms".format(
+                           (self.n - 1) / el if self.n > 1 else 0.0, self.gap * 1000,
+                           "{0}x{1}, ".format(*self.wh) if self.wh else "",
+                           self.bytes / 1024.0 / self.n, self.bytes * 8 / el / 1e6,
+                           avg(self.enc), avg(self.post)))
+            self.t0, self.n, self.bytes, self.gap = now, 0, 0, 0.0
+            self.enc, self.post = [], []
+        return "; ".join(out)
+
+
 class PhoneCamHub:
     """Recibe, por HTTPS, los fotogramas JPEG que manda el navegador de un móvil (ver
     _PHONECAM_HTML) y los vuelve a publicar en un segundo servidor -- este solo en 127.0.0.1,
@@ -3665,12 +3717,14 @@ class PhoneCamHub:
             while nm in used:
                 nm = "{0} #{1}".format(name, n)
                 n += 1
-            self._sessions[sid] = {"name": nm, "jpeg": None, "ts": 0.0, "gen": 0, "announced": False}
+            self._sessions[sid] = {"name": nm, "jpeg": None, "ts": 0.0, "gen": 0, "announced": False,
+                                   "st": _PhoneStats()}
         return sid
 
-    def feed(self, sid, data):
+    def feed(self, sid, data, stats="", ua=""):
         """True si se aceptó (sesión válida). La primera vez que una sesión manda un fotograma
-        de verdad, se anota en new_cam_q -- exactamente una vez por sesión."""
+        de verdad, se anota en new_cam_q -- exactamente una vez por sesión. stats/ua: lo que el
+        móvil cuenta de sí mismo (X-Camui-Stats, User-Agent), solo para el registro."""
         announce = None
         with self._lk:
             s = self._sessions.get(sid)
@@ -3678,6 +3732,9 @@ class PhoneCamHub:
                 return False
             s["jpeg"], s["ts"], s["gen"] = data, time.time(), s["gen"] + 1
             self._cond.notify_all()
+            line = s.setdefault("st", _PhoneStats()).add(s["ts"], len(data), stats, ua)
+            if line:
+                log.info("cámara del móvil «%s»: %s", s["name"], line)
             if not s["announced"]:
                 s["announced"] = True
                 announce = s["name"]
@@ -3851,7 +3908,8 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
             data = self.rfile.read(n)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
-        ok = hub.feed(sid, data)
+        ok = hub.feed(sid, data, self.headers.get("X-Camui-Stats") or "",
+                      self.headers.get("User-Agent") or "")
         self._send(200 if ok else 404, b"", "text/plain")
 
     def _send(self, code, body, ctype, cache=True):
@@ -3903,6 +3961,9 @@ class _PhoneCamLocalHandler(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
         last = None
+        name = hub.session_name(sid)
+        t_st, n_out, n_in0 = time.time(), 0, None
+        log.info("cámara del móvil «%s»: ffmpeg empieza a leerla", name)
         try:
             while True:
                 r = hub.latest(sid)
@@ -3910,11 +3971,22 @@ class _PhoneCamLocalHandler(http.server.BaseHTTPRequestHandler):
                     break
                 jpeg, gen, ts = r
                 if jpeg is None or time.time() - ts > PHONECAM_STALE_SECONDS:
+                    log.warning("cámara del móvil «%s»: %s; se corta para ffmpeg", name,
+                                "sin imagen todavía" if jpeg is None else
+                                "no manda nada desde hace {0:.0f} s".format(time.time() - ts))
                     break                              # el móvil dejó de mandar: "Sin señal"
+                if n_in0 is None:
+                    n_in0 = gen
+                if time.time() - t_st >= PHONECAM_STATS_SECONDS:
+                    el = time.time() - t_st
+                    log.info("cámara del móvil «%s»: a ffmpeg le llegan %.1f fps (del móvil, %.1f)",
+                             name, n_out / el, (gen - n_in0) / el)
+                    t_st, n_out, n_in0 = time.time(), 0, gen
                 if gen == last:
                     time.sleep(0.05)
                     continue
                 last = gen
+                n_out += 1
                 self.wfile.write(b"--" + boundary.encode() + b"\r\n")
                 self.wfile.write(b"Content-Type: image/jpeg\r\n")
                 self.wfile.write(("Content-Length: " + str(len(jpeg)) + "\r\n\r\n").encode())
@@ -3949,10 +4021,12 @@ móvil con «Cámara del móvil». <strong>En Android no hace falta nada de esto
 <p><a class="btn" href="/certificado">⬇ Instalar certificado</a></p>
 <ol>
 <li>En <strong>Safari</strong> (en iPhone/iPad, Chrome y los demás navegadores solo lo descargan
-como un archivo que no sirve), toca el enlace de arriba y luego «Permitir» / «Instalar». Puede avisar de que el perfil «no
-está firmado» o que su autenticidad «no se puede verificar» -- es normal aquí: lo genera tu
-propio ordenador, no hace falta que lo firme nadie más. Sigue con «Instalar» (puede pedirlo dos
-veces).</li>
+como un archivo que no sirve), toca el enlace de arriba y luego «Permitir».</li>
+<li>Ve a Ajustes → General → <strong>VPN y gestión de dispositivos</strong>, toca el perfil
+«cam-ui» que acaba de descargarse e «Instalar» (pide el código de desbloqueo; hay que hacerlo
+antes de 8 minutos o se borra). Puede avisar de que el perfil «no está firmado» o que su
+autenticidad «no se puede verificar» -- es normal aquí: lo genera tu propio ordenador, no hace
+falta que lo firme nadie más. Sigue con «Instalar» (puede pedirlo dos veces).</li>
 <li>Ve a Ajustes → General → Información → Confianza de certificados, y activa el interruptor
 junto a «cam-ui (red local)».</li>
 </ol>
@@ -4609,6 +4683,7 @@ class _PhoneSource(_HubSource):
     def _run(self):
         pc = self.hub.phonecam
         gen = 0
+        t_st, n_st, dec = time.time(), 0, 0.0
         while not self.closed.is_set():
             r = pc.wait_frame(self.sid, gen, 0.5) if pc is not None else None
             if r is None:
@@ -4620,11 +4695,18 @@ class _PhoneSource(_HubSource):
             if g == gen or jpeg is None:
                 continue
             gen = g
+            td = time.time()
             try:
                 w, h, yuv = _jpeg_to_yuv(jpeg, HUB_JPEG_MAX_SIDE)
             except Exception:
                 continue
+            dec += time.time() - td
+            n_st += 1
             self.put(self.dejitter(ts), w, h, yuv)
+            if time.time() - t_st >= PHONECAM_STATS_SECONDS:
+                log.info("concentrador «%s»: %.1f fps del móvil, %dx%d, decodificar %.0f ms",
+                         self.label, n_st / (time.time() - t_st), w, h, dec / n_st * 1000)
+                t_st, n_st, dec = time.time(), 0, 0.0
 
 
 class _HubSession:

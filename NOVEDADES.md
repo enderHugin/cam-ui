@@ -1,5 +1,16 @@
 # Novedades de cam-ui
 
+## pack 36 — 2026.11.16
+- **Diagnóstico de «Cámara del móvil»** (no cambia cómo funciona nada): cada 5 segundos,
+  camui.log anota cómo llega cada móvil -- fotogramas por segundo y el mayor hueco entre dos,
+  resolución, KB por fotograma y Mbit/s, y lo que el propio móvil tarda en hacer cada JPEG y en
+  enviarlo --, además de desde qué navegador se conectó, cuántos de esos fotogramas le llegan de
+  verdad a ffmpeg con el motor de siempre (o lo que tarda en decodificarlos el motor nuevo) y
+  cuándo y por qué se corta la imagen del móvil. Es para encontrar por qué añadir un móvil frena
+  todo el mosaico.
+- **Instrucciones del certificado (iPhone/iPad) corregidas:** faltaba el paso de Ajustes →
+  General → VPN y gestión de dispositivos → instalar el perfil descargado.
+
 ## pack 35 — 2026.11.15
 - **Arreglado: «Instalar certificado» (iPhone/iPad) descargaba un archivo vacío.** Si ya usabas
   «Cámara del móvil» antes del pack 24, cam-ui seguía reutilizando el certificado de entonces

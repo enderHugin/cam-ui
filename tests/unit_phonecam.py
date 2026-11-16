@@ -687,4 +687,61 @@ print("20) la lista de direcciones de «/add» es exhaustiva (una por IP real + 
       "equipo), y la primera coincide con _phonecam_add_url() (la que de verdad se usa en "
       "«/addcam/start») OK")
 
+# 21) diagnóstico (pack 36): cada PHONECAM_STATS_SECONDS, camui.log dice cómo llega cada móvil
+#     -- fps y mayor hueco, resolución, KB y Mbit/s, y lo que el móvil dice que tardó en
+#     codificar y en enviar (cabecera X-Camui-Stats que pone su página) -- y, una vez, desde qué
+#     navegador; y la página de verdad manda esa cabecera
+import logging  # noqa: E402
+
+
+class _Cap(logging.Handler):
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self.lines = []
+
+    def emit(self, rec):
+        self.lines.append(rec.getMessage())
+
+
+cap = _Cap()
+camui.log.addHandler(cap)
+camui.log.setLevel(logging.DEBUG)
+_old_st = camui.PHONECAM_STATS_SECONDS
+camui.PHONECAM_STATS_SECONDS = 0.6
+try:
+    hub21 = camui.PhoneCamHub(deque(), deque())
+    p21, t21 = hub21.start(58690)
+    try:
+        with _get("https://127.0.0.1:{0}/cam?t={1}".format(p21, t21), https=True) as r:
+            page21 = r.read().decode("utf-8")
+        sid21 = re.search(r'var sid = "([^"]+)"', page21).group(1)
+        assert '"X-Camui-Stats": lastStats' in page21 and "enc=" in page21 and ";post=" in page21
+        jp21 = _jpeg(0, 640, 360)
+        t_end = time.time() + 1.5
+        while time.time() < t_end:
+            req21 = urllib.request.Request(
+                "https://127.0.0.1:{0}/cam/ingest/{1}".format(p21, sid21), data=jp21, method="POST",
+                headers={"X-Camui-Stats": "enc=31;post=87;w=1920;h=1080",
+                         "User-Agent": "Mozilla/5.0 (iPad; CPU OS 18_1 like Mac OS X) Safari/604.1"})
+            with _get(req21, https=True) as r:
+                assert r.status == 200
+            time.sleep(0.05)
+    finally:
+        hub21.stop()
+finally:
+    camui.PHONECAM_STATS_SECONDS = _old_st
+    camui.log.removeHandler(cap)
+    for f in _phonecam_pem_files + (camui.PHONECAM_DEVICES_FILE,):
+        if os.path.exists(f):
+            os.remove(f)
+got21 = [x for x in cap.lines if x.startswith("cámara del móvil «Móvil»")]
+assert any("conectado desde «Mozilla/5.0 (iPad" in x for x in got21), got21
+st21 = [x for x in got21 if "fps recibidos" in x]
+assert st21, got21
+m21 = re.search(r"([\d.]+) fps recibidos \(hueco máx\. (\d+) ms\), 1920x1080, (\d+) KB por fotograma "
+                r"\(([\d.]+) Mbit/s\); en el móvil, de media: codificar 31 ms, enviar 87 ms", st21[0])
+assert m21 and 3 < float(m21.group(1)) < 25 and int(m21.group(3)) == len(jp21) // 1024, st21[0]
+print("21) camui.log anota cada pocos segundos cómo llega el móvil: «{0}» OK".format(
+    st21[0].split(": ", 1)[1]))
+
 print("TODO OK unit_phonecam")
