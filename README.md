@@ -53,7 +53,7 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   que vuelva a pedir el QR). Al leerlo, el móvil navega solo a la página de captura (1080p a
   20 fps, que manda por una conexión que se reutiliza y con hasta dos fotogramas en camino a la
   vez; la propia página dice a qué PC manda y a cuántos fps de verdad, y avisa si la wifi no da
-  para más) y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un certificado
+  para más; su botón «📺 Ver lo que sale del PC» vuelve a «En la red») y aparece sola en la lista, marcada y lista para grabar. Usa HTTPS con un certificado
   propio (aviso de "conexión no privada" la primera vez, normal). En iPhone/iPad hace falta,
   además, instalar una vez el certificado de cam-ui (botón «Instalar certificado» en esa misma
   pestaña, con su propio QR, abriendo esa página en Safari: Chrome y los demás navegadores de

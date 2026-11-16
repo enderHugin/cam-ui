@@ -1,5 +1,11 @@
 # Novedades de cam-ui
 
+## pack 38 — 2026.11.16
+- **«📺 Ver lo que sale del PC» en la página de la cámara del móvil**: deja de mandar la cámara
+  (la suelta de verdad) y vuelve a la página «En la red» de ese mismo PC. Desde allí, «Añadir
+  cámara del móvil» trae de vuelta a la cámara sin leer ningún QR. Si en el PC «En la red» está
+  apagada, el botón lo dice en vez de llevar a ninguna parte.
+
 ## pack 37 — 2026.11.16
 - **«Cámara del móvil» mucho más fluida.** Tu registro lo dejó claro: el iPad mandaba ~3 fps y
   tardaba 220-400 ms en enviar cada fotograma, fuera de 200 KB o de 500 -- no era la wifi, eran

@@ -874,6 +874,33 @@ finally:
 print("24) nombre por defecto según el móvil («iPad», «iPhone», «Android · SM-A546B»); los "
       "«Móvil #3» de antes se ponen al día al reconectar, los renombrados a mano no; última "
       "conexión anotada OK")
+# 25) (pack 38) «Ver lo que sale del PC» en la página de la cámara: lleva a «En la red» de ese
+#     mismo PC, con el mismo nombre/IP con que el móvil llegó; si «En la red» está apagada, la
+#     página lo sabe (dirección vacía) y lo dice en vez de llevar a ninguna parte
+class _Viewer25:
+    active, port = True, 8554
+
+
+hub25 = camui.PhoneCamHub(deque(), deque())
+p25, t25 = hub25.start(58698)
+try:
+    for viewer25, host25, want25 in ((_Viewer25(), None, "http://127.0.0.1:8554/"),
+                                     (_Viewer25(), "ender-rog.local:{0}".format(p25),
+                                      "http://ender-rog.local:8554/"),
+                                     (None, None, "")):
+        hub25.viewer = viewer25
+        h25 = {"Host": host25} if host25 else {}
+        req25 = urllib.request.Request("https://127.0.0.1:{0}/cam?t={1}".format(p25, t25), headers=h25)
+        with _get(req25, https=True) as r:
+            page25 = r.read().decode("utf-8")
+        got25 = re.search(r'var viewerUrl = "([^"]*)";', page25).group(1)
+        assert got25 == want25, (got25, want25)
+    assert page25.count('class="view"') == 2 and "location.href = viewerUrl" in page25
+finally:
+    hub25.stop()
+print("25) «Ver lo que sale del PC» lleva a «En la red» del mismo PC (por IP o por nombre), y "
+      "sabe cuándo está apagada OK")
+
 import glob  # noqa: E402
 for f in list(_phonecam_pem_files) + glob.glob(os.path.join(HERE, "_unit_phonecam_devices*.json")):
     if os.path.exists(f):

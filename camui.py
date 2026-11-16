@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 37                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 38                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -3335,15 +3335,19 @@ button:disabled{opacity:.6}
     aparecer&aacute;s solo en el mosaico de cam-ui, sin tocar nada m&aacute;s all&iacute;.
     Mant&eacute;n esta p&aacute;gina abierta mientras quieras seguir emitiendo.</div>
     <button id="start">&#9654;&#65039; Empezar</button>
+    <div><button class="view">&#128250; Ver lo que sale del PC</button></div>
   </div>
   <div id="bar">
     <button id="flip">&#128260; Cambiar c&aacute;mara</button>
     <button id="stop">&#9208;&#65039; Detener</button>
+    <button class="view">&#128250; Ver el PC</button>
   </div>
 </div>
 <script>
 var sid = "__PHONECAM_SID__";
 var pcName = "__PHONECAM_PCNAME__";   // a qué cam-ui se está mandando (se ve en el aviso)
+// la página «En la red» de ese mismo PC (la de ver lo que sale de él): vacía si está apagada
+var viewerUrl = "__PHONECAM_VIEWER_URL__";
 var sentTimes = [];                   // cuándo terminó cada envío bueno: fps de verdad
 var v = document.getElementById("v");
 var statusEl = document.getElementById("status");
@@ -3460,6 +3464,19 @@ document.getElementById("start").onclick = function () {
   startCapture();
 };
 document.getElementById("stop").onclick = stopCapture;
+// «Ver lo que sale del PC»: deja de mandar la cámara (la suelta de verdad) y vuelve a la página
+// de «En la red» -- desde allí, «Añadir cámara del móvil» trae de vuelta aquí, sin QR
+Array.prototype.forEach.call(document.querySelectorAll("button.view"), function (b) {
+  b.onclick = function () {
+    if (!viewerUrl) {
+      setStatus("En el PC, «En la red» está apagada: actívala en Ajustes para ver aquí lo que sale.",
+                "err");
+      return;
+    }
+    stopCapture();
+    location.href = viewerUrl;
+  };
+});
 document.getElementById("flip").onclick = function () {
   facing = (facing === "environment") ? "user" : "environment";
   if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); startCapture(); }
@@ -3752,6 +3769,7 @@ class PhoneCamHub:
         self._sessions = {}             # sid -> {"name", "jpeg", "ts", "gen", "announced"}
         self.token = None
         self.port = None
+        self.viewer = None              # IpServer de «En la red» (botón «Ver lo que sale del PC»)
         self._https_srv = None
         self._local_srv = None
         self._cert_srv = None           # HTTP normal (sin cifrar): ver _PhoneCamCertHandler
@@ -3982,6 +4000,22 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = PHONECAM_KEEPALIVE_S
 
+    def _viewer_url(self):
+        """La página «En la red» de este PC, con el mismo nombre/IP con que el móvil llegó aquí
+        (así funciona igual con la IP que con nombre.local), o "" si está apagada."""
+        v = getattr(self.server.hub, "viewer", None)
+        if v is None or not getattr(v, "active", False) or not getattr(v, "port", None):
+            return ""
+        host = (self.headers.get("Host") or "").strip()
+        if host.startswith("["):
+            host = host[:host.find("]") + 1]
+        elif ":" in host:
+            host = host.rsplit(":", 1)[0]
+        if not host:
+            ips = [ip for ip in _local_ips() if ip]
+            host = ips[0] if ips else "127.0.0.1"
+        return "http://{0}:{1}/".format(host, v.port)
+
     def _drain_body(self):
         """Lee y tira el cuerpo de una petición que no lo usa: con keep-alive, si se quedara en
         la conexión, se leería como el principio de la siguiente petición."""
@@ -4048,7 +4082,8 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
             hub.touch_device(dev)               # «última conexión» en la lista de Ajustes
         body = (_PHONECAM_HTML.replace(b"__PHONECAM_SID__", sid.encode("ascii"))
                               .replace(b"__PHONECAM_DEV_SECRET__", dev.encode("ascii"))
-                              .replace(b"__PHONECAM_PCNAME__", _phonecam_pc_name().encode("utf-8")))
+                              .replace(b"__PHONECAM_PCNAME__", _phonecam_pc_name().encode("utf-8"))
+                              .replace(b"__PHONECAM_VIEWER_URL__", self._viewer_url().encode("utf-8")))
         self._send(200, body, "text/html; charset=utf-8", cache=False)
 
     def do_POST(self):
@@ -7067,6 +7102,7 @@ class CamApp:
         self._phonecam_remote_q = deque()                    # aviso de «enciéndela sola» (otro hilo)
         self.phonecam = PhoneCamHub(self._phonecam_q, self._phonecam_pair_q)  # cámara del móvil
         self.ipsrv.phonecam = self.phonecam    # para el botón «Añadir cámara del móvil» de /
+        self.phonecam.viewer = self.ipsrv      # ... y, al revés, «Ver lo que sale del PC» en /cam
         self.ipsrv.phonecam_remote_q = self._phonecam_remote_q   # para que ese botón la encienda
         # motor experimental (Ajustes → Avanzado): cada cámara por su lado, ver CamHub
         self.hub = CamHub(lambda: self.eng.ffmpeg, self.phonecam, self._hub_event)
