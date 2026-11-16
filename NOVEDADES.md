@@ -1,5 +1,29 @@
 # Novedades de cam-ui
 
+## pack 37 — 2026.11.16
+- **«Cámara del móvil» mucho más fluida.** Tu registro lo dejó claro: el iPad mandaba ~3 fps y
+  tardaba 220-400 ms en enviar cada fotograma, fuera de 200 KB o de 500 -- no era la wifi, eran
+  las esperas: cada fotograma abría una conexión nueva (con su saludo de seguridad) y esperaba a
+  que terminara el anterior. Ahora la conexión se reutiliza y van hasta dos fotogramas en camino
+  a la vez. Medido con el navegador de verdad a través de una wifi simulada (30 ms de ida y
+  vuelta, 60 Mbit/s) y fotogramas de 250 KB: de 4 fps a 19-20 fps; con una wifi peor (60 ms, 30
+  Mbit/s), de 2 a 10 fps. Mismo tamaño y calidad que antes.
+- **La página del móvil ya no dice «✅» si va mal:** pone «✅ Enviando a
+  cam-ui@nombre-del-pc.local · 19 fps» con los fps de verdad, y «⚠️ … la wifi no da para más»
+  si baja de 10.
+- **Con el motor de siempre, un móvil lento ya no sale «Sin señal».** La prueba previa (y el
+  «Diagnóstico») contaban «1,5 segundos» como 37 fotogramas a 25 fps supuestos: a 3 fps tardaba
+  12 s, daba «tiempo agotado» y el móvil entraba como «Sin señal» aunque su imagen sí llegaba
+  (lo que pasaba en tu registro cada vez). Ahora cuentan segundos de verdad, y el «Diagnóstico»
+  da los fps reales de las cámaras de red (antes, 25 para cualquiera).
+- **«Administrar dispositivos móviles»** (antes «Dispositivos recordados»): cada móvil aparece
+  con su tipo y su última conexión, y se puede **renombrar** (doble clic o «Renombrar…»), no
+  solo olvidar. El nombre es el que llevará su cámara la próxima vez que se conecte.
+- **Nombre por defecto según el móvil:** «iPad» (también cuando Safari se hace pasar por un Mac),
+  «iPhone» o «Android · modelo» (el modelo que da el propio Android: a veces el nombre comercial,
+  a veces un código como «23124RN87G»), en vez de «Móvil». Los que ya tenías como «Móvil #3» se
+  ponen al día solos al reconectar; los que hayas renombrado a mano, no.
+
 ## pack 36 — 2026.11.16
 - **Diagnóstico de «Cámara del móvil»** (no cambia cómo funciona nada): cada 5 segundos,
   camui.log anota cómo llega cada móvil -- fotogramas por segundo y el mayor hueco entre dos,

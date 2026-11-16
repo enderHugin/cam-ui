@@ -744,4 +744,139 @@ assert m21 and 3 < float(m21.group(1)) < 25 and int(m21.group(3)) == len(jp21) /
 print("21) camui.log anota cada pocos segundos cómo llega el móvil: «{0}» OK".format(
     st21[0].split(": ", 1)[1]))
 
+# 22) (pack 37) caso real: un iPad mandaba ~3 fps con 220-400 ms por envío, tardara lo mismo
+#     uno de 200 KB que uno de 500 -- cada fotograma abría una conexión nueva (HTTP/1.0: TCP +
+#     saludo TLS + arranque lento, varias idas y vueltas por la wifi) y esperaba al anterior.
+#     Ahora la conexión se reutiliza (HTTP/1.1, keep-alive), van hasta 2 a la vez, numerados, y
+#     uno viejo que llegue tarde no tapa a uno nuevo
+import http.client  # noqa: E402
+
+hub22 = camui.PhoneCamHub(deque(), deque())
+p22, t22 = hub22.start(58692)
+opened22 = [0]
+_orig_setup22 = camui._PhoneCamHandler.setup
+
+
+def _count_setup22(self):
+    opened22[0] += 1
+    return _orig_setup22(self)
+
+
+camui._PhoneCamHandler.setup = _count_setup22
+try:
+    c22 = http.client.HTTPSConnection("127.0.0.1", p22, context=CTX, timeout=5)
+    c22.request("GET", "/cam?t=" + t22)
+    r22 = c22.getresponse()
+    page22 = r22.read().decode("utf-8")
+    assert r22.version == 11 and not r22.will_close, (r22.version, r22.will_close)
+    assert '"__PHONECAM_PCNAME__"' not in page22 and 'var pcName = "cam-ui' in page22
+    assert "var MAX_INFLIGHT = 2;" in page22 and '"X-Camui-Seq": String(seq)' in page22
+    sid22 = re.search(r'var sid = "([^"]+)"', page22).group(1)
+    # un POST con cuerpo a /add/ready (que no lo usa) no debe estropear la conexión
+    c22.request("POST", "/add/ready", body=b"x" * 100)
+    r22 = c22.getresponse()
+    r22.read()
+    assert r22.status == 200 and not r22.will_close
+    for k22, seq22 in enumerate((1, 2, 4, 3)):          # el 3 llega después del 4
+        c22.request("POST", "/cam/ingest/" + sid22, body=_jpeg(seq22),
+                    headers={"X-Camui-Seq": str(seq22)})
+        r22 = c22.getresponse()
+        r22.read()
+        assert r22.status == 200 and not r22.will_close, (k22, r22.status, r22.will_close)
+    c22.close()
+    assert opened22[0] == 1, "todo por una sola conexión: {0}".format(opened22[0])
+    jp22, gen22, _ts = hub22.latest(sid22)
+    assert jp22 == _jpeg(4) and gen22 == 3, gen22       # el 3, tarde: descartado
+finally:
+    camui._PhoneCamHandler.setup = _orig_setup22
+    hub22.stop()
+print("22) la página y 5 peticiones (con cuerpo) por UNA sola conexión que se reutiliza; uno "
+      "viejo que llega tarde no tapa al nuevo OK")
+
+# 23) (pack 37) la prueba previa del motor de siempre (y el «Diagnóstico») medía «-t 1.5» en
+#     fotogramas a 25 fps supuestos: un móvil a 3 fps tardaba 12 s, «tiempo agotado» y «Sin
+#     señal» aunque la imagen sí llegaba. Ahora cuenta segundos de verdad
+hub23 = camui.PhoneCamHub(deque(), deque())
+hub23.start(58694)
+try:
+    sid23 = hub23.new_session("Lento")
+    stop23 = threading.Event()
+
+    def feed23():
+        k = 0
+        while not stop23.is_set():
+            hub23.feed(sid23, _jpeg(k, 1080, 1920))
+            k += 1
+            time.sleep(1 / 3.0)
+    threading.Thread(target=feed23, daemon=True).start()
+    time.sleep(0.8)
+    spec23 = "http://127.0.0.1:{0}/phonecam/{1}.mjpg".format(hub23.local_port, sid23)
+    t23 = time.time()
+    res23 = camui._preflight_probe([("m", "video", spec23, None)], "ffmpeg")["m"]
+    el23 = time.time() - t23
+    stop23.set()
+finally:
+    hub23.stop()
+assert res23.get("frames", 0) >= 2 and el23 < 4.0, (res23, el23)
+assert 1.5 <= res23["fps"] <= 5, res23["fps"]
+print("23) un móvil a 3 fps pasa la prueba previa en {0:.1f} s ({1} fotogramas, {2:.1f} fps "
+      "medidos) OK".format(el23, res23["frames"], res23["fps"]))
+# 24) (pack 37) el nombre por defecto dice qué es: «iPad» (también el que Safari presenta como
+#     un Mac), «iPhone», «Android · <modelo>» -- lo calcula la propia página (/add) o, si no, el
+#     User-Agent --; uno ya emparejado como «Móvil #3» pasa a llamarse así al reconectar (uno
+#     renombrado a mano, no), y se anota su última conexión
+assert camui._phonecam_device_label("Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X)") == "iPhone"
+assert camui._phonecam_device_label("Mozilla/5.0 (Linux; Android 14; SM-A546B) Chrome/121") == "Android · SM-A546B"
+assert camui._phonecam_device_label("Mozilla/5.0 (Linux; Android 10; K) Chrome/131") == "Android"
+assert camui._phonecam_device_label("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "iPad") == "iPad"
+assert camui._phonecam_device_label("x", "Android%20%C2%B7%20Redmi%2013") == "Android · Redmi 13"
+assert "camuiDeviceLabel" in camui._PHONECAM_ADD_HTML.decode("utf-8")
+camui.PHONECAM_DEVICES_FILE = os.path.join(HERE, "_unit_phonecam_devices24.json")
+hub24 = camui.PhoneCamHub(deque(), pair_q24 := deque())
+p24, t24 = hub24.start(58696)
+try:
+    req24 = urllib.request.Request("https://127.0.0.1:{0}/add/ready?label=iPad".format(p24),
+                                   data=b"", method="POST")
+    with _get(req24, https=True) as r:
+        assert r.status == 200
+    sid24 = re.search(r"sid=([^&]+)", pair_q24.popleft()).group(1)
+    assert hub24.session_name(sid24) == "iPad"
+    with _get("https://127.0.0.1:{0}/cam?t={1}&sid={2}".format(p24, t24, sid24), https=True) as r:
+        dev24 = re.search(r'var dev = "([^"]+)";', r.read().decode("utf-8")).group(1)
+    info24 = hub24.known_device(dev24)
+    assert info24["name"] == "iPad" and info24["auto"] == "iPad" and info24["last"] > 0
+    # uno de antes (sin «auto», nombre genérico) se pone al día al reconectar...
+    hub24.add_device("viejo", "Móvil #3")
+    devs = camui._phonecam_load_devices()
+    devs["viejo"] = {"name": "Móvil #3", "added": 1.0}
+    camui._phonecam_save_devices(devs)
+    req24 = urllib.request.Request(
+        "https://127.0.0.1:{0}/add/reconnect?dev=viejo&label=Android%20%C2%B7%20SM-A546B".format(p24),
+        data=b"", method="POST")
+    with _get(req24, https=True) as r:
+        url24 = json.loads(r.read().decode("utf-8"))["url"]
+    assert hub24.known_device("viejo")["name"] == "Android · SM-A546B"
+    assert hub24.session_name(re.search(r"sid=([^&]+)", url24).group(1)) == "Android · SM-A546B"
+    t_before = time.time()
+    with _get("https://127.0.0.1:{0}{1}".format(p24, url24), https=True) as r:
+        r.read()
+    assert hub24.known_device("viejo")["last"] >= t_before
+    # ...pero uno renombrado a mano no
+    assert hub24.rename_device("viejo", "Tablet de la cocina")
+    with _get(urllib.request.Request(
+            "https://127.0.0.1:{0}/add/reconnect?dev=viejo&label=iPad".format(p24),
+            data=b"", method="POST"), https=True) as r:
+        r.read()
+    assert hub24.known_device("viejo")["name"] == "Tablet de la cocina"
+    assert not hub24.rename_device("no-existe", "x") and not hub24.rename_device("viejo", " ")
+finally:
+    hub24.stop()
+print("24) nombre por defecto según el móvil («iPad», «iPhone», «Android · SM-A546B»); los "
+      "«Móvil #3» de antes se ponen al día al reconectar, los renombrados a mano no; última "
+      "conexión anotada OK")
+import glob  # noqa: E402
+for f in list(_phonecam_pem_files) + glob.glob(os.path.join(HERE, "_unit_phonecam_devices*.json")):
+    if os.path.exists(f):
+        os.remove(f)
+
 print("TODO OK unit_phonecam")

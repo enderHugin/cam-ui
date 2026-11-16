@@ -535,7 +535,7 @@ assert dlg_dev is not None and dlg_dev.alive, \
     "el botón «Dispositivos recordados» debería abrir un diálogo real"
 assert dlg_dev.listbox.get(0, "end") == ("(ninguno todavía)",)
 dlg_dev.close()
-print("21) «Dispositivos recordados» abre un diálogo real; sin ningún móvil emparejado todavía "
+print("21) «Administrar dispositivos móviles» abre un diálogo real; sin ningún móvil emparejado todavía "
       "lo dice con claridad, en vez de aparecer vacío sin más OK")
 
 # 22) un móvil de verdad que abre «/cam» por primera vez (sin «dev» -- igual que el navegador
@@ -553,9 +553,27 @@ assert app.phonecam.known_device(dev21) is not None, \
 app.btn_phonecam_devices.invoke()
 dlg_dev2 = app._phonecam_devices_dialog
 items = dlg_dev2.listbox.get(0, "end")
-assert len(items) == 1 and items[0].startswith("Móvil") and "(desde " in items[0], items
+assert len(items) == 1 and items[0].startswith("Móvil") and "· desde " in items[0] and \
+    "· última conexión " in items[0], items
 print("22) un móvil que abre «/cam» por primera vez queda emparejado de verdad (su secreto se "
-      "guarda al instante) y aparece solo en la lista, con su nombre y la fecha OK")
+      "guarda al instante) y aparece solo en la lista, con su nombre, su última conexión y la "
+      "fecha OK")
+
+# 22b) (pack 37) «Renombrar…» cambia de verdad su nombre (el que llevará su cámara la próxima
+#      vez), y la lista deja ver también el tipo que se detectó
+assert str(app.btn_phonecam_devices.cget("text")).endswith("Administrar dispositivos móviles")
+assert dlg_dev2.top.title() == "Administrar dispositivos móviles"
+dlg_dev2.listbox.selection_set(0)
+dlg_dev2._ask_name = lambda current: "iPad del salón"
+dlg_dev2.btn_rename.invoke()
+assert app.phonecam.known_device(dev21)["name"] == "iPad del salón"
+items = dlg_dev2.listbox.get(0, "end")
+assert items[0].startswith("iPad del salón  (Móvil)"), items
+dlg_dev2._ask_name = lambda current: "   "                # vacío: no cambia nada
+dlg_dev2.btn_rename.invoke()
+assert app.phonecam.known_device(dev21)["name"] == "iPad del salón"
+print("22b) «Administrar dispositivos móviles»: «Renombrar…» cambia su nombre de verdad (y un "
+      "nombre vacío no) OK")
 
 # 23) «Olvidar», con ese móvil seleccionado, lo borra de verdad: desaparece de la lista (vuelve a
 #     decir que no hay ninguno) y, de ahí en adelante, ese mismo secreto ya no sirve para entrar
