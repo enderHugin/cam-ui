@@ -1,5 +1,21 @@
 # Novedades de cam-ui
 
+## pack 43 — 2026.11.17
+- **Con la sincronía «Marcas del dispositivo», una cámara de red ya no frena todo el mosaico.**
+  ffmpeg daba por hecho que las de red (otro cam-ui, el móvil, IP Webcam…) mandan 25 fps: una
+  que mandaba 12 hacía ir el mosaico entero a media velocidad, y las cámaras USB, leídas a ese
+  medio ritmo, acumulaban retraso hasta llenar su búfer y tirar fotogramas (la EOS la primera;
+  al cabo de horas, la vista previa casi parada). Ahora cada cámara de red va con la hora real
+  a la que llega cada imagen. Con «Reloj común» (la opción recomendada) no pasaba.
+- **Una cámara de red «sin señal» vuelve sola** (motor de siempre). Si no respondía al arrancar
+  el mosaico (por ejemplo, porque el otro PC se estaba reiniciando, como al actualizarse los dos
+  a la vez) o se corta con todo en marcha, se vuelve a probar cada 10 s (luego, más espaciado)
+  y, en cuanto responde, se reinicia el mosaico para meterla. Si se está grabando, entra al
+  parar. La que se corta en marcha ya no se queda congelada en su última imagen sin decir nada:
+  su rótulo pone «sin señal».
+- Rótulo de la vista previa: los fps «~» de una cámara ya no se contagian de la de al lado
+  (los bordes de cada casilla mezclan los de la vecina al reducir la imagen).
+
 ## pack 42 — 2026.11.17
 - **Sigue funcionando con el PC bloqueado.** Mientras la vista previa está en marcha (y con ella
   la grabación, «En la red» y la cámara virtual), cam-ui le pide a Windows que no suspenda el

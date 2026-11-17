@@ -48,7 +48,8 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   momento solo el vídeo). Doble clic sobre ella en la lista para editar su nombre o dirección sin
   perder el encuadre ni el color. Si se desconecta (o cualquier otra cámara tarda demasiado en
   responder), no se cae todo el mosaico: queda un aviso «Sin señal: nombre» en su sitio, el resto
-  sigue grabando, y se reconecta sola cuando vuelve.
+  sigue grabando, y se reconecta sola cuando vuelve (con el motor de siempre, se vuelve a probar
+  cada pocos segundos y entra en cuanto responde; si se está grabando, al parar).
 - Cámara del móvil, sin instalar nada y siempre activa (no hay que encenderla a mano): pestaña
   Ajustes → «Cámara del móvil» muestra, ya listas, todas las direcciones fijas `/movil` de este
   equipo, sin número de puerto si el 443 está libre (p. ej. `https://192.168.1.129/movil` o
@@ -103,12 +104,12 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/unit_tiles.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
 `tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`, `tests/ui_phonecam.py`
-(este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`
+(este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`, `tests/ui_netretry.py`
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 `tests/unit_hub.py` y `tests/unit_ipout.py` usan el ffmpeg del PATH; con

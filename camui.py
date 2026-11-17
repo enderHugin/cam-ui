@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 42                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 43                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -710,6 +710,10 @@ NET_IO_TIMEOUT_US = 5_000_000
 # pronto, no esperar lo mismo que ya se tolera una vez integrada de verdad en el mosaico.
 NET_PREFLIGHT_TIMEOUT_US = 2_000_000
 NET_PREFLIGHT_SECS = 1.5
+# motor de siempre: cada cuánto se vuelve a probar una cámara de red que está «sin señal» (no
+# respondía al arrancar, o se cortó con el mosaico en marcha); si responde, se reinicia el mosaico
+# para meterla (ver CamApp._net_watch). Con el motor nuevo no hace falta: se reconecta ella sola.
+NET_RETRY_SECONDS = 10.0
 
 
 def _is_net_spec(spec):
@@ -794,6 +798,16 @@ def _rebase(clock, t0, offset_s, audio=False, net=False):
         return "(RTCTIME/1000000-({0:.6f}-{1:.6f}))/TB".format(t0, offset_s)
     if clock:
         return "PTS-({0:.6f}-{1:.6f})/TB".format(t0, offset_s)
+    if net:
+        # «Marcas del dispositivo» (cada flujo empieza en 0 en su primer fotograma): con
+        # PTS-STARTPTS, los 0,1,2... a 25 fps supuestos de «mpjpeg» hacían que una cámara de red
+        # (o la del móvil) a 12 fps marcara media velocidad para TODO el mosaico -- comprobado
+        # con ffmpeg 6 y 9: salían 10 fotogramas por segundo en vez de 20, y las cámaras locales,
+        # leídas a ese medio ritmo, acumulaban retraso sin parar hasta llenar su búfer y tirar
+        # fotogramas (camui.log real: la EOS al 63-87 % de sus 512 MB, horas después la vista
+        # previa casi parada). Aquí: la hora real de llegada, contada desde la de su primer
+        # fotograma (st/ld la guardan entre uno y otro).
+        return "'(RTCTIME-if(eq(N,0),st(0,RTCTIME),ld(0)))/1000000/TB+{0:.6f}/TB'".format(offset_s)
     return "PTS-STARTPTS+{0:.6f}/TB".format(offset_s)
 
 
@@ -2940,6 +2954,9 @@ _METER_RE = re.compile(r"lavfi\.astats\.(\d)\.Peak_level=(\S+)")
 _INPUT_RE = re.compile(r"^Input #(\d+),")
 _OUTPUT_RE = re.compile(r"^Output #\d+,")
 _VFPS_RE = re.compile(r", ([\d.]+) fps")
+# una entrada que se corta con ffmpeg ya en marcha (p. ej. una cámara de red): ffmpeg sigue, con su
+# casilla congelada en la última imagen para siempre (comprobado con ffmpeg 6 y 9)
+_DEAD_IN_RE = re.compile(r"^\[in#(\d+)/[^\]]*\] Error during demuxing")
 _VSTREAM_RE = re.compile(r"^\s*Stream #(\d+):\d+.*?: Video: .*?, (\d{2,5})x(\d{2,5})(?:[ ,\[]|$)")
 
 
@@ -5510,6 +5527,7 @@ class FFmpegEngine:
         # previa. Antes se miraba solo en los fotogramas que la ventana llegaba a dibujar, y la
         # ventana no redibuja a 30 por segundo: una cámara de 30 fps salía a «~19».
         self.tile_chg = []
+        self.dead_inputs = set()     # entradas que ffmpeg dio por cortadas (ver _DEAD_IN_RE)
         self.levels = [-90.0, -90.0]
         self.startup_time = 2.5      # s hasta el primer fotograma (se mide)
         self.meta = {}
@@ -5617,6 +5635,7 @@ class FFmpegEngine:
             with self.lock:
                 self.tile_chg = ([] if hub_on else
                                  [deque(maxlen=150) for _ in (meta.get("tiles") or ())])
+                self.dead_inputs = set()
             tr = threading.Thread(target=self._read_frames, daemon=True,
                                   args=(p, meta["pw"], meta["ph"], meta.get("tiles"),
                                         meta.get("W"), self.tile_chg))
@@ -5735,6 +5754,11 @@ class FFmpegEngine:
                         mf = _VFPS_RE.search(s)
                         if mf:
                             self.in_fps[int(mv.group(1))] = float(mf.group(1))
+                md = _DEAD_IN_RE.match(s)
+                if md:
+                    with self.lock:
+                        self.dead_inputs.add(int(md.group(1)))
+                    log.warning("ffmpeg: la entrada %s se ha cortado: %s", md.group(1), s)
                 self.err.append(s)
                 if self._nlog < 400:
                     self._nlog += 1
@@ -7412,6 +7436,11 @@ def _tile_changes(frame, tiles, W, sig):
         if i >= len(sig):
             break
         x0, y0, x1, y1 = int(tx * sc), int(ty * sc), int((tx + tw) * sc), int((ty + th) * sc)
+        # sin los bordes: al reducir el mosaico a la vista previa, los píxeles de la junta
+        # mezclan los de la casilla de al lado, y una cámara parada junto a otra que se mueve
+        # salía con los fps de su vecina (comprobado: «~20» con la de red cortada y congelada)
+        mx, my = max(3, (x1 - x0) // 16), max(3, (y1 - y0) // 16)
+        x0, y0, x1, y1 = x0 + mx, y0 + my, x1 - mx, y1 - my
         if x1 - x0 < 8 or y1 - y0 < 8:
             continue
         s = hash(frame[y0:y1:max(1, (y1 - y0) // 64), x0:x1:max(1, (x1 - x0) // 64)].tobytes())
@@ -7478,6 +7507,10 @@ class CamApp:
         self._tinfo = []               # (nombre, detalle, ¿aviso?) por casilla (ver _tile_infos)
         self._tinfo_t = 0.0
         self._tinfo_font = None
+        self._net_probe_t = 0.0        # cámaras de red «sin señal»: última prueba (ver _net_watch)
+        self._net_probing = False
+        self._net_wait, self._net_plan = NET_RETRY_SECONDS, None
+        self._net_back = deque()       # (plan, [nombres que vuelven a responder]) desde el hilo
         self._run_color = {}
         self._color_jobs = {}
         self._pickers = []
@@ -10745,11 +10778,86 @@ class CamApp:
             lab, bad, "probando {0}".format(new) if new else "se usa el modo de fábrica del driver"
             if new == "" else "vuelve a Auto"))
 
+    def _net_watch(self):
+        """(motor de siempre; hilo de Tk, en cada _tick) Una cámara de red «sin señal» -- no
+        respondía al arrancar el mosaico (_preflight_net_cams: p. ej. el otro PC se estaba
+        reiniciando en ese momento) o se cortó con todo ya en marcha (ffmpeg sigue, pero su
+        casilla se queda congelada en la última imagen para siempre) -- antes ya no se volvía a
+        intentar hasta tocar algo a mano. Ahora: la que se corta pasa a «sin señal» en su
+        rótulo, y cada NET_RETRY_SECONDS se prueba en segundo plano si responden; en cuanto una
+        lo hace, se reinicia el mosaico para meterla (nunca grabando: cortaría el vídeo)."""
+        plan = self._run_plan
+        if not self.previewing or plan is None or self.eng.hub_on:
+            return
+        cams = plan.get("cams") or []
+        labels = plan.get("labels") or []
+        with self.eng.lock:
+            dead = set(self.eng.dead_inputs)
+        for i in sorted(dead):
+            if i < len(cams) and _is_net_spec(cams[i].get("spec")) and not cams[i].get("_offline"):
+                cams[i]["_offline"] = True
+                self._tinfo_t = 0.0
+                lab = labels[i] if i < len(labels) else cams[i].get("spec")
+                log.warning("«%s» se ha cortado con el mosaico en marcha: «sin señal» hasta que "
+                            "vuelva a responder", lab)
+                self._set_status("«{0}» se ha cortado: en cuanto vuelva a responder, se "
+                                 "incorpora sola.".format(lab))
+        if self._net_plan is not plan:
+            self._net_plan, self._net_wait = plan, NET_RETRY_SECONDS
+        while self._net_back:
+            p, back = self._net_back.popleft()
+            if p is not plan:
+                continue
+            if not back:
+                # sigue sin responder: se espacian las pruebas (10, 15, 22... hasta 60 s), que
+                # un PC apagado toda la noche no llene camui.log de intentos
+                self._net_wait = min(60.0, self._net_wait * 1.5)
+                continue
+            if self.recording:
+                self._set_status("«{0}» vuelve a responder: entrará en el mosaico al parar de "
+                                 "grabar.".format(", ".join(back)))
+                continue
+            log.info("cámaras de red que vuelven a responder: %s; se reinicia el mosaico", back)
+            self._set_status("«{0}» vuelve a responder: se incorpora al mosaico…".format(
+                ", ".join(back)))
+            self._restart_preview()
+            return
+        if self._net_probing or self.busy or self.recording or \
+                time.time() - self._net_probe_t < self._net_wait:
+            return
+        jobs = [(str(i), "video", c["spec"], c.get("mode")) for i, c in enumerate(cams)
+                if c.get("_offline") and _is_net_spec(c.get("spec"))]
+        if not jobs:
+            return
+        self._net_probe_t, self._net_probing = time.time(), True
+        ff = self.eng.ffmpeg
+
+        def run():
+            back = []
+            try:
+                res = _preflight_probe(jobs, ff)
+                back = [labels[int(k)] if int(k) < len(labels) else k
+                        for k, r in sorted(res.items()) if r.get("frames")]
+            except Exception:
+                log.exception("reintento de cámaras de red")
+            finally:
+                self._net_back.append((plan, back))
+                self._net_probing = False
+        threading.Thread(target=run, daemon=True).start()
+
     def _on_cam_offline(self, lab):
         """(hilo principal) Una cámara (de red o local) no se pudo abrir al (re)arrancar: en su
         sitio del mosaico queda un marcador «sin señal» y el resto sigue. Se vuelve a intentar
         de verdad la próxima vez que se reinicie la vista previa (cambiar un ajuste, quitar y
         volver a marcar la cámara, «Reiniciar», etc.) -- esto no reintenta ella sola en caliente."""
+        net = any(l == lab and i < len((self._run_plan or {}).get("cams") or []) and
+                  _is_net_spec(self._run_plan["cams"][i].get("spec"))
+                  for i, l in enumerate((self._run_plan or {}).get("labels") or []))
+        if net and not self.eng.hub_on:
+            self._set_status("«{0}» no responde: sigue el resto, con un aviso «sin señal» en su "
+                             "sitio; se vuelve a intentar sola cada {1:g} s.".format(
+                                 lab, NET_RETRY_SECONDS))
+            return
         self._set_status("«{0}» no se pudo conectar: sigue el resto, con un aviso «sin señal» "
                          "en su sitio. Para reintentarla, vuelve a aplicar algún cambio (o "
                          "«⚠ Reiniciar»).".format(lab))
@@ -11700,6 +11808,7 @@ class CamApp:
             if self.previewing and self.mode != "mini":
                 self._draw_frame()
             self.awake.set(self.previewing or self.recording)   # (incluso con el PC bloqueado)
+            self._net_watch()
             self._check_sources()
             self._update_mode_label()
             self._tick_n = (getattr(self, "_tick_n", 0) + 1) % 3
