@@ -31,7 +31,7 @@ camui.CONFIG = os.path.join(HOME, "config.json")
 camui.LOGFILE = os.path.join(HOME, "camui.log")
 camui.NET_RETRY_SECONDS = 2.0
 with open(camui.CONFIG, "w", encoding="utf-8") as f:
-    json.dump({"version": 3, "hub": False, "fps": 25, "sync": "device"}, f)
+    json.dump({"version": 3, "hub": False, "hub_v": 2, "fps": 25, "sync": "device"}, f)
 
 W, H = 320, 240
 

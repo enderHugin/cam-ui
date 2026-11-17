@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 44                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 45                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1038,7 +1038,7 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
     # ---- vídeo ----
     for i, c in enumerate(cams):
         if hub is not None:
-            # motor experimental: cada cámara llega del concentrador (ver CamHub) como vídeo crudo
+            # motor nuevo: cada cámara llega del concentrador (ver CamHub) como vídeo crudo
             # a ritmo fijo por un socket local -- ffmpeg ya no abre ni espera a ninguna cámara
             hw, hh = hub["sizes"][i]
             cmd += ["-thread_queue_size", "1024", "-f", "rawvideo", "-pix_fmt", hub.get("pix", HUB_PIX),
@@ -4752,7 +4752,7 @@ class _PhoneCamCertHandler(http.server.BaseHTTPRequestHandler):
 
 
 # =====================================================================
-#  Concentrador (motor experimental, Ajustes → Avanzado)
+#  Concentrador (motor nuevo, Ajustes → Avanzado)
 # =====================================================================
 # Con el motor de siempre, UN solo ffmpeg abre todas las cámaras (una detrás de otra: ~1,4 s cada
 # USB barata) y las lee, y con ffmpeg 7/8 solo lee de cada una cuando el mosaico se lo pide: una
@@ -5672,7 +5672,7 @@ class FFmpegEngine:
         self._abort = False          # el botón de pánico cancela los reintentos en curso
         self.vcam = None             # VirtualCam que recibe la salida RGB (o None)
         self.ipsrv = None            # IpServer que recibe la salida en red (o None)
-        self.hub = None              # CamHub (motor experimental), si CamApp lo enlaza
+        self.hub = None              # CamHub (motor nuevo), si CamApp lo enlaza
         self.hub_on = False          # el ffmpeg en marcha toma las cámaras del concentrador
         self.hub_delay = 0.0         # su retraso común D (s)
 
@@ -5794,7 +5794,7 @@ class FFmpegEngine:
         return False, last or "ffmpeg terminó al iniciar."
 
     def _hub_prepare(self, plan):
-        """(motor experimental) Pone en marcha -- todas a la vez -- las cámaras que aún no lo estén,
+        """(motor nuevo) Pone en marcha -- todas a la vez -- las cámaras que aún no lo estén,
         abre una sesión del concentrador y deja el plan listo para build_command. Devuelve el t0
         del audio: el instante cuya imagen es el fotograma 0 (ver _HubSession)."""
         cams, labels = plan["cams"], plan.get("labels") or []
@@ -7579,6 +7579,16 @@ class KeepAwake:
             self._h = self._reason = None
 
 
+def hub_from_cfg(c):
+    """¿Motor nuevo (CamHub)? Por defecto, sí, desde el pack 45. Hasta entonces era opcional y
+    venía desmarcado, así que un "hub": false guardado casi siempre es solo aquel valor de serie:
+    se ignora UNA vez (config sin "hub_v") y desde ahí se respeta lo que se elija."""
+    hub_v = c.get("hub_v", 0)
+    if not isinstance(hub_v, int) or hub_v < 2:
+        return True
+    return bool(c.get("hub", True))
+
+
 def _tile_changes(frame, tiles, W, sig):
     """Índices de las casillas del mosaico cuyo contenido cambió respecto al fotograma anterior
     (sig: la firma de cada una, se actualiza aquí). Con el motor de siempre no se sabe a cuántos
@@ -7718,7 +7728,7 @@ class CamApp:
         FRONT.https_target = lambda: self.phonecam.port if self.phonecam.active else None
         FRONT.start()
         self.ipsrv.phonecam_remote_q = self._phonecam_remote_q   # para que ese botón la encienda
-        # motor experimental (Ajustes → Avanzado): cada cámara por su lado, ver CamHub
+        # motor nuevo (Ajustes → Avanzado): cada cámara por su lado, ver CamHub
         self.hub = CamHub(lambda: self.eng.ffmpeg, self.phonecam, self._hub_event)
         self.eng.hub = self.hub
         self._hub_restart_t = 0.0
@@ -8378,7 +8388,7 @@ class CamApp:
         self.v_preset = t(value=c.get("preset", "veryfast"))
         self.v_container = t(value=c.get("container", "mp4"))
         self.v_sync = t(value=_pair_label(SYNCS, c.get("sync", "clock")))
-        self.v_hub = tk.BooleanVar(value=bool(c.get("hub", False)))
+        self.v_hub = tk.BooleanVar(value=hub_from_cfg(c))
         self.v_dir = t(value=c.get("dir", DEF_DIR))
         self.v_name = t(value=c.get("name", "Multivista"))
         vs = (self._cfg.get("vcam") or {}).get("size") if isinstance(self._cfg.get("vcam"), dict) else None
@@ -9078,17 +9088,18 @@ class CamApp:
                      state="readonly").grid(row=0, column=1, sticky="w")
         ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
                   text="«Reloj común» alinea todas las cámaras y el audio en una misma línea "
-                       "de tiempo. Si una cámara se comporta raro, prueba «Marcas del dispositivo»."
+                       "de tiempo. «Marcas del dispositivo» se fía de la hora que da cada cámara: "
+                       "con el motor de siempre, una que la dé mal frena todo el mosaico."
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
-        ttk.Checkbutton(sf, text="Motor nuevo (experimental): cada cámara por separado",
+        ttk.Checkbutton(sf, text="Motor nuevo: cada cámara por separado (recomendado)",
                         variable=self.v_hub).grid(row=2, column=0, columnspan=2, sticky="w",
                                                   padx=6, pady=(4, 0))
         ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
                   text="Abre todas las cámaras a la vez, cada una por su lado: una lenta (10 fps), "
                        "una que se corta o la de otro PC ya no frenan a las demás, y reiniciar el "
                        "mosaico o empezar a grabar no vuelve a abrirlas. La de otro cam-ui se "
-                       "alinea por la hora a la que se captó allí. Si algo va peor que con el "
-                       "motor de siempre, desmárcalo."
+                       "alinea por la hora a la que se captó allí. Si algo va peor, desmárcalo "
+                       "y vuelve el motor de siempre (un solo ffmpeg para todas)."
                   ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
 
     # ------------------------------------------------------------ dispositivos
@@ -10369,7 +10380,7 @@ class CamApp:
                 self._schedule_restart()
 
     def _hub_check_delay(self):
-        """(motor experimental) Si la cámara de otro PC llega más tarde que el retraso común D con
+        """(motor nuevo) Si la cámara de otro PC llega más tarde que el retraso común D con
         el que arrancó, se vuelve a arrancar el mosaico (sin reabrir las cámaras) con uno mayor
         -- nunca mientras se graba (cambiaría la sincronía con el audio a mitad)."""
         s = self.hub.session
@@ -10462,7 +10473,7 @@ class CamApp:
             plan["vcam"] = {"w": self.vcam.w, "h": self.vcam.h, "fps": min(30, self._fps()),
                             "pix": self.vcam.pix}
         if self.v_hub.get():
-            plan["hub"] = True                 # el motor experimental (ver CamHub)
+            plan["hub"] = True                 # el motor nuevo (ver CamHub)
         if self.ipout_on and self.ipsrv.active:
             # la forma real del mosaico, dentro del máximo elegido -- sin barras negras añadidas
             iw, ih = ip_fit_size(g["W"], g["H"], getattr(self.ipsrv, "box", None) or
@@ -10499,6 +10510,7 @@ class CamApp:
                "quality": self.v_quality.get(), "preset": self.v_preset.get(),
                "container": self.v_container.get(),
                "sync": _pair_value(SYNCS, self.v_sync.get()), "hub": bool(self.v_hub.get()),
+               "hub_v": 2,
                "dir": self.v_dir.get(), "name": self.v_name.get(),
                "av_offset": _geti(self.v_avoff), "abuf": max(0, _geti(self.v_abuf, 50)),
                "audio": {"L": self.arow["L"].to_cfg(), "R": self.arow["R"].to_cfg()}}
@@ -10569,7 +10581,7 @@ class CamApp:
         self.eng.stop()
         self._auto_modes(plan)
         if plan.get("hub"):
-            # motor experimental: cada cámara se abre (todas a la vez) y se reconecta sola en el
+            # motor nuevo: cada cámara se abre (todas a la vez) y se reconecta sola en el
             # concentrador, así que ni la prueba previa de red ni el intermediario de las
             # encadenadas hacen falta -- y ffmpeg ya no puede fallar por una cámara
             self._chain_net_cams({"sync": "-"})          # cierra intermediarios que quedaran
@@ -11085,7 +11097,7 @@ class CamApp:
 
     def _stop_preview(self):
         self.previewing = False
-        # también suelta las cámaras del motor experimental: pausar es para liberarlas
+        # también suelta las cámaras del motor nuevo: pausar es para liberarlas
         self._bg(self.eng.release_devices, lambda r: self._set_idle("Vista previa detenida."))
 
     def _restart_preview(self):

@@ -27,7 +27,7 @@ camui.HERE = HOME
 camui.CONFIG = os.path.join(HOME, "config.json")
 camui.LOGFILE = os.path.join(HOME, "camui.log")
 with open(camui.CONFIG, "w", encoding="utf-8") as f:
-    json.dump({"version": 3, "hub": True, "fps": 30}, f)
+    json.dump({"version": 3, "fps": 30}, f)           # sin «hub»: el motor nuevo, por defecto
 
 # "otro cam-ui": su salida «En la red» (IpServer real), alimentada a 30 fps
 W, H = 320, 240
@@ -72,7 +72,13 @@ def pump(cond, secs, step=0.05):
 
 
 try:
-    assert app.v_hub.get() is True, "la opción guardada no se cargó"
+    assert app.v_hub.get() is True, "el motor nuevo no sale por defecto"
+    # un "hub": false de antes del pack 45 (era el valor de serie) se ignora una vez; elegido
+    # después (con "hub_v"), se respeta
+    assert camui.hub_from_cfg({}) is True
+    assert camui.hub_from_cfg({"hub": False}) is True
+    assert camui.hub_from_cfg({"hub": False, "hub_v": 2}) is False
+    assert camui.hub_from_cfg({"hub": True, "hub_v": 2}) is True
 
     def find_check(w):
         for c in w.winfo_children():
@@ -84,7 +90,8 @@ try:
         return None
     chk = find_check(root)
     assert chk is not None and str(chk.cget("variable")) == str(app.v_hub), "falta la casilla en Ajustes"
-    print("1) Ajustes → Avanzado: casilla «Motor nuevo (experimental)», cargada del config OK")
+    print("1) motor nuevo por defecto (también donde quedó desmarcado de serie), casilla «{0}» "
+          "en Ajustes → Avanzado OK".format(chk.cget("text")))
 
     LAB = "🌐 Otro PC"
     app.net_cams[LAB] = {"name": "Otro PC", "alt": None, "label": LAB, "spec": URL, "net": True}
@@ -141,7 +148,8 @@ try:
         (app.eng.hub_on, app.hub.sources, app.eng.cmd)       # ffmpeg vuelve a abrir la cámara él
     app.save_config()
     with open(camui.CONFIG, encoding="utf-8") as f:
-        assert json.load(f).get("hub") is False
+        cfg5 = json.load(f)
+    assert cfg5.get("hub") is False and camui.hub_from_cfg(cfg5) is False, cfg5
     assert app.awake.on
     print("5) desmarcada: vuelve el motor de siempre, y se guarda OK")
     print("   (y el PC no se suspende con la vista previa en marcha; en pausa, sí puede) OK")

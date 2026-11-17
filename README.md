@@ -28,7 +28,7 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   `http://nombre-del-pc.local/`, el certificado de iPhone/iPad en `/certificado`, añadir un móvil
   en `https://…/movil` (escrito sin `https://` también llega). Los puertos de siempre (8554,
   8555…) siguen funcionando igual, p. ej. para otro cam-ui encadenado.
-- Motor nuevo (experimental, Ajustes → Avanzado; el de siempre sigue por defecto): cada cámara en
+- Motor nuevo (el de serie desde el pack 45; el de siempre sigue en Ajustes → Avanzado): cada cámara en
   su propio proceso, abiertas todas a la vez y leídas siempre; un reloj único toma de cada una la
   imagen captada en cada instante y se la da a ffmpeg a ritmo fijo. Una cámara lenta, cortada o
   de otro PC ya no frena a las demás, reiniciar el mosaico (o empezar a grabar) no reabre las

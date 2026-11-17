@@ -1,5 +1,13 @@
 # Novedades de cam-ui
 
+## pack 45 — 2026.11.17
+- **El motor nuevo pasa a ser el de serie.** Cada cámara va en su propio proceso: se abren
+  todas a la vez, se leen siempre a su ritmo y cada imagen lleva la hora a la que llegó (no la
+  que dice la cámara), así que una cámara lenta, una que marca mal su hora, una que se corta o
+  la de otro PC ya no frenan a las demás. Se aplica también donde la casilla quedó desmarcada,
+  porque hasta ahora venía así de serie; si lo prefieres, se puede volver al motor de siempre en
+  Ajustes → Avanzado, y desde entonces se respeta lo que elijas.
+
 ## pack 44 — 2026.11.17
 - **Un registro por tramo.** Cada vez que cam-ui arranca (y por tanto tras cada actualización,
   que lo reinicia) y cada vez que cambia el día, `camui.log` se guarda en la carpeta
