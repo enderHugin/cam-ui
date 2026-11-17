@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 43                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 44                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -108,28 +108,145 @@ def _resolve_tool(name, env_var, default):
 
 
 LOGFILE = os.path.join(HERE, "camui.log")
+# Cada registro guarda solo un tramo: al arrancar (lo que incluye cada actualización, que
+# reinicia el programa) y al cambiar de día, camui.log se mueve a la carpeta «registros» con
+# el nombre del rango de horas que cubre y el pack que lo escribió -- p. ej.
+# «camui 2026-11-17 14.53 a 15.32 (pack 43).log» -- y se empieza uno nuevo. Antes, un único
+# archivo que se vaciaba sin más al pasar de 1,5 MB.
+LOG_ARCHIVE_DIR = "registros"
+LOG_MAX_BYTES = 20 * 1024 * 1024       # por si un día da para tanto: también se parte (no se borra)
 log = logging.getLogger("camui")
 log.addHandler(logging.NullHandler())
 log.propagate = False
 _hang_fh = None
 _log_ready = False
+_log_handler = None
+_log_day = None
+_LOG_TS_RE = re.compile(rb"^(\d{4}-\d\d-\d\d) (\d\d):(\d\d):\d\d")
+_LOG_PACK_RE = re.compile(rb"=== CamWin32[^\n]*?pack (\d+)")
+
+
+def _log_archive_name(path):
+    """«camui <primera hora> a <última> (pack N)» según las marcas de tiempo del propio
+    registro (si no tiene ninguna, la fecha del archivo)."""
+    with open(path, "rb") as f:
+        head = f.read(65536)
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - 65536))
+        tail = f.read()
+    first = last = None
+    for line in head.splitlines():
+        m = _LOG_TS_RE.match(line)
+        if m:
+            first = m
+            break
+    for line in reversed(tail.splitlines()):
+        m = _LOG_TS_RE.match(line)
+        if m:
+            last = m
+            break
+    if first is None or last is None:
+        t = time.localtime(os.path.getmtime(path))
+        d0 = d1 = time.strftime("%Y-%m-%d", t)
+        h0 = h1 = time.strftime("%H.%M", t)
+    else:
+        d0, h0 = first.group(1).decode(), "{0}.{1}".format(first.group(2).decode(), first.group(3).decode())
+        d1, h1 = last.group(1).decode(), "{0}.{1}".format(last.group(2).decode(), last.group(3).decode())
+    rng = "{0} {1} a {2}".format(d0, h0, h1 if d1 == d0 else "{0} {1}".format(d1, h1))
+    pk = _LOG_PACK_RE.search(head)
+    return "camui {0}{1}".format(rng, " (pack {0})".format(pk.group(1).decode()) if pk else "")
+
+
+def _archive_log():
+    """Mueve camui.log (si tiene algo) a «registros» con el nombre de su rango. Si no se puede
+    mover porque otro proceso aún lo tiene abierto -- el cam-ui anterior terminando de cerrarse
+    tras actualizarse --, se copia y se vacía. Devuelve la ruta del guardado, o None."""
+    try:
+        if not os.path.isfile(LOGFILE) or os.path.getsize(LOGFILE) == 0:
+            return None
+        d = os.path.join(os.path.dirname(LOGFILE), LOG_ARCHIVE_DIR)
+        os.makedirs(d, exist_ok=True)
+        base = _log_archive_name(LOGFILE)
+        dst, n = os.path.join(d, base + ".log"), 2
+        while os.path.exists(dst):
+            dst, n = os.path.join(d, "{0} ({1}).log".format(base, n)), n + 1
+        try:
+            os.replace(LOGFILE, dst)
+        except OSError:
+            shutil.copyfile(LOGFILE, dst)
+            with open(LOGFILE, "r+b") as f:
+                f.truncate(0)
+        return dst
+    except Exception:
+        return None
+
+
+def log_rotate_if_needed(now=None):
+    """(hilo de Tk, cada poco) Día nuevo -- o un registro ya enorme --: registro nuevo, sin
+    cerrar el programa. True si se ha cambiado."""
+    global _log_day, _hang_fh
+    h = _log_handler
+    if not _log_ready or h is None:
+        return False
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    try:
+        big = os.path.getsize(LOGFILE) > LOG_MAX_BYTES
+    except OSError:
+        big = False
+    if day == _log_day and not big:
+        return False
+    reason = "día nuevo" if day != _log_day else "ya ocupaba más de {0} MB".format(LOG_MAX_BYTES >> 20)
+    prev = None
+    h.acquire()
+    try:
+        # faulthandler (pilas si la interfaz se cuelga) escribe por su cuenta en el mismo
+        # archivo: fuera mientras se cambia (el vigilante de CamApp lo vuelve a armar solo)
+        try:
+            faulthandler.cancel_dump_traceback_later()
+            faulthandler.disable()
+        except Exception:
+            pass
+        old, _hang_fh = _hang_fh, None
+        try:
+            if old is not None:
+                old.close()
+            if h.stream is not None:
+                h.stream.close()
+                h.stream = None
+        except Exception:
+            pass
+        prev = _archive_log()
+        try:
+            h.stream = h._open()
+            _hang_fh = open(LOGFILE, "a", encoding="utf-8")
+            faulthandler.enable(file=_hang_fh, all_threads=True)
+        except Exception:
+            pass
+        _log_day = day
+    finally:
+        h.release()
+    log.info("=== CamWin32 v2 · pack %s | registro nuevo (%s); el anterior: %s", APP_PACK, reason,
+             prev or "-")
+    return True
 
 
 def setup_logging():
     """Registro en camui.log (junto al script) + volcado de pilas de TODOS los hilos si la
     interfaz se queda colgada (vigilante en CamApp._tick) o el proceso falla."""
-    global _hang_fh, _log_ready
+    global _hang_fh, _log_ready, _log_handler, _log_day
     if _log_ready:
         return
+    prev = None
     try:
-        if os.path.isfile(LOGFILE) and os.path.getsize(LOGFILE) > 1500000:
-            open(LOGFILE, "w").close()
+        prev = _archive_log()                 # arranque (y, con él, cada actualización): nuevo
         h = logging.FileHandler(LOGFILE, mode="a", encoding="utf-8")
         h.setFormatter(logging.Formatter(
             "%(asctime)s.%(msecs)03d [%(threadName)s] %(levelname)s %(message)s",
             "%Y-%m-%d %H:%M:%S"))
         log.addHandler(h)
         log.setLevel(logging.DEBUG)
+        _log_handler, _log_day = h, time.strftime("%Y-%m-%d")
         _hang_fh = open(LOGFILE, "a", encoding="utf-8")
         faulthandler.enable(file=_hang_fh, all_threads=True)
     except Exception:
@@ -142,9 +259,11 @@ def setup_logging():
     threading.excepthook = lambda a: log.error(
         "EXCEPCION en hilo %s:\n%s", a.thread.name if a.thread else "?",
         "".join(traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback)))
-    log.info("=== CamWin32 v2 | Python %s | %s | ffmpeg=%s | tk=%s | exe=%s",
+    log.info("=== CamWin32 v2 · pack %s | Python %s | %s | ffmpeg=%s | tk=%s | exe=%s", APP_PACK,
              sys.version.split()[0], sys.platform, FFMPEG, getattr(tk, "TkVersion", None),
              sys.executable)
+    if prev:
+        log.info("registro anterior guardado en %s", prev)
 
 
 FFMPEG = _resolve_tool("ffmpeg.exe", "CAMWIN32_FFMPEG", r"C:\io\Tools\ffmpeg.exe")
@@ -2957,6 +3076,13 @@ _VFPS_RE = re.compile(r", ([\d.]+) fps")
 # una entrada que se corta con ffmpeg ya en marcha (p. ej. una cámara de red): ffmpeg sigue, con su
 # casilla congelada en la última imagen para siempre (comprobado con ffmpeg 6 y 9)
 _DEAD_IN_RE = re.compile(r"^\[in#(\d+)/[^\]]*\] Error during demuxing")
+# DirectShow avisa una vez por CADA fotograma que tira por tener lleno su búfer: cientos por
+# minuto, que se comían las 400 líneas de ffmpeg que se apuntan en camui.log en el primer minuto
+# (y lo que pasara después ya no se veía). Se resumen: la primera, y luego una cada minuto.
+_RTBUF_RE = re.compile(r"real-time buffer \[(.*?)\] \[(?:video|audio) input\] too full or near "
+                       r"too full \((\d+)%")
+_REPEAT_RE = re.compile(r"^\s*Last message repeated (\d+) times")
+RTBUF_LOG_SECONDS = 60.0
 _VSTREAM_RE = re.compile(r"^\s*Stream #(\d+):\d+.*?: Video: .*?, (\d{2,5})x(\d{2,5})(?:[ ,\[]|$)")
 
 
@@ -5719,12 +5845,38 @@ class FFmpegEngine:
             self.hub.close(wait=wait)
             self._released = time.time()
 
+    @staticmethod
+    def _rtbuf_note(st, force=False):
+        """Apunta en camui.log el resumen de fotogramas tirados por búfer lleno (ver _RTBUF_RE)."""
+        now = time.time()
+        if not st["n"] or not (force or st["first"] or now - st["t"] >= RTBUF_LOG_SECONDS):
+            return
+        for dev, (n, pct) in sorted(st["n"].items()):
+            log.warning("ffmpeg: «%s» tira fotogramas: su búfer de tiempo real está lleno (%d "
+                        "aviso%s en %.0f s, hasta el %d %%) -- ffmpeg no la lee al ritmo al que "
+                        "llegan", dev, n, "" if n == 1 else "s", max(1.0, now - st["t"]), pct)
+        st.update(n={}, t=now, first=False)
+
     def _drain_err(self, p):
+        rb = {"n": {}, "t": time.time(), "first": True, "last": None}
         try:
             for raw in iter(p.stderr.readline, b""):
                 s = raw.decode("utf-8", "ignore").rstrip()
                 if not s:
                     continue
+                mr = _RTBUF_RE.search(s)
+                if mr:
+                    e = rb["n"].setdefault(mr.group(1), [0, 0])
+                    e[0] += 1
+                    e[1] = max(e[1], int(mr.group(2)))
+                    rb["last"] = mr.group(1)
+                    self._rtbuf_note(rb)
+                    continue
+                mp = _REPEAT_RE.match(s)
+                if mp and rb["last"]:
+                    rb["n"].setdefault(rb["last"], [0, 0])[0] += int(mp.group(1))
+                    continue
+                rb["last"] = None
                 m = _METER_RE.search(s)
                 if m:
                     self._nmeter += 1
@@ -5763,6 +5915,10 @@ class FFmpegEngine:
                 if self._nlog < 400:
                     self._nlog += 1
                     log.debug("ffmpeg> %s", s)
+        except Exception:
+            pass
+        try:
+            self._rtbuf_note(rb, force=True)
         except Exception:
             pass
 
@@ -11809,6 +11965,9 @@ class CamApp:
                 self._draw_frame()
             self.awake.set(self.previewing or self.recording)   # (incluso con el PC bloqueado)
             self._net_watch()
+            if time.time() - getattr(self, "_logrot_t", 0.0) > 2.0:
+                self._logrot_t = time.time()
+                log_rotate_if_needed()            # día nuevo: registro nuevo
             self._check_sources()
             self._update_mode_label()
             self._tick_n = (getattr(self, "_tick_n", 0) + 1) % 3

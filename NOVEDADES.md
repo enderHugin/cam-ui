@@ -1,5 +1,17 @@
 # Novedades de cam-ui
 
+## pack 44 — 2026.11.17
+- **Un registro por tramo.** Cada vez que cam-ui arranca (y por tanto tras cada actualización,
+  que lo reinicia) y cada vez que cambia el día, `camui.log` se guarda en la carpeta
+  «registros», junto a él, con el rango de horas que cubre y el pack que lo escribió en el
+  nombre —p. ej. «camui 2026-11-17 14.53 a 15.32 (pack 43).log»—, y se empieza uno nuevo. No se
+  borra ninguno (antes, al pasar de 1,5 MB se vaciaba sin más). Si en un mismo día llegara a
+  20 MB, también se parte.
+- En el registro, los avisos de DirectShow de fotogramas tirados por búfer lleno («real-time
+  buffer … too full», uno por fotograma) se resumen en una línea por minuto con cuántos y hasta
+  qué porcentaje. Antes se comían en un minuto todo lo que se apunta de ffmpeg, y lo que pasaba
+  después ya no se veía.
+
 ## pack 43 — 2026.11.17
 - **Con la sincronía «Marcas del dispositivo», una cámara de red ya no frena todo el mosaico.**
   ffmpeg daba por hecho que las de red (otro cam-ui, el móvil, IP Webcam…) mandan 25 fps: una

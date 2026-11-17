@@ -104,7 +104,7 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/unit_tiles.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/unit_tiles.py`, `tests/unit_logrot.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
@@ -115,7 +115,9 @@ display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con 
 `tests/unit_hub.py` y `tests/unit_ipout.py` usan el ffmpeg del PATH; con
 `CAMUI_FFMPEGS="ruta1:ruta2"` repiten sus pruebas de ffmpeg con otros (p. ej. un 7 u 8, que se
 comportan distinto que el 6).
-Si algo falla, adjuntar `camui.log` (se crea junto al script).
+Si algo falla, adjuntar `camui.log` (se crea junto al script). Cada arranque y cada día
+empiezan uno nuevo; los anteriores quedan en la carpeta `registros`, con el rango de horas y el
+pack en el nombre.
 
 ## Opinar, avisar de fallos, pedir funciones
 [Abre un issue](https://github.com/enderHugin/cam-ui/issues/new/choose): hay plantillas para opinión, fallo y petición de función.
