@@ -83,7 +83,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 41                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 42                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -7288,6 +7288,117 @@ class PhoneCamDevicesDialog:
             pass
 
 
+class KeepAwake:
+    """Mientras cam-ui está trabajando (vista previa y lo que cuelga de ella: grabación, «En la
+    red», cámara virtual), le pide a Windows que no suspenda el equipo por inactividad. Bloquear
+    la sesión (Win+L) no para nada por sí solo -- los programas de escritorio siguen corriendo --,
+    pero sin esto, al rato de no tocar el PC, Windows lo suspende (o, en portátiles con «Modern
+    Standby», al apagarse la pantalla congela los programas de escritorio) y con él las cámaras,
+    la grabación y lo que se está sirviendo por la red. La pantalla sí puede apagarse.
+
+    Es una «petición de energía» con nombre (PowerCreateRequest/PowerSetRequest: «powercfg
+    /requests» la muestra con su motivo), como la de OBS; si no se pudiera crear, la clásica
+    SetThreadExecutionState (que vale igual, solo que sin motivo visible: por eso set() se llama
+    siempre desde el hilo de Tk, que vive todo el programa). Lo que Windows NO deja impedir: que
+    el usuario lo suspenda a propósito (tapa, botón de encendido, Inicio → Suspender), ni, con
+    «Modern Standby» y a batería, que la suspensión llegue 5 minutos después del plazo normal."""
+    REASON = "cam-ui: vista previa, grabación o salida en red en marcha"
+    SYSTEM, EXECUTION = 1, 3          # PowerRequestSystemRequired, PowerRequestExecutionRequired
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+
+    def __init__(self, api=None):
+        self.on = False
+        self.how = ""                 # "request" | "execstate" | "" (fuera de Windows o sin poder)
+        self._api = api
+        self._h = None
+        self._reason = None
+
+    def _kernel32(self):
+        if self._api is None and sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class _Detailed(ctypes.Structure):
+                _fields_ = [("LocalizedReasonModule", wintypes.HMODULE),
+                            ("LocalizedReasonId", wintypes.ULONG),
+                            ("ReasonStringCount", wintypes.ULONG),
+                            ("ReasonStrings", ctypes.POINTER(wintypes.LPWSTR))]
+
+            class _Reason(ctypes.Union):
+                _fields_ = [("Detailed", _Detailed), ("SimpleReasonString", wintypes.LPWSTR)]
+
+            class _ReasonContext(ctypes.Structure):
+                _fields_ = [("Version", wintypes.ULONG), ("Flags", wintypes.DWORD),
+                            ("Reason", _Reason)]
+
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.PowerCreateRequest.restype = wintypes.HANDLE
+            k.PowerCreateRequest.argtypes = [ctypes.POINTER(_ReasonContext)]
+            for f in (k.PowerSetRequest, k.PowerClearRequest):
+                f.restype, f.argtypes = wintypes.BOOL, [wintypes.HANDLE, ctypes.c_int]
+            k.CloseHandle.restype, k.CloseHandle.argtypes = wintypes.BOOL, [wintypes.HANDLE]
+            k.SetThreadExecutionState.restype = ctypes.c_uint32
+            k.SetThreadExecutionState.argtypes = [ctypes.c_uint32]
+
+            def make_reason(text):
+                rc = _ReasonContext()
+                rc.Version, rc.Flags = 0, 1      # POWER_REQUEST_CONTEXT_VERSION, _SIMPLE_STRING
+                buf = ctypes.create_unicode_buffer(text)
+                rc.Reason.SimpleReasonString = ctypes.cast(buf, wintypes.LPWSTR)
+                return (rc, buf), ctypes.byref(rc)
+            k.camui_make_reason = make_reason
+            k.camui_invalid = ctypes.c_void_p(-1).value
+            self._api = k
+        return self._api
+
+    def set(self, want):
+        want = bool(want)
+        if want == self.on:
+            return
+        k = self._kernel32()
+        if k is None:
+            self.on = want                # fuera de Windows: nada que pedir
+            return
+        try:
+            if want:
+                if self._h is None and self.how != "execstate":
+                    keep, ref = k.camui_make_reason(self.REASON)
+                    h = k.PowerCreateRequest(ref)
+                    if h and h != k.camui_invalid:
+                        self._h, self._reason = h, keep
+                if self._h is not None:
+                    ok = k.PowerSetRequest(self._h, self.SYSTEM)
+                    k.PowerSetRequest(self._h, self.EXECUTION)    # (Windows 8+; si no, da igual)
+                    self.how = "request" if ok else ""
+                if self.how != "request":
+                    ok = k.SetThreadExecutionState(self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED)
+                    self.how = "execstate" if ok else ""
+                if self.how:
+                    log.info("el equipo no se suspenderá mientras cam-ui esté en marcha (%s)", self.how)
+                else:
+                    log.warning("no se pudo pedir a Windows que no suspenda el equipo")
+            else:
+                if self._h is not None:
+                    k.PowerClearRequest(self._h, self.SYSTEM)
+                    k.PowerClearRequest(self._h, self.EXECUTION)
+                if self.how == "execstate":
+                    k.SetThreadExecutionState(self.ES_CONTINUOUS)
+                    self.how = ""
+                log.info("el equipo ya puede suspenderse (cam-ui sin nada en marcha)")
+        except Exception:
+            log.exception("petición de energía (no suspender)")
+        self.on = want
+
+    def close(self):
+        self.set(False)
+        if self._h is not None:
+            try:
+                self._api.CloseHandle(self._h)
+            except Exception:
+                pass
+            self._h = self._reason = None
+
+
 def _tile_changes(frame, tiles, W, sig):
     """Índices de las casillas del mosaico cuyo contenido cambió respecto al fotograma anterior
     (sig: la firma de cada una, se actualiza aquí). Con el motor de siempre no se sabe a cuántos
@@ -7410,6 +7521,7 @@ class CamApp:
         self._phonecam_pair_q = deque()                      # QR de emparejamiento pendiente de mostrar
         self._phonecam_remote_q = deque()                    # aviso de «enciéndela sola» (otro hilo)
         self.phonecam = PhoneCamHub(self._phonecam_q, self._phonecam_pair_q)  # cámara del móvil
+        self.awake = KeepAwake()      # que Windows no suspenda el PC mientras hay algo en marcha
         self.ipsrv.phonecam = self.phonecam    # para el botón «Añadir cámara del móvil» de /
         self.phonecam.viewer = self.ipsrv      # ... y, al revés, «Ver lo que sale del PC» en /cam
         # direcciones sin número de puerto (80/443), ver FrontDoor
@@ -11587,6 +11699,7 @@ class CamApp:
                 self._on_stuck()
             if self.previewing and self.mode != "mini":
                 self._draw_frame()
+            self.awake.set(self.previewing or self.recording)   # (incluso con el PC bloqueado)
             self._check_sources()
             self._update_mode_label()
             self._tick_n = (getattr(self, "_tick_n", 0) + 1) % 3
@@ -11788,6 +11901,10 @@ class CamApp:
                 pass
             try:
                 FRONT.stop()
+            except Exception:
+                pass
+            try:
+                self.awake.close()
             except Exception:
                 pass
             try:

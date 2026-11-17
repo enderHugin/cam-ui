@@ -35,6 +35,10 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   cámaras, y la de otro cam-ui con el motor nuevo se alinea por la hora a la que se captó allí,
   aunque los relojes de los dos PCs no coincidan.
 - Vista previa siempre activa, grabación MP4/MKV sin cortarla.
+- Sigue funcionando con el PC bloqueado: mientras hay vista previa (y con ella grabación, «En la
+  red», cámara virtual), Windows no suspende el equipo por inactividad (la pantalla sí se apaga).
+  Cerrar la tapa o suspenderlo a mano sí lo para; a batería, en portátiles con «Modern Standby»,
+  Windows solo lo respeta unos minutos.
 - Encuadre, zoom, color y formato de celda por cámara; detección y prueba de modos de captura.
 - Tres modos de ventana: normal, compacto y mini (barra con Rec/Stop), con icono en la bandeja.
 - Botón de pánico (F12) que cierra todos los ffmpeg.
@@ -99,7 +103,7 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y

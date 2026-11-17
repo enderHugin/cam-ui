@@ -103,6 +103,7 @@ try:
     assert pump(lambda: "alineada con su PC por la hora de captura" in (app._mode_now_txt or ""), 8), \
         app._mode_now_txt
     print("2) la cámara de otro cam-ui entra por el concentrador: «{0}» OK".format(app._mode_now_txt))
+    assert pump(lambda: app.awake.on, 2), "con la vista previa en marcha, el PC no debe suspenderse"
 
     # 2b) (pack 40) rótulo sobre su casilla, solo en la vista previa: nombre, cómo llega, tamaño
     #     y fps de verdad -- un elemento del lienzo de la ventana, no del vídeo
@@ -129,6 +130,7 @@ try:
     app.toggle_preview()
     assert pump(lambda: not app.busy and not app.previewing, 10)
     assert pump(lambda: not app.hub.sources and src.done.is_set(), 8), app.hub.sources
+    assert pump(lambda: not app.awake.on, 2), "en pausa, el PC ya puede suspenderse"
     print("4) pausar la vista previa suelta también las cámaras del concentrador OK")
 
     # 5) sin la opción: el motor de siempre
@@ -140,7 +142,9 @@ try:
     app.save_config()
     with open(camui.CONFIG, encoding="utf-8") as f:
         assert json.load(f).get("hub") is False
+    assert app.awake.on
     print("5) desmarcada: vuelve el motor de siempre, y se guarda OK")
+    print("   (y el PC no se suspende con la vista previa en marcha; en pausa, sí puede) OK")
     # 5b) con el motor de siempre, los fps («~») se cuentan en lo que llega de ffmpeg, en CADA
     #     fotograma: aunque la ventana se redibuje bastante menos (aquí ~8 veces por segundo; en
     #     Windows nunca llega a 30), una cámara de 30 fps en un mosaico de 25 no sale a «~8»

@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 42 — 2026.11.17
+- **Sigue funcionando con el PC bloqueado.** Mientras la vista previa está en marcha (y con ella
+  la grabación, «En la red» y la cámara virtual), cam-ui le pide a Windows que no suspenda el
+  equipo por inactividad, como hace OBS. Bloquear (Win+L) no para los programas de escritorio por
+  sí solo; lo que corta es la suspensión que llega al rato de no tocar el PC. La pantalla sí se
+  apaga como siempre. En pausa (F5) o al cerrar cam-ui, el PC vuelve a poder suspenderse. Lo
+  que Windows no deja evitar: suspenderlo a propósito (cerrar la tapa, el botón de encendido,
+  Inicio → Suspender) y, en portátiles a batería con «Modern Standby», que la suspensión llegue
+  igualmente unos 5 minutos después de lo normal. `powercfg /requests` lo muestra como «cam-ui».
+
 ## pack 41 — 2026.11.16
 - Rótulo de la vista previa, con el motor de siempre: los fps con «~» se cuentan en todos los
   fotogramas que llegan de ffmpeg, no solo en los que la ventana alcanza a dibujar. Antes el
