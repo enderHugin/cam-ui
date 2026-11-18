@@ -1,8 +1,10 @@
-"""Dos cam-ui encadenados, como en casa del usuario (pack 49): «Omen» tiene un móvil y su salida
-«En la red»; «ROG» tiene a Omen como cámara. Se gira el móvil en Omen: su mosaico cambia de forma
-en el acto, y con él lo que manda. En ROG, la casilla de Omen NUNCA debe verse estirada («un vídeo
-muy alargado»): mientras no se recoloca, entera y con bandas negras; sin grabar, se recoloca sola
-en unos segundos; grabando, se queda así (con un aviso) y se recoloca al parar.
+"""Dos cam-ui encadenados, como en casa del usuario (packs 49-50): «Omen» tiene un móvil y su
+salida «En la red»; «ROG» tiene a Omen como cámara. Cambia la forma del móvil en Omen: su mosaico
+cambia en el acto, y con él lo que manda. En ROG, la casilla de Omen NUNCA debe verse estirada («un
+vídeo muy alargado»): mientras no se recoloca, entera y con bandas negras; sin grabar, se recoloca
+sola en unos segundos. Grabando: si solo cambia de forma (16:9 → 4:3), se queda con bandas negras y
+un aviso; si se GIRA (apaisada → vertical), el mosaico se recoloca sin dejar de grabar (trozos que
+al parar se juntan en un solo vídeo, del mismo tamaño).
 
 Hace falta un display (xvfb-run -a python3 tests/ui_chain_reshape.py); Omen corre como otro
 proceso (este mismo archivo con «--omen») en el mismo display."""
@@ -88,6 +90,14 @@ if ROLE == "omen":
     sid = app.phonecam.new_session("iPhone")
     shape = {"wh": (1280, 720)}
 
+    def wanted():
+        try:
+            with open(sig("FORMA")) as f:
+                w, h = f.read().strip().split("x")
+            return int(w), int(h)
+        except Exception:
+            return 1280, 720
+
     def phone():
         k = 0
         while True:
@@ -98,7 +108,7 @@ if ROLE == "omen":
     t0 = time.time()
     while time.time() - t0 < 300 and not os.path.exists(sig("FIN")):
         pump(0.3)
-        shape["wh"] = (720, 1280) if os.path.exists(sig("GIRA")) else (1280, 720)
+        shape["wh"] = wanted()
         if app.previewing and app.ipout_on and not app.busy and app.eng.frame_count > 10:
             open(sig("OMEN_LISTO"), "w").close()
     app.eng.release_devices()
@@ -108,7 +118,7 @@ if ROLE == "omen":
     sys.exit(0)
 
 # ---------------------------------------------------------------- ROG
-for n in ("GIRA", "FIN", "OMEN_LISTO"):
+for n in ("FORMA", "FIN", "OMEN_LISTO"):
     if os.path.exists(sig(n)):
         os.remove(sig(n))
 IPPORT = free_port()
@@ -141,6 +151,12 @@ def omen_view():
     return {"tile": (w, h), "aspect": bw / float(bh), "band": band / float(bh)}
 
 
+def forma(w, h):
+    with open(sig("FORMA") + ".tmp", "w") as f:
+        f.write("{0}x{1}".format(w, h))
+    os.replace(sig("FORMA") + ".tmp", sig("FORMA"))
+
+
 def check_not_stretched(v):
     """Apaisada a lo ancho con la franja gruesa (como estaba), o en vertical con la franja fina
     (girado y bien): nunca apaisada con la franja fina (el vertical estirado a lo ancho)."""
@@ -170,7 +186,7 @@ try:
         v0["tile"], v0["aspect"], v0["band"]))
 
     # 1) sin grabar: gira el móvil en Omen -> en ROG, nunca estirado, y se recoloca solo
-    open(sig("GIRA"), "w").close()
+    forma(720, 1280)
     seen = []
 
     def portrait_ok():
@@ -184,34 +200,78 @@ try:
     print("1) sin grabar, se gira el móvil en Omen: en ROG la casilla pasa a {0} en vertical, sin "
           "verse estirada en ninguna de {1} miradas OK".format(v1["tile"], len(seen)))
 
-    # 2) grabando: vuelve a girar -> se queda la forma, entera con bandas negras, y aviso
-    os.remove(sig("GIRA"))
+    # 2) grabando, solo cambia de forma (16:9 -> 4:3, sin girar): misma casilla, bandas, aviso
+    forma(1280, 720)
     assert pump(30, lambda: (omen_view() or {}).get("aspect", 0) > 1.5 and
                 omen_view()["tile"][0] > omen_view()["tile"][1] and not app.busy, step=0.2)
     app.toggle_rec()
-    assert pump(15, lambda: app.recording and not app.busy)
+    assert pump(15, lambda: app.recording and not app.busy and app.eng.frame_count > 10)
+    t_rec0 = time.time()
+    WH = (app.eng.meta["W"], app.eng.meta["H"])
     tile_rec = omen_view()["tile"]
-    open(sig("GIRA"), "w").close()
+    pump(2)
+    forma(960, 720)
+    assert pump(20, lambda: abs((omen_view() or {}).get("aspect", 0) - 4 / 3.0) < 0.1, step=0.2), \
+        omen_view()
+    pump(4)
+    vr = omen_view()
+    assert vr["tile"] == tile_rec and abs(vr["aspect"] - 4 / 3.0) < 0.1, (vr, tile_rec)
+    assert "ha cambiado de forma" in app.status.cget("text"), app.status.cget("text")
+    assert len(app._rec_parts) == 1
+    print("2) grabando, de 16:9 a 4:3 (sin girar): la casilla sigue {0} con Omen entero ({1:.2f}) "
+          "y bandas negras; aviso «{2}» OK".format(vr["tile"], vr["aspect"],
+                                                   app.status.cget("text")[:55]))
+
+    # 3) grabando, se GIRA: se recoloca sin dejar de grabar, con el mismo tamaño de vídeo
+    forma(720, 1280)
     seen = []
 
-    def boxed():
+    def turned():
         v = omen_view()
         ok, _v = check_not_stretched(v) if v else (True, v)
         seen.append((v, ok))
         assert ok, ("estirada grabando", v)
-        return v is not None and v["aspect"] < 0.8
-    assert pump(20, boxed, step=0.2), seen[-3:]
+        return app.recording and not app.busy and v is not None and v["tile"][1] > v["tile"][0] \
+            and v["aspect"] < 0.8 and app.eng.frame_count > 10
+    assert pump(30, turned, step=0.2), (seen[-3:], app.status.cget("text"))
+    assert (app.eng.meta["W"], app.eng.meta["H"]) == WH, (app.eng.meta["W"], app.eng.meta["H"], WH)
+    assert len(app._rec_parts) == 2 and "girada" in app.status.cget("text"), \
+        (app._rec_parts, app.status.cget("text"))
+    vt = omen_view()
+    print("3) grabando, se gira: mosaico recolocado sin dejar de grabar (casilla {0}, vídeo {1}×{2} "
+          "igual), «…{3}» OK".format(vt["tile"], WH[0], WH[1], app.status.cget("text")[-45:]))
     pump(4)
-    vr = omen_view()
-    assert vr["tile"] == tile_rec and vr["aspect"] < 0.8, (vr, tile_rec)     # misma casilla
-    assert "ha cambiado de forma" in app.status.cget("text"), app.status.cget("text")
-    print("2) grabando: la casilla sigue {0} y Omen se ve entero en vertical ({1:.2f}) con bandas "
-          "negras, sin estirar; aviso «{2}» OK".format(vr["tile"], vr["aspect"],
-                                                       app.status.cget("text")[:60]))
+
+    # 4) al parar: un solo archivo, del mismo tamaño, con los dos repartos; sin trozos sueltos
+    parts = list(app._rec_parts)
+    final = app.rec_final
     app.toggle_rec()
-    assert pump(30, lambda: not app.recording and not app.busy and omen_view() and
-                omen_view()["tile"][1] > omen_view()["tile"][0], step=0.2), omen_view()
-    print("3) al parar de grabar, se recoloca: casilla {0} OK".format(omen_view()["tile"]))
+    t_rec = time.time() - t_rec0
+    assert pump(60, lambda: not app.recording and not app.busy and os.path.isfile(final) and
+                "Grabado" in app.status.cget("text"), step=0.2), app.status.cget("text")
+    assert not any(os.path.exists(p) for p in parts if p != final), parts
+    pr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                         "stream=width,height:format=duration", "-of", "json", final],
+                        capture_output=True, text=True)
+    info = json.loads(pr.stdout)
+    st = info["streams"][0]
+    dur = float(info["format"]["duration"])
+    assert (st["width"], st["height"]) == WH, (st, WH)
+    assert t_rec - 6 < dur < t_rec + 2, (dur, t_rec)
+
+    def frame_at(t):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "{0:.2f}".format(t), "-i", final,
+                              "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             capture_output=True).stdout
+        a = np.frombuffer(raw, np.uint8).reshape(WH[1], WH[0], 3).astype(int)
+        lit = a.sum(axis=2) > 60
+        cols, rows = np.where(lit.any(axis=0))[0], np.where(lit.any(axis=1))[0]
+        return (cols[-1] - cols[0] + 1) / float(rows[-1] - rows[0] + 1)
+    a0, a1 = frame_at(0.5), frame_at(dur - 1.0)
+    assert a0 > 1.2 and a1 < 0.8, (a0, a1)
+    print("4) al parar: un solo vídeo {0}×{1} de {2:.1f} s (grabados {3:.1f} s), que empieza "
+          "apaisado ({4:.2f}) y acaba en vertical ({5:.2f}); sin trozos sueltos OK".format(
+              WH[0], WH[1], dur, t_rec, a0, a1))
 finally:
     open(sig("FIN"), "w").close()
     try:

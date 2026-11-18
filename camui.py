@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 49                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 50                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -5101,6 +5101,88 @@ def _yuv_resize(data, sw, sh, dw, dh):
     return b"".join((y[ry][:, rx].tobytes(), u[rcy][:, rcx].tobytes(), v[rcy][:, rcx].tobytes()))
 
 
+# Grabando con el motor nuevo, si una cámara se GIRA (pasa de apaisada a vertical o al revés,
+# p. ej. el móvil de otro cam-ui encadenado) y así sigue este rato, el mosaico se recoloca sin
+# dejar de grabar: se cierra el trozo grabado, se sigue en otro con el mosaico nuevo (mismo
+# tamaño de vídeo, encajado con bandas negras si hace falta) y al parar se juntan en un solo
+# archivo. Se pierden unas décimas de segundo en el salto. Otros cambios de forma (de 16:9 a
+# 4:3...) no lo merecen: se ven enteros con bandas negras hasta parar (_yuv_fit).
+ROT_SEGMENT_SETTLE = 1.5
+ROT_SEGMENT_MIN_GAP = 5.0
+
+
+def _orientation(size):
+    """1 apaisada, -1 vertical, 0 casi cuadrada (no cuenta como giro)."""
+    w, h = size
+    if w > 1.15 * h:
+        return 1
+    if h > 1.15 * w:
+        return -1
+    return 0
+
+
+def media_duration(path, ffmpeg=None):
+    """Duración en segundos según ffmpeg («Duration: hh:mm:ss.cc»; cam-ui no lleva ffprobe), o
+    None si no la dice (archivo roto o que no es vídeo)."""
+    try:
+        r = subprocess.run([ffmpeg or FFMPEG, "-hide_banner", "-i", path], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           creationflags=CREATE_NO_WINDOW, timeout=60, stdin=subprocess.DEVNULL)
+        m = re.search(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)", r.stderr or "")
+        if m:
+            return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return None
+
+
+def concat_recordings(parts, dst, ffmpeg=None):
+    """Junta trozos MKV grabados seguidos (mismo tamaño y códecs) en dst, sin recodificar
+    (demuxer concat). Devuelve (ok, mensaje); solo si el resultado dura lo que suman los trozos
+    (si uno estaba roto, ffmpeg puede acabar «bien» con menos) se borran los trozos."""
+    lst = dst + ".lista.txt"
+    durs = [media_duration(p, ffmpeg) for p in parts]
+    if any(d is None for d in durs):
+        bad = [os.path.basename(p) for p, d in zip(parts, durs) if d is None]
+        return False, "trozo ilegible: {0}".format(", ".join(bad))
+    try:
+        with open(lst, "w", encoding="utf-8") as f:
+            for p in parts:
+                f.write("file '{0}'\n".format(os.path.abspath(p).replace("'", "'\\''")))
+        cmd = [ffmpeg or FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "concat",
+               "-safe", "0", "-i", lst, "-map", "0", "-c", "copy", dst]
+        log.info("juntar trozos: %s", subprocess.list2cmdline(cmd))
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", creationflags=CREATE_NO_WINDOW, timeout=1800,
+                           stdin=subprocess.DEVNULL)
+        ok = r.returncode == 0 and os.path.isfile(dst) and os.path.getsize(dst) > 0
+        if ok:
+            dj = media_duration(dst, ffmpeg)
+            ok = dj is not None and dj >= 0.95 * sum(durs) - 0.5
+            if not ok:
+                log.error("juntar trozos: dura %s s y los trozos suman %.1f s", dj, sum(durs))
+                try:
+                    os.remove(dst)
+                except Exception:
+                    pass
+        log.info("juntar trozos: rc=%s ok=%s %s", r.returncode, ok, (r.stderr or "")[-300:])
+    except Exception as e:
+        log.error("juntar trozos falló: %r", e)
+        return False, str(e)
+    finally:
+        try:
+            os.remove(lst)
+        except Exception:
+            pass
+    if ok:
+        for p in parts:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    return ok, (r.stderr or "")[-300:]
+
+
 def _yuv_fit(data, sw, sh, dw, dh):
     """Encaja un fotograma yuv420p de sw×sh en dw×dh SIN deformarlo: a su forma, centrado y con
     bandas negras (vecino más próximo). Para una cámara que llega con otra forma de la prevista
@@ -8042,6 +8124,10 @@ class CamApp:
         self._tkimg = None
         self._slow_warned = set()
         self._shape_warned = set()      # cambian de forma grabando: avisadas (ver _check_sources)
+        self._rec_parts = []            # trozos de la grabación en curso (ver _rec_resegment)
+        self._rec_canvas = None         # grabando en trozos: el tamaño de vídeo no cambia
+        self._flip_t = {}               # cámara girada grabando: desde cuándo
+        self._reseg_t = 0.0
         self._ph_visible = True
         self._info_txt = None
         self._last_fc = -1
@@ -10087,12 +10173,16 @@ class CamApp:
 
     # ------------------------------------------------------------ geometría del mosaico
     def _canvas(self):
+        if getattr(self, "_rec_canvas", None):       # grabando en trozos: mismo tamaño
+            return tuple(self._rec_canvas)
         for lab, a, b in ASPECTS:
             if lab == self.v_canvas.get():
                 return (a, b)
         return None                                  # «Adaptado al contenido»
 
     def _cwidth(self):
+        if getattr(self, "_rec_canvas", None):
+            return int(self._rec_canvas[0])
         return _even(max(320, min(3840, _geti(self.v_cwidth, 1280))))
 
     def _quiet_set(self, var, value):
@@ -10940,8 +11030,11 @@ class CamApp:
         changed = False
         if getattr(self, "_shape_warned", None) is None:
             self._shape_warned = set()
+        if getattr(self, "_flip_t", None) is None:
+            self._flip_t, self._reseg_t = {}, 0.0
         if not self.recording:
             self._shape_warned.clear()
+            self._flip_t.clear()
         for idx, lab in enumerate(self._run_labels):
             sz, cs = sizes.get(idx), self.cams.get(lab)
             if hub:
@@ -10956,6 +11049,18 @@ class CamApp:
                 if slot and sz != tuple(slot) and not self.recording and \
                         time.time() - self._hub_restart_t > 5.0:
                     changed = True
+                elif slot and self.recording and \
+                        _orientation(sz) * _orientation(tuple(slot)) == -1:
+                    # girada (apaisada <-> vertical): tras ROT_SEGMENT_SETTLE s así, se recoloca
+                    # sin dejar de grabar (ver _rec_resegment)
+                    now_f = time.time()
+                    t_f = self._flip_t.setdefault(lab, now_f)
+                    if now_f - t_f >= ROT_SEGMENT_SETTLE and not self.busy and \
+                            now_f - self._reseg_t >= ROT_SEGMENT_MIN_GAP:
+                        self._flip_t.clear()
+                        self._rec_resegment(lab, sz)
+                        return
+                    continue
                 elif slot and self.recording and not _same_shape(sz, tuple(slot)) and \
                         lab not in self._shape_warned:
                     # grabando no se recoloca (el vídeo cambiaría de forma a mitad): se ve entera
@@ -12397,6 +12502,7 @@ class CamApp:
             base, datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), ext))
         outfile = final if ext == "mkv" else final[:-4] + ".rec.mkv"
         self.rec_final = final
+        self._rec_parts, self._rec_canvas = [outfile], None
         warm = max(1.0, self.eng.startup_time + 0.3)
         self.save_config()
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
@@ -12427,17 +12533,62 @@ class CamApp:
 
         self._bg(work, done)
 
+    def _rec_resegment(self, lab, size):
+        """(motor nuevo, grabando) «lab» se ha girado: se cierra el trozo en curso y se sigue
+        grabando en otro con el mosaico recolocado -- mismo tamaño de vídeo (_rec_canvas), para
+        que al parar se junten sin recodificar (concat_recordings). Se pierden unas décimas."""
+        m = self.eng.meta or {}
+        if not (m.get("W") and m.get("H")) or not self._rec_parts:
+            return
+        self._rec_canvas = (int(m["W"]), int(m["H"]))
+        plan = self._plan()
+        if plan is None:
+            return
+        first = self._rec_parts[0]
+        stem = first[:-8] if first.endswith(".rec.mkv") else first[:-4]
+        part = "{0}.parte{1}.rec.mkv".format(stem, len(self._rec_parts) + 1)
+        self._rec_parts.append(part)
+        self._reseg_t = time.time()
+        log.info("grabando: «%s» girada a %sx%s -> mosaico recolocado en el trozo %d (%s), vídeo %sx%s",
+                 lab, size[0], size[1], len(self._rec_parts), part, m["W"], m["H"])
+        self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
+        self._run_plan, self._tinfo_t = plan, 0.0
+        self._set_status("«{0}» se ha girado: recolocando el mosaico sin dejar de grabar…".format(lab))
+
+        def work():
+            self.eng.stop()
+            return self._engine_start(plan, outfile=part, warmup=0.2)
+
+        def done(res):
+            ok, err = res if isinstance(res, tuple) else (False, str(res))
+            if ok and self.recording:
+                self.rec_path = part
+                self._set_status("Grabando → {0} (mosaico recolocado: «{1}» girada)".format(
+                    self.rec_final, lab))
+            elif self.recording:
+                log.error("trozo nuevo de la grabación: %s", err)
+                self._rec_parts.pop()
+                self._set_status("No se pudo seguir grabando tras recolocar: se guarda lo grabado.")
+                self._stop_rec()
+            self._refresh_buttons()
+
+        self._bg(work, done)
+
     def _stop_rec(self):
         self._set_status("Finalizando el vídeo…")
         self.recording = False
         self.previewing = False
         path, final = self.rec_path, self.rec_final
+        parts = [p for p in (self._rec_parts or [path]) if p]
+        self._rec_canvas, self._rec_parts = None, []
 
         def work():
             if self._idle_mini():
                 self.eng.release_devices()       # mini: sin vista previa, las cámaras quedan libres
             else:
                 self.eng.stop()
+            if len(parts) > 1:
+                return self._finalize_parts(parts, final)
             return self._finalize(path, final)
 
         def done(res):
@@ -12446,12 +12597,29 @@ class CamApp:
             ok, shown, msg = res if isinstance(res, tuple) else (False, path, str(res))
             if ok:
                 mb = os.path.getsize(shown) / 1048576.0
-                self._set_status("Grabado: {0}  ({1:.1f} MB)".format(shown, mb))
+                self._set_status("Grabado: {0}  ({1:.1f} MB){2}".format(
+                    shown, mb, "  · " + msg if msg else ""))
             else:
                 self._set_status("ERROR: no se pudo cerrar el vídeo. {0}".format(msg))
             self.root.after(500, lambda: self._start_preview(1))
 
         self._bg(work, done)
+
+    def _finalize_parts(self, parts, final):
+        """Varios trozos (ver _rec_resegment): se juntan en un MKV y, si hace falta, a MP4."""
+        parts = [p for p in parts if os.path.isfile(p) and os.path.getsize(p) > 0]
+        if not parts:
+            return False, final, "no se creó el archivo"
+        if len(parts) == 1:
+            return self._finalize(parts[0], final)
+        joined = final if final.lower().endswith(".mkv") else final[:-4] + ".rec.mkv"
+        if joined in parts:
+            joined = joined[:-4] + ".junto.mkv"
+        ok, msg = concat_recordings(parts, joined, self.eng.ffmpeg)
+        if not ok:
+            return True, parts[0], "no se pudieron juntar los {0} trozos; quedan en la carpeta " \
+                                   "({1})".format(len(parts), msg[-120:])
+        return self._finalize(joined, final)
 
     def _finalize(self, tmp, final):
         """(ok, ruta_final, mensaje). Pasa el MKV temporal al contenedor elegido."""
@@ -12496,6 +12664,7 @@ class CamApp:
     def _set_idle(self, msg):
         self.recording = False
         self.previewing = False
+        self._rec_canvas = None
         self.lbl_timer.config(text="")
         self._lock(False)
         self.lbl_info.config(text="")
@@ -12694,10 +12863,12 @@ class CamApp:
                 self.lbl_timer.config(text="iniciando…", foreground=WARN)
                 return
         el = int(time.time() - self.rec_clock0)
-        try:
-            mb = os.path.getsize(self.rec_path) / 1048576.0
-        except Exception:
-            mb = 0.0
+        mb = 0.0
+        for p in (self._rec_parts or [self.rec_path]):
+            try:
+                mb += os.path.getsize(p) / 1048576.0
+            except Exception:
+                pass
         dot = "●" if el % 2 == 0 else "○"
         txt = "{0} {1:02d}:{2:02d}:{3:02d}".format(dot, el // 3600, (el // 60) % 60, el % 60)
         if self.mode != "mini":

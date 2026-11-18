@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 50 — 2026.11.18
+- **Grabando, si una cámara se gira, el mosaico se recoloca sin dejar de grabar.** Por ejemplo,
+  cuando en otro cam-ui encadenado se gira el móvil y su mosaico pasa de apaisado a vertical. Si
+  sigue girada un segundo y medio, cam-ui cierra el trozo grabado y sigue en otro con el mosaico
+  recolocado, del mismo tamaño de vídeo (encajado con bandas negras si hace falta). Al parar, los
+  trozos se juntan sin recodificar en un solo archivo, MP4 o MKV, y se borran. En el salto se
+  pierden unas décimas de segundo (en las pruebas, 0,1 s de 15,5). Otros cambios de forma sin
+  girar (de 16:9 a 4:3, por ejemplo) siguen viéndose enteros con bandas negras hasta parar. Si
+  los trozos no se pudieran juntar, se quedan en la carpeta y se avisa. Solo con el motor nuevo.
+
 ## pack 49 — 2026.11.18
 - **Una cámara que cambia de forma ya no se ve estirada.** Caso típico: otro cam-ui encadenado
   cuyo móvil se gira, y con él cambia la forma de todo su mosaico. Hasta que este mosaico se

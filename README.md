@@ -43,8 +43,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 - Disposición «Auto» del mosaico, con hasta dos cámaras ★ destacadas que salen bastante más
   grandes que las demás; si una cámara cambia de forma (girar el móvil, otra resolución en una
   cámara IP, otro cam-ui encadenado cuyo mosaico cambia), el mosaico se recoloca solo y, mientras
-  tanto (o mientras se graba, que no se recoloca hasta parar), esa cámara se ve entera, con bandas
-  negras, nunca estirada.
+  tanto esa cámara se ve entera, con bandas negras, nunca estirada. Grabando, si una cámara se
+  gira (apaisada ↔ vertical), el mosaico se recoloca sin parar la grabación: se sigue en otro
+  trozo y al terminar se juntan en un solo vídeo (se pierden unas décimas en el salto).
 - Modos de ventana: normal, compacto, mini (barra con Rec/Stop) y pantalla completa (solo el
   mosaico, con la vista previa al tamaño de la pantalla; botón «⛶» sobre la imagen, Esc o doble
   clic para salir), con icono en la bandeja.
@@ -113,7 +114,8 @@ F5 vista previa · F8 foto · F9 grabar · F11 normal/compacto · F12 pánico ·
 Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardware o de Windows real
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
-`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/unit_tiles.py`, `tests/unit_logrot.py`, `tests/unit_mjpeg.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/unit_tiles.py`, `tests/unit_logrot.py`, `tests/unit_mjpeg.py`,
+`tests/unit_segments.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
