@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 50                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 51                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -339,19 +339,38 @@ def parse_dshow_devices(txt):
     return video, audio
 
 
-def label_devices(devs):
+def label_devices(devs, known=None):
     """Añade label (único para la UI) y spec (cadena que se pasa a ffmpeg).
-    Si hay dos dispositivos con el mismo nombre se usa el nombre alternativo."""
+    Si hay dos dispositivos con el mismo nombre se usa el nombre alternativo, y se numeran
+    («Cámara #1», «#2»...). known: {nombre alternativo: etiqueta} de las veces anteriores (pack
+    51) -- con dos cámaras iguales, cada una conserva su número (y con él su sitio en el mosaico
+    y sus ajustes) aunque Windows las liste en otro orden; el nombre alternativo va con el puerto
+    USB donde está enchufada. Sin known (o las que no conoce), en el orden de la lista."""
+    known = known or {}
     total = {}
     for d in devs:
         total[d["name"]] = total.get(d["name"], 0) + 1
+    taken = set()
+    for d in devs:
+        d["dup"] = total[d["name"]] > 1
+        d["label"] = None
+        lab = known.get(d.get("alt")) if d["dup"] and d.get("alt") else None
+        if lab and lab not in taken and re.match(re.escape(d["name"]) + r" #\d+$", lab):
+            d["label"] = lab
+            taken.add(lab)
     seen = {}
     for d in devs:
         n = d["name"]
-        seen[n] = seen.get(n, 0) + 1
-        d["dup"] = total[n] > 1
-        d["label"] = n if not d["dup"] else "{0} #{1}".format(n, seen[n])
-        d["spec"] = d["alt"] if (d["dup"] and d["alt"]) else n
+        if not d["dup"]:
+            d["label"] = n
+        elif d["label"] is None:
+            k = seen.get(n, 0) + 1
+            while "{0} #{1}".format(n, k) in taken:
+                k += 1
+            seen[n] = k
+            d["label"] = "{0} #{1}".format(n, k)
+            taken.add(d["label"])
+        d["spec"] = d["alt"] if (d["dup"] and d.get("alt")) else n
     return devs
 
 
@@ -679,6 +698,82 @@ def parse_structure(s, n):
     except ValueError:
         return None
     return rows if rows and all(r > 0 for r in rows) and sum(rows) == n else None
+
+
+# Memoria de colocación (pack 51). Cada combinación de cámaras recuerda cómo se dejó la última vez
+# (orden, disposición, por filas o por columnas): cuando vuelve a juntarse -- al arrancar, al
+# enchufar una cámara, al volver un móvil, al marcarla en la lista --, el mosaico queda igual que
+# entonces, aunque haya pasado un año. Si esa combinación no se ha visto nunca, las demás no se
+# mueven y la que llega se pone junto a la que tenía al lado la última vez. Los ajustes de cada
+# cámara (resolución, encuadre y zoom, giro, color, ★...) también se guardan aunque no esté
+# conectada (antes se perdían al guardar sin ella).
+LAYOUT_MEMORY_MAX = 60       # combinaciones recordadas (las más recientes)
+CAM_MEMORY_MAX = 200         # cámaras recordadas (las vistas más recientemente; las conectadas, siempre)
+
+
+def read_layouts(v):
+    """Las colocaciones guardadas en config.json («layouts»), validadas, la más reciente primero."""
+    out = []
+    for e in v if isinstance(v, list) else []:
+        if not isinstance(e, dict):
+            continue
+        o = e.get("order")
+        if (not isinstance(o, list) or not o or not all(isinstance(x, str) for x in o)
+                or len(set(o)) != len(o)):
+            continue
+        try:
+            t = float(e.get("t") or 0)
+        except (TypeError, ValueError):
+            t = 0.0
+        out.append({"order": list(o), "structure": str(e.get("structure") or AUTO),
+                    "transpose": bool(e.get("transpose")), "t": t})
+    out.sort(key=lambda e: -e["t"])
+    return out[:LAYOUT_MEMORY_MAX]
+
+
+def layout_find(layouts, cams):
+    """La colocación recordada para exactamente ese conjunto de cámaras, o None."""
+    s = frozenset(cams)
+    for e in layouts:
+        if frozenset(e["order"]) == s:
+            return e
+    return None
+
+
+def layout_remember(layouts, order, structure, transpose, now):
+    """layouts con la colocación de este conjunto de cámaras puesta al día (y la primera)."""
+    s = frozenset(order)
+    out = [e for e in layouts if frozenset(e["order"]) != s]
+    out.insert(0, {"order": list(order), "structure": structure, "transpose": bool(transpose),
+                   "t": round(float(now), 1)})
+    return out[:LAYOUT_MEMORY_MAX]
+
+
+def layout_place(order, newcomers, layouts):
+    """order con cada cámara de newcomers puesta junto a la que tenía al lado (detrás de la
+    anterior, o si no delante de la siguiente) en la colocación recordada que más se parece a la
+    de ahora (la que tiene más de estas cámaras; a igualdad, la más reciente). Las demás no se
+    mueven; una que no se recuerda con ninguna de las otras se queda donde está."""
+    order = list(order)
+    for n in [l for l in order if l in newcomers]:
+        others = [l for l in order if l != n]
+        best, anchor = 0, None
+        for e in layouts:                      # la más reciente primero
+            o = e["order"]
+            if n not in o:
+                continue
+            common = sum(1 for p in o if p in others)
+            if common <= best:
+                continue
+            i = o.index(n)
+            before = [p for p in o[:i] if p in others]
+            after = [p for p in o[i + 1:] if p in others]
+            best, anchor = common, (before[-1], 1) if before else (after[0], 0)
+        if anchor is None:
+            continue
+        others.insert(others.index(anchor[0]) + anchor[1], n)
+        order = others
+    return order
 
 
 def layout_tiles(aspects, rows, width, transpose=False, canvas=None):
@@ -3522,6 +3617,8 @@ PHONECAM_SLOW_FPS = 10                 # por debajo, la página del móvil avisa
 PHONECAM_AUTO_LOW_FPS = 14             # «Auto»: por debajo, baja un escalón de resolución
 PHONECAM_KEEPALIVE_S = 20              # una conexión del móvil sin usar se cierra tras esto
 PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan del todo (no acumular)
+PHONECAM_REUSE_STALE = 3.0             # (s) un móvil que vuelve a conectarse ocupa la casilla de su
+                                       # conexión anterior si esa ya no manda nada desde hace esto
 # Contraseña (opcional, Salida → Cámara del móvil): alternativa a leer el QR en «/add». Se prueba
 # por HTTPS en el cuerpo de la petición (nunca en la dirección). Contra quien intente adivinarla
 # desde la wifi: 5 intentos fallidos libres por móvil (dirección IP); después, espera de 30 s que
@@ -4454,17 +4551,19 @@ class PhoneCamHub:
                         if v.get("ip") == ip and not v.get("announced") and v.get("jpeg") is None]:
                 del self._sessions[sid]
 
-    def feed(self, sid, data, stats="", ua="", seq=0):
+    def feed(self, sid, data, stats="", ua="", seq=0, ip=None):
         """True si se aceptó (sesión válida). La primera vez que una sesión manda un fotograma
         de verdad, se anota en new_cam_q -- exactamente una vez por sesión. stats/ua: lo que el
         móvil cuenta de sí mismo (X-Camui-Stats, User-Agent), solo para el registro. seq: su
         número (X-Camui-Seq): con varios envíos a la vez, uno más viejo puede llegar después de
-        uno más nuevo, y ese no debe tapar al nuevo."""
+        uno más nuevo, y ese no debe tapar al nuevo. ip: desde dónde llega (ver session_ip)."""
         announce = None
         with self._lk:
             s = self._sessions.get(sid)
             if s is None:
                 return False
+            if ip:
+                s["ip"] = ip
             line = s.setdefault("st", _PhoneStats()).add(time.time(), len(data), stats, ua)
             if line:
                 log.info("cámara del móvil «%s»: %s", s["name"], line)
@@ -4515,6 +4614,13 @@ class PhoneCamHub:
         with self._lk:
             s = self._sessions.get(sid)
             return s["name"] if s else "Móvil"
+
+    def session_ip(self, sid):
+        """Desde qué IP manda esa sesión sus fotogramas (None si no se sabe): dos sesiones desde
+        la misma son el mismo móvil que ha vuelto a conectarse (ver CamApp._phonecam_reusable)."""
+        with self._lk:
+            s = self._sessions.get(sid)
+            return s.get("ip") if s else None
 
     # ---- dispositivos ya emparejados antes (ver el comentario junto a PHONECAM_DEVICES_FILE) --
     # a diferencia de self._sessions (en memoria, se olvida al apagar «Cámara del móvil»), esto
@@ -4789,7 +4895,7 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
         except ValueError:
             seq = 0
         ok = hub.feed(sid, data, self.headers.get("X-Camui-Stats") or "",
-                      self.headers.get("User-Agent") or "", seq)
+                      self.headers.get("User-Agent") or "", seq, ip=self.client_address[0])
         self._send(200 if ok else 404, b"", "text/plain")
 
     def _send(self, code, body, ctype, cache=True):
@@ -8156,6 +8262,13 @@ class CamApp:
         self._cb = {"change": self._on_change, "frame": self._on_frame, "color": self._on_color,
                     "feat": self._on_feat}
         self._cfg = self._read_config()
+        # memoria de colocación (ver LAYOUT_MEMORY_MAX): ajustes de cada cámara, conectada o no, y
+        # la colocación de cada combinación de cámaras; _layout_set: la combinación ya colocada
+        cm = self._cfg.get("cams")
+        self._cam_mem = dict((k, v) for k, v in cm.items() if isinstance(v, dict)) \
+            if isinstance(cm, dict) else {}
+        self._layouts = read_layouts(self._cfg.get("layouts"))
+        self._layout_set = None
         nc = self._cfg.get("net_cams")
         self.net_cams = dict((lab, d) for lab, d in nc.items()
                               if isinstance(d, dict) and d.get("spec")) if isinstance(nc, dict) else {}
@@ -9734,7 +9847,9 @@ class CamApp:
             if isinstance(res, Exception):
                 self._set_status("No se pudieron listar los dispositivos: {0}".format(res))
                 return
+            known = self._known_alts()
             self.vdevs, self.adevs = res
+            self.vdevs = label_devices(list(self.vdevs), known)   # cámaras iguales: cada una, su número
             if not self.vdevs:                          # plan B en el hilo principal
                 self.vdevs = label_devices(list_video_pygrabber())
                 log.info("pygrabber: %d camaras", len(self.vdevs))
@@ -9745,8 +9860,15 @@ class CamApp:
 
         self._bg(work, done)
 
+    def _known_alts(self):
+        """{nombre alternativo: etiqueta} de las cámaras USB ya vistas (ver label_devices)."""
+        k = dict((c["alt"], lab) for lab, c in self._cam_mem.items() if c.get("alt"))
+        k.update((d["alt"], d["label"]) for d in (self.vdevs or [])
+                 if d.get("alt") and not d.get("net") and d.get("label"))
+        return k
+
     def _apply_devices(self, first):
-        cc = self._cfg.get("cams", {})
+        cc = self._cam_mem
         for d in self.vdevs:
             lab = d["label"]
             if lab not in self.cams:
@@ -9760,6 +9882,7 @@ class CamApp:
         for lab, cs in self.cams.items():
             if cs.use and lab in self.vdev and lab not in self.order:
                 self.order.append(lab)
+        self._recall_layout()
         vals = [NO_AUDIO] + [d["label"] for d in self.adevs]
         for cb in self.adev_cmbs:
             cb.config(values=vals)
@@ -9810,6 +9933,13 @@ class CamApp:
             self.order[self.order.index(old_label)] = new_label
         if self.sel == old_label:
             self.sel = new_label
+        # la memoria de colocación también la conoce ya por su nombre nuevo
+        self._cam_mem.pop(old_label, None)
+        for e in self._layouts:
+            e["order"] = [new_label if x == old_label else x for x in e["order"]]
+        self._layouts = [e for e in self._layouts if len(set(e["order"])) == len(e["order"])]
+        if self._layout_set and old_label in self._layout_set:
+            self._layout_set = (self._layout_set - {old_label}) | {new_label}
 
     def _net_cam_dialog(self, editing=None):
         """Cámara de red (http/https MJPEG o rtsp): el móvil con una app como IP Webcam, en la
@@ -11213,9 +11343,30 @@ class CamApp:
             plan["_hub_keep"] = True           # las demás cámaras siguen abiertas mientras tanto
         return plan
 
+    def _cams_memory(self):
+        """Ajustes de todas las cámaras para config.json: las de ahora y las que no están
+        conectadas pero se recuerdan de otras veces (ver CAM_MEMORY_MAX), con cuándo se vieron
+        por última vez («seen») y su nombre alternativo («alt», ver label_devices)."""
+        now = int(time.time())
+        mem = dict(self._cam_mem)
+        for lab, cs in self.cams.items():
+            c, old, d = cs.to_cfg(), mem.get(lab) or {}, self.vdev.get(lab)
+            c["seen"] = now if d is not None else old.get("seen", now)
+            alt = (d or {}).get("alt") if not (d or {}).get("net") else None
+            if alt or old.get("alt"):
+                c["alt"] = alt or old.get("alt")
+            mem[lab] = c
+        if len(mem) > CAM_MEMORY_MAX:
+            keep = sorted(mem, key=lambda k: (k in self.vdev, mem[k].get("seen") or 0),
+                          reverse=True)[:CAM_MEMORY_MAX]
+            mem = dict((k, mem[k]) for k in keep)
+        self._cam_mem = mem
+        return mem
+
     def save_config(self):
+        self._remember_layout()
         cfg = {"version": 3, "order": list(self.order),
-               "cams": dict((k, v.to_cfg()) for k, v in self.cams.items()),
+               "cams": self._cams_memory(), "layouts": self._layouts,
                "structure": self.v_struct.get(), "transpose": bool(self.v_trans.get()),
                "canvas": self.v_canvas.get(), "cwidth": self._cwidth(), "fps": self._fps(),
                "quality": self.v_quality.get(), "preset": self.v_preset.get(),
@@ -11262,9 +11413,48 @@ class CamApp:
             pass
 
     # ------------------------------------------------------------ cambios en vivo
+    def _recall_layout(self):
+        """Si ha cambiado qué cámaras salen en el mosaico: la colocación que tenía esta misma
+        combinación la última vez (orden, disposición, por columnas), o si no se ha visto nunca,
+        la que llega junto a la que tenía al lado (ver LAYOUT_MEMORY_MAX). True si cambió algo."""
+        if self.recording:
+            return False
+        cur = frozenset(self.order)
+        prev, self._layout_set = self._layout_set, cur
+        if cur == prev or not cur:
+            return False
+        e = layout_find(self._layouts, cur)
+        if e is not None:
+            changed = (self.order != e["order"] or self.v_struct.get() != e["structure"] or
+                       bool(self.v_trans.get()) != e["transpose"])
+            self.order = list(e["order"])
+            self._quiet_set(self.v_struct, e["structure"] if parse_structure(
+                e["structure"], len(cur)) is not None else AUTO)
+            self._quiet_set(self.v_trans, e["transpose"])
+            if changed:
+                log.info("colocación recordada para %s: %s", " · ".join(self.order), e["structure"])
+            return changed
+        if not prev:                            # al arrancar: las de la última vez no son nuevas
+            prev = frozenset(x for x in (self._cfg.get("order") or []) if isinstance(x, str))
+        order = layout_place(self.order, cur - prev, self._layouts)
+        changed, self.order = order != self.order, order
+        return changed
+
+    def _remember_layout(self):
+        """Anota cómo está colocada ahora la combinación de cámaras del mosaico."""
+        if self.recording or not self.order or frozenset(self.order) != self._layout_set:
+            return
+        s = self.v_struct.get()
+        if parse_structure(s, len(self.order)) is None:
+            s = AUTO
+        self._layouts = layout_remember(self._layouts, self.order, s, bool(self.v_trans.get()),
+                                        time.time())
+
     def _on_change(self, *_a):
         if self._loading:
             return
+        self._recall_layout()
+        self._remember_layout()
         self._update_info()
         self._redraw_map()
         if not self.recording and not self.paused:
@@ -12450,16 +12640,29 @@ class CamApp:
             self._set_status("Móvil «{0}» conectado, pero hay que esperar a que termine la "
                              "grabación para añadirlo al mosaico.".format(name))
             return
-        label = base = "📱 " + name
-        n = 2
-        while label in self.vdev:
-            label = "{0} #{1}".format(base, n)
-            n += 1
-        cam = {"name": name, "alt": None, "label": label, "spec": url, "net": True, "phone": True}
-        self.net_cams[label] = cam
-        self.vdevs.append(cam)
-        self.vdev[label] = cam
-        self.cams[label] = CamState(label, None, self._cb)
+        label = self._phonecam_reusable(name, url)
+        again = label is not None
+        if again:
+            # el mismo móvil que vuelve (recargó la página, se cortó la wifi...): ocupa el sitio
+            # de su conexión anterior, que ya no manda nada, con sus ajustes -- en vez de otra
+            # casilla al final y la de antes «Sin señal»
+            cam = self.net_cams[label]
+            cam["spec"] = url
+            if self.vdev.get(label) is not cam:
+                self.vdevs = [d for d in self.vdevs if d.get("label") != label] + [cam]
+                self.vdev[label] = cam
+        else:
+            label = base = "📱 " + name
+            n = 2
+            while label in self.vdev:
+                label = "{0} #{1}".format(base, n)
+                n += 1
+            cam = {"name": name, "alt": None, "label": label, "spec": url, "net": True, "phone": True}
+            self.net_cams[label] = cam
+            self.vdevs.append(cam)
+            self.vdev[label] = cam
+        if label not in self.cams:              # con los ajustes de la última vez, si se conoce
+            self.cams[label] = CamState(label, self._cam_mem.get(label), self._cb)
         self.cams[label].use = True
         if label not in self.order:
             self.order.append(label)
@@ -12469,7 +12672,36 @@ class CamApp:
         self._redraw_map()
         self._update_info()
         self._on_change()
-        self._set_status("Móvil «{0}» conectado: añadido al mosaico.".format(name))
+        self._set_status(("Móvil «{0}» conectado de nuevo: en su sitio del mosaico." if again else
+                          "Móvil «{0}» conectado: añadido al mosaico.").format(
+                              cam.get("name") or name))
+
+    def _phonecam_reusable(self, name, url):
+        """La casilla de una conexión anterior de este mismo móvil (mismo nombre, sin el «#2» que
+        se le pone a una sesión nueva mientras la vieja no ha caducado) a la que sustituye url:
+        la que manda desde la misma IP (el mismo móvil), o la que ya no manda nada desde hace
+        PHONECAM_REUSE_STALE s. None si no hay. Con dos móviles que se llaman igual, nunca la de
+        otro que siga conectado."""
+        sid_of = lambda u: (re.search(r"/phonecam/([^/.?]+)\.mjpg", u or "") or [None, None])[1]
+        new_sid = sid_of(url)
+        new_ip = self.phonecam.session_ip(new_sid) if new_sid else None
+        root_name = re.sub(r" #\d+$", "", name)
+        cands = []
+        for lab in sorted(self.net_cams, key=lambda l: self.order.index(l) if l in self.order
+                          else len(self.order)):
+            d = self.net_cams[lab]
+            sid = sid_of(d.get("spec"))
+            if (not d.get("phone") or not sid or sid == new_sid or
+                    re.sub(r" #\d+$", "", d.get("name") or "") != root_name):
+                continue
+            r = self.phonecam.latest(sid)
+            if (r is None or not r[2] or time.time() - r[2] > PHONECAM_REUSE_STALE or
+                    (new_ip and self.phonecam.session_ip(sid) == new_ip)):
+                cands.append(lab)
+        if not cands:
+            return None
+        plain = "📱 " + root_name
+        return plain if plain in cands else cands[0]
 
     # ------------------------------------------------------------ grabación
     def toggle_rec(self):

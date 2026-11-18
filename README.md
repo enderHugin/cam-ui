@@ -46,6 +46,12 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   tanto esa cámara se ve entera, con bandas negras, nunca estirada. Grabando, si una cámara se
   gira (apaisada ↔ vertical), el mosaico se recoloca sin parar la grabación: se sigue en otro
   trozo y al terminar se juntan en un solo vídeo (se pierden unas décimas en el salto).
+- Memoria de colocación: cada combinación de cámaras recuerda cómo se dejó (orden y
+  disposición) y vuelve a quedar igual cuando se juntan otra vez, aunque haya pasado mucho
+  tiempo (al arrancar, al enchufar una cámara, al volver un móvil). Cada cámara guarda sus
+  ajustes (resolución, encuadre y zoom, giro, color, ★) aunque no esté conectada; dos cámaras
+  iguales se distinguen por el puerto USB donde están enchufadas. Un móvil que recarga la página
+  o se reconecta vuelve a su casilla.
 - Modos de ventana: normal, compacto, mini (barra con Rec/Stop) y pantalla completa (solo el
   mosaico, con la vista previa al tamaño de la pantalla; botón «⛶» sobre la imagen, Esc o doble
   clic para salir), con icono en la bandeja.
@@ -121,7 +127,7 @@ del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para com
 emparejamiento de «/add»); `tests/unit_vlc.py` y
 `tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`, `tests/ui_phonecam.py`
 (este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`, `tests/ui_netretry.py`, `tests/ui_fullscreen.py`, `tests/ui_layout_auto.py`,
-`tests/ui_chain_reshape.py`
+`tests/ui_chain_reshape.py`, `tests/ui_layout_memory.py`
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 `tests/unit_hub.py` y `tests/unit_ipout.py` usan el ffmpeg del PATH; con

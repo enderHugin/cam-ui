@@ -1,5 +1,24 @@
 # Novedades de cam-ui
 
+## pack 51 — 2026.11.18
+- **Las cámaras vuelven a su sitio.** Cada combinación de cámaras recuerda cómo la dejaste: orden
+  y disposición («2 + 2», «1 + 2», «Auto», por filas o columnas). Cuando esas mismas cámaras
+  vuelven a juntarse, el mosaico queda exactamente igual, aunque haya pasado un año: al abrir
+  cam-ui, al enchufar una cámara (y pulsar «Refrescar dispositivos»), al volver un móvil o al
+  marcarla en la lista. Antes, una cámara que se desenchufaba y volvía iba al final y la
+  disposición pasaba a «Auto». Si esa combinación no se ha visto nunca, las demás no se mueven y
+  la que llega se pone junto a la que tenía al lado. Se recuerdan las 60 combinaciones más
+  recientes.
+- **Los ajustes de cada cámara se guardan aunque no esté conectada**: resolución, encuadre y
+  zoom, giro, espejo, color, retardo y ★. Antes se perdían si cam-ui se cerraba sin esa cámara.
+- **Dos cámaras iguales** (mismo modelo, mismo nombre) conservan cada una su número, su sitio y
+  sus ajustes aunque Windows las liste en otro orden: van con el puerto USB donde están
+  enchufadas (si se cambian de puerto, pueden intercambiarse).
+- **Un móvil que recarga la página o se reconecta vuelve a su casilla** con sus ajustes, en vez
+  de añadirse otra vez al final y dejar la de antes con «Sin señal». Se reconoce por venir de la
+  misma IP o porque la conexión anterior ya no manda nada. Otro móvil con el mismo nombre
+  conectado a la vez va aparte, como antes.
+
 ## pack 50 — 2026.11.18
 - **Grabando, si una cámara se gira, el mosaico se recoloca sin dejar de grabar.** Por ejemplo,
   cuando en otro cam-ui encadenado se gira el móvil y su mosaico pasa de apaisado a vertical. Si
