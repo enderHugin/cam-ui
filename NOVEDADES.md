@@ -1,5 +1,18 @@
 # Novedades de cam-ui
 
+## pack 48 — 2026.11.18
+- **El mosaico se recoloca solo cuando una cámara de red cambia de forma**, también si no es
+  otro cam-ui (IP Webcam, ESP32-CAM, la mayoría de cámaras IP por MJPEG): girar el móvil o
+  cambiar la resolución en su app. Antes ffmpeg la seguía dando al tamaño del principio,
+  deformada, y el mosaico no cambiaba; ahora, con el motor nuevo, cam-ui lee esas cámaras él
+  mismo y ve el tamaño de cada imagen (si una no es MJPEG, la sigue leyendo ffmpeg, como antes).
+  La cámara del móvil y otro cam-ui ya lo hacían. Si se está grabando, se recoloca al parar.
+- **★ Cámaras destacadas.** En Cámaras → Ajustes de la cámara, «★ Destacada: más grande con la
+  disposición Auto» (hasta dos). Con la disposición «Auto», las destacadas van primero y al
+  menos el doble de grandes que cualquiera de las demás, que se reparten a su lado o debajo
+  (con pocas cámaras, encogiéndolas y dejando un hueco negro). En el mapa del mosaico llevan ★, y
+  la miniatura de la galería pasa a «AUTO ★». Con una disposición elegida a mano no cambian nada.
+
 ## pack 47 — 2026.11.18
 - **Pantalla completa para la vista previa.** Un modo más: en el menú Modo (y en el del icono
   de la bandeja), o con el botón «⛶ Pantalla completa» que aparece sobre la imagen del mosaico

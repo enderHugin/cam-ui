@@ -43,6 +43,7 @@ import re
 import sys
 import json
 import ssl
+import base64
 import math
 import time
 import secrets
@@ -84,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 47                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 48                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -688,6 +689,12 @@ def layout_tiles(aspects, rows, width, transpose=False, canvas=None):
     adapta: una fila con dos 4:3 y otra con un 16:9 dan filas de distinta altura.
     canvas None = el lienzo es el contenido; (aw, ah) = lienzo fijo y el contenido se
     centra con barras negras. Devuelve {"W", "H", "tiles": [(x, y, w, h)]}."""
+    rects, uw, uh = _unit_rects(aspects, rows, transpose)
+    return _place_rects(rects, uw, uh, width, canvas)
+
+
+def _unit_rects(aspects, rows, transpose=False):
+    """Las celdas de layout_tiles en unidades sin escalar: (rects, ancho, alto)."""
     asp = [max(0.05, min(20.0, float(a))) for a in aspects]
     if transpose:
         asp = [1.0 / a for a in asp]
@@ -705,6 +712,11 @@ def layout_tiles(aspects, rows, width, transpose=False, canvas=None):
     if transpose:
         rects = [(ry, rx, rh, rw) for (rx, ry, rw, rh) in rects]
         uw, uh = uh, uw
+    return rects, uw, uh
+
+
+def _place_rects(rects, uw, uh, width, canvas=None):
+    """Celdas en unidades -> píxeles del lienzo (ver layout_tiles)."""
     W = _even(width)
     if canvas is None:
         s = W / uw
@@ -762,6 +774,65 @@ def layout_options(aspects, width, canvas=None, limit=24):
     if len(out) > limit:
         out = sorted(out, key=lambda o: _layout_score(o[2], canvas))[:limit]
     return out
+
+
+# Cámaras «destacadas» (hasta 2, Cámaras → Ajustes de la cámara): con la disposición «Auto»,
+# cada una debe quedar al menos así de grande (en superficie) que la mayor de las demás.
+FEAT_MAX = 2
+FEAT_MIN_RATIO = 2.0
+
+
+def layout_featured(aspects, nfeat, width, canvas=None):
+    """Disposición «Auto» con las nfeat primeras cámaras destacadas (las demás, detrás). Las
+    destacadas juntas (en fila o en columna) en un bloque, y las demás repartidas en filas o
+    columnas a su derecha o debajo; si así ninguna forma deja las destacadas bastante más grandes
+    (con dos o tres cámaras en total pasa: un bloque solo ocupa todo el alto o el ancho), las
+    demás se encogen y queda un hueco negro. Entre las que dejan cada destacada al menos
+    FEAT_MIN_RATIO veces mayor que la mayor de las demás: la que menos encoge, luego la que mejor
+    encaja (como best_layout, contando los huecos negros) y, a igualdad, la que más grandes las
+    deja. Devuelve la geometría de layout_tiles más "rows"."""
+    n = len(aspects)
+    nfeat = max(0, min(int(nfeat), n))
+    if nfeat == 0 or nfeat >= n:
+        rows, trans = best_layout(aspects, width, canvas)
+        g = layout_tiles(aspects, rows, width, trans, canvas)
+        g.update(rows=rows, transpose=trans)
+        return g
+    fa, oa = aspects[:nfeat], aspects[nfeat:]
+    best, best_key = None, None
+    for f_col in (False, True):                      # destacadas en fila / en columna
+        fr, fw, fh = _unit_rects(fa, (nfeat,), f_col)
+        for comp in compositions(len(oa)):
+            for o_tr in (False, True):
+                orr, ow, oh = _unit_rects(oa, comp, o_tr)
+                for side in ("right", "below"):
+                    fit = fh / oh if side == "right" else fw / ow
+                    for shrink in (1.0, 0.75, 0.5, 1 / 3.0):
+                        s = fit * shrink
+                        if side == "right":
+                            rects = fr + [(fw + x * s, y * s, w * s, h * s) for (x, y, w, h) in orr]
+                            uw, uh = fw + ow * s, fh
+                        else:
+                            rects = fr + [(x * s, fh + y * s, w * s, h * s) for (x, y, w, h) in orr]
+                            uw, uh = fw, fh + oh * s
+                        g = _place_rects(rects, uw, uh, width, canvas)
+                        areas = [w * h for (_x, _y, w, h) in g["tiles"]]
+                        ratio = min(areas[:nfeat]) / float(max(areas[nfeat:]))
+                        hole = 1.0 - sum(areas) / float(g["W"] * g["H"])
+                        ok = ratio >= FEAT_MIN_RATIO
+                        share = sum(areas[:nfeat]) / float(sum(areas))
+                        # y las demás, parecidas entre sí (no unas enormes y otras diminutas)
+                        spread = math.log(max(areas[nfeat:]) / float(max(1, min(areas[nfeat:]))))
+                        fitk = round(_layout_score(g, canvas) + hole + 0.15 * spread, 2)
+                        if ok:                       # sin encoger si se puede (sin huecos)
+                            key = (0, -shrink, fitk, -round(share, 2), len(comp))
+                        else:
+                            key = (1, -round(ratio, 2), fitk)
+                        if best_key is None or key < best_key:
+                            g.update(rows=(nfeat,) + tuple(comp), transpose=bool(o_tr),
+                                     feat=(nfeat, "columna" if f_col else "fila", side, shrink))
+                            best, best_key = g, key
+    return best
 
 
 def best_layout(aspects, width, canvas=None):
@@ -5359,6 +5430,7 @@ class _NetSource(_HubSource):
         self.decided = threading.Event()
         self.reader = ""
         self._conn = None
+        self._mjpeg_no = False        # ya se vio que no es MJPEG por HTTP: directamente ffmpeg
 
     def close(self):
         _HubSource.close(self)
@@ -5387,6 +5459,16 @@ class _NetSource(_HubSource):
                 self.offset = min(self._offs)[1]
                 self.decided.set()
                 got, err = self._run_camui()
+            elif not self._mjpeg_no and self.hub.input_fn is _dshow_input and \
+                    self.spec.strip().lower().startswith(("http://", "https://")):
+                self.reader = "mjpeg"
+                self.decided.set()
+                got, err, other = self._run_mjpeg()
+                if other and not self.closed.is_set():   # no era MJPEG (o no sé leerlo): ffmpeg
+                    log.info("concentrador «%s»: no es MJPEG por HTTP (%s): lo lee ffmpeg",
+                             self.label, err)
+                    self._mjpeg_no = True
+                    continue
             else:
                 self.reader = "ffmpeg"
                 self.decided.set()
@@ -5399,6 +5481,103 @@ class _NetSource(_HubSource):
             if self._retry_wait(n):
                 return
             n += 1
+
+    def _run_mjpeg(self):
+        """Cámara de red MJPEG por HTTP que no es cam-ui (IP Webcam, ESP32-CAM, la mayoría de
+        cámaras IP): se lee aquí mismo, sin ffmpeg, y así se sabe el tamaño de CADA fotograma.
+        Con ffmpeg, si la cámara cambiaba de resolución o de forma a mitad (girar el móvil, otra
+        resolución en su app), seguía saliendo al tamaño del principio, deformada, y el mosaico
+        no se recolocaba nunca (el y4m no puede cambiar de tamaño; ffmpeg reescala sin avisar).
+        Devuelve (llegó algún fotograma, error, mejor con ffmpeg): lo último si la respuesta no
+        es un multipart de JPEG, pide otra autenticación, o no sale ningún JPEG legible."""
+        u = urllib.parse.urlsplit(self.spec.strip())
+        path = (u.path or "/") + ("?" + u.query if u.query else "")
+        hdrs = {"User-Agent": "cam-ui", "Accept": "*/*"}
+        if u.username is not None:
+            cred = "{0}:{1}".format(urllib.parse.unquote(u.username),
+                                    urllib.parse.unquote(u.password or ""))
+            hdrs["Authorization"] = "Basic " + base64.b64encode(cred.encode("utf-8")).decode("ascii")
+        c, got, bad = None, False, 0
+        try:
+            tmo = NET_IO_TIMEOUT_US / 1e6
+            if u.scheme.lower() == "https":
+                c = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=tmo,
+                                                context=ssl._create_unverified_context())
+            else:
+                c = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=tmo)
+            self._conn = c
+            c.request("GET", path, headers=hdrs)
+            resp = c.getresponse()
+            ctype = resp.getheader("Content-Type") or ""
+            if resp.status != 200:
+                return False, "HTTP {0}".format(resp.status), resp.status in (401, 403)
+            m = re.search(r'boundary="?([^";,\s]+)"?', ctype, re.I)
+            if "multipart" not in ctype.lower() or not m:
+                return False, "Content-Type: {0}".format(ctype[:60] or "-"), True
+            bnd = m.group(1).encode("latin-1")
+            if bnd.startswith(b"--"):
+                bnd = bnd[2:]
+            fp = resp.fp
+            at_part = False                 # ya se leyó la línea del separador de esta parte
+            while not self.closed.is_set():
+                if not at_part:
+                    line = fp.readline(4096)
+                    if not line:
+                        return got, "la cámara cerró la conexión", False
+                    if bnd not in line:
+                        continue
+                at_part = False
+                hdr = {}
+                while True:
+                    hl = fp.readline(4096)
+                    if not hl:
+                        return got, "la cámara cerró la conexión", False
+                    hl = hl.strip()
+                    if not hl:
+                        break
+                    k, _sep, v = hl.partition(b":")
+                    hdr[k.strip().lower()] = v.strip()
+                try:
+                    ln = int(hdr.get(b"content-length", b"0") or 0)
+                except ValueError:
+                    ln = 0
+                if 0 < ln <= 64 * 1024 * 1024:
+                    data = fp.read(ln)
+                    if len(data) < ln:
+                        return got, "fotograma cortado", False
+                else:                       # sin Content-Length: hasta el siguiente separador
+                    buf = bytearray()
+                    while True:
+                        line = fp.readline(1 << 16)
+                        if not line:
+                            return got, "la cámara cerró la conexión", False
+                        if line.startswith(b"--" + bnd) or line.strip() == bnd:
+                            at_part = True
+                            break
+                        buf += line
+                        if len(buf) > 64 * 1024 * 1024:
+                            return got, "fotograma sin final", True
+                    data = bytes(buf).rstrip(b"\r\n")
+                arrival = time.time()
+                try:
+                    w, h, yuv = _jpeg_to_yuv(data, HUB_JPEG_MAX_SIDE)
+                except Exception:
+                    bad += 1
+                    if not got and bad >= 5:
+                        return False, "no llegan JPEG legibles", True
+                    continue
+                self.put(self.dejitter(arrival), w, h, yuv)
+                got = True
+            return got, "", False
+        except Exception as e:
+            return got, "{0}: {1}".format(type(e).__name__, e), False
+        finally:
+            self._conn = None
+            if c is not None:
+                try:
+                    c.close()
+                except Exception:
+                    pass
 
     def _clock_loop(self, alive):
         while alive.is_set() and not self.closed.is_set():
@@ -6269,6 +6448,7 @@ class CamState:
                           for k in COLOR_KEYS)
         self.delay = tk.IntVar(value=int(c.get("delay", 0)))
         self.mode = tk.StringVar(value=c.get("mode", "Auto") or "Auto")
+        self.feat = tk.BooleanVar(value=bool(c.get("feat", False)))   # ★ más grande en «Auto»
         # los modos guardados con el lector antiguo (sin rangos ni fps intermedios) se vuelven a leer
         self.modes = list(c.get("modes", [])) if c.get("modes_v") == 2 else []
         ok = c.get("modes_ok") if isinstance(c.get("modes_ok"), dict) else {}
@@ -6286,6 +6466,7 @@ class CamState:
             var.trace_add("write", lambda *a, lab=label: cb["frame"](lab))
         for var in self.color.values():
             var.trace_add("write", lambda *a, lab=label: cb["color"](lab))
+        self.feat.trace_add("write", lambda *a, lab=label: cb.get("feat", cb["change"])(lab))
 
     # -- geometría de la imagen --
     def rot_deg(self):
@@ -6322,6 +6503,7 @@ class CamState:
                 "cy": round(_clampf(_getf(self.cy, 50), 0, 100, 50), 1),
                 "color": dict((k, round(v, 1)) for k, v in self.color_values().items()),
                 "delay": _geti(self.delay), "mode": self.mode.get(), "modes": self.modes,
+                "feat": bool(self.feat.get()),
                 "modes_v": 2, "modes_ok": dict(self.ok_modes), "modes_bad": sorted(self.bad_modes),
                 "src": list(self.src) if self.src else None}
 
@@ -6333,7 +6515,7 @@ class CamState:
                 "mode": None if c["mode"] in ("", "Auto") else c["mode"]}
 
     def reset(self):
-        for var in (self.h, self.v):
+        for var in (self.h, self.v, self.feat):
             var.set(False)
         self.rot.set("0°")
         self.reset_frame()
@@ -7855,7 +8037,8 @@ class CamApp:
         self._pickers = []
         self._live = set()             # widgets que siguen activos mientras se graba (color)
         self._about = None
-        self._cb = {"change": self._on_change, "frame": self._on_frame, "color": self._on_color}
+        self._cb = {"change": self._on_change, "frame": self._on_frame, "color": self._on_color,
+                    "feat": self._on_feat}
         self._cfg = self._read_config()
         nc = self._cfg.get("net_cams")
         self.net_cams = dict((lab, d) for lab, d in nc.items()
@@ -9087,8 +9270,12 @@ class CamApp:
         self.w_probe = reg(ttk.Button(d, text="Probar modos (abre la cámara con cada uno)",
                                       command=self._probe_modes))
         self.w_probe.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(2, 0))
+        self.w_feat = reg(ttk.Checkbutton(
+            d, text="★ Destacada: más grande con la disposición «Auto» (hasta {0})".format(FEAT_MAX),
+            variable=self._dummy["b"]))
+        self.w_feat.grid(row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 0))
         self.w_reset = reg(ttk.Button(d, text="Restablecer esta cámara", command=self._reset_cam))
-        self.w_reset.grid(row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6))
+        self.w_reset.grid(row=7, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6))
 
     def _scale_row(self, parent, r, text, lo, hi, on_reset):
         ttk.Label(parent, text=text, width=11).grid(row=r, column=0, sticky="w", padx=6, pady=3)
@@ -9823,6 +10010,7 @@ class CamApp:
         d = self._dummy
         self.w_h.config(variable=cs.h if cs else d["b"])
         self.w_v.config(variable=cs.v if cs else d["b"])
+        self.w_feat.config(variable=cs.feat if cs else d["b"])
         self.w_rot.config(textvariable=cs.rot if cs else d["s"])
         self.w_delay.config(textvariable=cs.delay if cs else d["i"])
         self.w_mode.config(textvariable=cs.mode if cs else d["s"],
@@ -9897,10 +10085,50 @@ class CamApp:
         if auto:
             if self.v_struct.get() != AUTO:          # elegida para otro nº de cámaras
                 self._quiet_set(self.v_struct, AUTO)
-            rows, trans = best_layout(aspects, width, canvas)
+            return self._auto_geometry(labs)
         g = layout_tiles(aspects, rows, width, trans, canvas)
         g.update(rows=rows, auto=auto, labels=labs, transpose=trans)
         return g
+
+    def _featured(self, labs):
+        """Las cámaras ★ destacadas de labs, en su orden (como mucho FEAT_MAX)."""
+        return [l for l in labs if l in self.cams and self.cams[l].feat.get()][:FEAT_MAX]
+
+    def _auto_geometry(self, labs):
+        """Disposición «Auto»: la que mejor encaja; con cámaras ★ destacadas, esas van primero y
+        más grandes (ver layout_featured)."""
+        canvas, width = self._canvas(), self._cwidth()
+        feats = self._featured(labs)
+        if feats and len(labs) > len(feats):
+            labs = feats + [l for l in labs if l not in feats]
+            g = layout_featured([self.cams[l].tile_aspect() for l in labs], len(feats), width,
+                                canvas)
+        else:
+            aspects = [self.cams[l].tile_aspect() for l in labs]
+            rows, trans = best_layout(aspects, width, canvas)
+            g = layout_tiles(aspects, rows, width, trans, canvas)
+            g.update(rows=rows, transpose=trans)
+        g.update(auto=True, labels=labs)
+        return g
+
+    def _on_feat(self, lab):
+        """★ de una cámara: como mucho FEAT_MAX a la vez; se nota con la disposición «Auto»."""
+        if self._loading:
+            return
+        cs = self.cams.get(lab)
+        if cs is None:
+            return
+        if cs.feat.get():
+            others = [l for l in self.order if l != lab and l in self.cams and self.cams[l].feat.get()]
+            if len(others) >= FEAT_MAX:
+                self._quiet_set(cs.feat, False)
+                self._set_status("Como mucho {0} cámaras destacadas: quítale la ★ a «{1}» o a «{2}» "
+                                 "primero.".format(FEAT_MAX, others[0], others[1]))
+                return
+            if parse_structure(self.v_struct.get(), len(self.order)) is not None:
+                self._set_status("★ «{0}» destacada: se nota con la disposición «Auto» (la "
+                                 "primera de la galería).".format(lab))
+        self._on_change()
 
     # ------------------------------------------------------------ galería de disposiciones
     GAL_W, GAL_H, GAL_GAP, GAL_COLS = 46, 34, 6, 7
@@ -9930,11 +10158,11 @@ class CamApp:
         if not g:
             c.config(height=44)
             return
-        labs = g["labels"]
+        labs = [l for l in self.order if l in self.cams]        # orden normal (sin ★ delante)
         aspects = [self.cams[l].tile_aspect() for l in labs]
         canvas, width = self._canvas(), self._cwidth()
-        comp, tr = best_layout(aspects, width, canvas)
-        cells = [(None, None, layout_tiles(aspects, comp, width, tr, canvas), "AUTO")]
+        ag = g if g["auto"] else self._auto_geometry(labs)
+        cells = [(None, None, ag, "AUTO ★" if ag.get("feat") else "AUTO")]
         for (cp, t, gg) in layout_options(aspects, width, canvas):
             cells.append((cp, t, gg, None))
         step_x, step_y = self.GAL_W + self.GAL_GAP, self.GAL_H + self.GAL_GAP
@@ -9995,8 +10223,9 @@ class CamApp:
             sel = (lab == self.sel)
             c.create_rectangle(x0 + 1, y0 + 1, x1 - 1, y1 - 1, fill="#2f4f86" if sel else PANEL2,
                                outline=ACC if sel else LINE, width=2 if sel else 1)
-            c.create_text(x0 + 5, y0 + 3, anchor="nw", text=str(idx + 1), fill=WARN,
-                          font=("Segoe UI", 11, "bold"))
+            c.create_text(x0 + 5, y0 + 3, anchor="nw",
+                          text=str(idx + 1) + (" ★" if g.get("feat") and idx < g["feat"][0] else ""),
+                          fill=WARN, font=("Segoe UI", 11, "bold"))
             wpx = x1 - x0
             if wpx >= 60 and y1 - y0 >= 40:
                 nch = max(4, int((wpx - 10) / 5.4))
@@ -10902,9 +11131,13 @@ class CamApp:
         if not g:
             self.lbl_size.config(text="Sin cámaras marcadas.")
             return
-        txt = "Vídeo final {0}×{1} · {2} cámara(s) · reparto {3}{4}{5}".format(
-            g["W"], g["H"], len(g["labels"]), structure_label(g["rows"]),
-            " (auto)" if g["auto"] else "", " por columnas" if g["transpose"] else "")
+        if g.get("feat"):
+            txt = "Vídeo final {0}×{1} · {2} cámara(s) · reparto auto con {3} destacada{4} ★".format(
+                g["W"], g["H"], len(g["labels"]), g["feat"][0], "s" if g["feat"][0] > 1 else "")
+        else:
+            txt = "Vídeo final {0}×{1} · {2} cámara(s) · reparto {3}{4}{5}".format(
+                g["W"], g["H"], len(g["labels"]), structure_label(g["rows"]),
+                " (auto)" if g["auto"] else "", " por columnas" if g["transpose"] else "")
         if g["W"] * g["H"] > 8300000:
             txt += "\nAviso: más de 4K; la grabación puede ir lenta. Baja el ancho."
         self.lbl_size.config(text=txt)
