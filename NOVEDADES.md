@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 46 — 2026.11.18
+- **Contraseña como alternativa al QR para añadir un móvil.** En Salida → Cámara del móvil hay un
+  campo «Contraseña» (oculta, con «ver» para enseñarla). En el móvil, mientras la página espera
+  el QR, el botón «🔑 Usar contraseña» deja escribirla en su lugar: con la buena, el móvil se
+  añade igual que si hubiera leído el QR, y las siguientes veces entra solo. Vacía, solo vale el
+  QR, como hasta ahora. Va cifrada (HTTPS) y nunca en la dirección ni en el registro. Para que
+  nadie de la wifi pueda probar a lo loco: tras 5 fallos seguidos, ese móvil espera 30 s (que se
+  doblan en cada fallo más, hasta 15 min), y más de 20 fallos entre todos en 10 min la desactivan
+  un rato; el QR sigue valiendo siempre.
+
 ## pack 45 — 2026.11.17
 - **El motor nuevo pasa a ser el de serie.** Cada cámara va en su propio proceso: se abren
   todas a la vez, se leen siempre a su ritmo y cada imagen lleva la hora a la que llegó (no la

@@ -615,6 +615,49 @@ dlg_dev2.close()
 print("23) «Olvidar» borra el móvil de verdad -- desaparece de la lista y, de ahí en adelante, "
       "«/add/reconnect» ya no lo reconoce, como si nunca se hubiera emparejado OK")
 
+# 24) (pack 46) contraseña como alternativa al QR: el campo de Salida → Cámara del móvil (oculto
+#     con «•», «ver» la enseña) vale en cuanto se escribe, se guarda en config.json al salir del
+#     campo y vuelve al arrancar; con ella, «/add/password» da paso a la página de captura.
+assert str(app.e_phonecampass.cget("show")) == "•"
+w24 = app.e_phonecampass
+while w24 is not None and w24.winfo_class() != "TLabelframe":
+    w24 = w24.master
+assert w24 is not None and "Cámara del móvil" in str(w24.cget("text")), "no está en «Cámara del móvil»"
+salida24 = [t for t in app.nb.tabs() if app.nb.tab(t, "text").strip() == "Salida"][0]
+assert str(w24).startswith(salida24), (str(w24), salida24)
+app.v_phonecampass.set("clave del salón")
+assert app.phonecam.password == "clave del salón"
+app._on_phonecampass_commit()
+with open(camui.CONFIG, encoding="utf-8") as f:
+    assert json.load(f)["phonecam"]["pass"] == "clave del salón"
+app.v_phonecampass_show.set(True)
+for c24 in w24.winfo_children():
+    for cc in c24.winfo_children() if c24.winfo_class() == "TFrame" else ():
+        if cc.winfo_class() == "TCheckbutton" and str(cc.cget("text")) == "ver":
+            cc.invoke()
+            cc.invoke()
+assert str(app.e_phonecampass.cget("show")) == "", "«ver» debería enseñarla"
+
+
+def _pw24(given):
+    body = json.dumps({"pass": given, "label": "iPhone"}).encode("utf-8")
+    req = urllib.request.Request("https://127.0.0.1:{0}/add/password".format(app.phonecam.port),
+                                 data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5, context=ctx) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+assert _pw24("otra")["error"] == "wrong"
+ok24 = _pw24("clave del salón")
+assert ok24["ok"] and ok24["url"].startswith("/cam?t={0}&sid=".format(app.phonecam.token)), ok24
+app.v_phonecampass.set("")
+assert _pw24("clave del salón")["error"] == "nopass"
+app.v_phonecampass.set("clave del salón")
+assert app._read_config()["phonecam"]["pass"] == "clave del salón"
+print("24) contraseña en Salida → Cámara del móvil: oculta (y «ver»), vale al momento, se guarda "
+      "en config.json; con ella «/add/password» abre la captura, mal no, vacía = solo QR OK")
+
 app._phonecam_disable()
 app._ip_disable()
 root.destroy()

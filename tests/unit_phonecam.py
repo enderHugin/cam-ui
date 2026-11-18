@@ -1002,6 +1002,90 @@ print("26) sin número de puerto: «/», «/camui/clock», «/certificado» (pá
       "por http redirige a https, y por https la página y los fotogramas (keep-alive) llegan "
       "tal cual; certificado con el nombre del PC; con el puerto ocupado, todo como antes OK")
 
+# 27) (pack 46) contraseña como alternativa al QR en «/add»: por HTTPS real, en el cuerpo (nunca
+#     en la dirección); sin contraseña puesta, «nopass»; mal, «wrong», y tras 5 fallos seguidos ese
+#     móvil espera 30 s (que se doblan) -- mientras espera, ni la buena entra --; bien, una sesión
+#     nueva que lleva a la página de captura de siempre, que guarda el móvil para la próxima vez
+#     (igual que el QR). Entre todos, más de 20 fallos en 10 min la cierran a todo el mundo. La
+#     contraseña no aparece nunca en camui.log.
+camui.PHONECAM_DEVICES_FILE = os.path.join(HERE, "_unit_phonecam_devices27.json")
+if os.path.exists(camui.PHONECAM_DEVICES_FILE):
+    os.remove(camui.PHONECAM_DEVICES_FILE)
+
+
+class _Grab(logging.Handler):
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self.lines = []
+
+    def emit(self, rec):
+        self.lines.append(rec.getMessage())
+
+
+grab27 = _Grab()
+camui.log.addHandler(grab27)
+camui.log.setLevel(logging.DEBUG)
+PW27 = "pato azul ñ 7 🦆"
+hub27 = camui.PhoneCamHub(deque(), deque())
+port27, tok27 = hub27.start(_free_port())
+try:
+    def _pw(given, label="Android · Pixel 7"):
+        body = json.dumps({"pass": given, "label": label}).encode("utf-8")
+        req = urllib.request.Request("https://127.0.0.1:{0}/add/password".format(port27), data=body,
+                                     method="POST", headers={"Content-Type": "application/json"})
+        with _get(req, https=True) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    assert _pw("lo-que-sea") == {"ok": False, "error": "nopass", "wait": 0}
+    hub27.password = PW27
+    for k in range(camui.PHONECAM_PW_FREE - 1):
+        assert _pw("pato azul") == {"ok": False, "error": "wrong", "wait": 0}, k
+    r27 = _pw("PATO AZUL Ñ 7 🦆")
+    assert r27["error"] == "wrong" and r27["wait"] == int(camui.PHONECAM_PW_LOCK_S), r27
+    r27b = _pw(PW27)                                    # bloqueado: ni con la buena
+    assert r27b["ok"] is False and r27b["error"] == "wait" and 0 < r27b["wait"] <= 30, r27b
+    hub27._pw_fail.clear()                              # (como si hubieran pasado los 30 s)
+    ok27 = _pw(PW27)
+    assert ok27["ok"] is True and ok27["url"].startswith("/cam?t={0}&sid=".format(tok27)), ok27
+    sid27 = ok27["url"].split("sid=")[1]
+    assert hub27.session_name(sid27) == "Android · Pixel 7"
+    with _get("https://127.0.0.1:{0}{1}".format(port27, ok27["url"]), https=True) as r:
+        body27 = r.read().decode("utf-8")
+    dev27 = re.search(r'var dev = "([^"]+)";', body27).group(1)
+    assert hub27.known_device(dev27) is not None, "debería recordarse como con el QR"
+    # el doblado de la espera y la puerta común
+    waits = []
+    for _ in range(camui.PHONECAM_PW_FREE + 6):
+        stw, w = hub27.check_password("10.0.0.9", "mal")
+        assert stw == "wrong", stw
+        waits.append(round(w))
+        n_, _u = hub27._pw_fail["10.0.0.9"]
+        hub27._pw_fail["10.0.0.9"] = (n_, 0.0)        # (como si ya hubiera esperado)
+    assert waits == [0, 0, 0, 0, 30, 60, 120, 240, 480, 900, 900], waits
+    hub27._pw_fail.clear()
+    hub27._pw_global.clear()
+    for k in range(camui.PHONECAM_PW_GLOBAL_MAX):
+        assert hub27.check_password("10.0.1.{0}".format(k), "mal")[0] == "wrong"
+    stg, wg = hub27.check_password("10.0.2.1", PW27)
+    assert stg == "wait" and wg > 500, (stg, wg)
+    hub27._pw_global.clear()
+    assert hub27.check_password("10.0.2.1", PW27)[0] == "ok"
+    # la propia página: el botón, y la contraseña por el cuerpo (no en la dirección)
+    with _get("https://127.0.0.1:{0}/movil".format(port27), https=True) as r:
+        add27 = r.read().decode("utf-8")
+    assert 'id="pwbtn"' in add27 and "Usar contrase" in add27 and 'fetch("/add/password"' in add27
+    assert "body: JSON.stringify({pass: pw.value" in add27 and "?pass=" not in add27
+    assert not any(PW27 in l or "pato azul" in l.lower() for l in grab27.lines), \
+        [l for l in grab27.lines if "pato" in l.lower()]
+    assert any("contraseña incorrecta desde 127.0.0.1" in l for l in grab27.lines)
+    assert any("entra con la contraseña" in l for l in grab27.lines)
+finally:
+    hub27.stop()
+    camui.log.removeHandler(grab27)
+print("27) contraseña en «/add»: sin poner, «nopass»; 5 fallos → espera de 30 s (y ni la buena "
+      "entra), que se dobla; 20 fallos entre todos la cierran; bien → página de captura y móvil "
+      "recordado; por el cuerpo, nunca en la dirección ni en camui.log OK")
+
 import glob  # noqa: E402
 for f in list(_phonecam_pem_files) + glob.glob(os.path.join(HERE, "_unit_phonecam_devices*.json")):
     if os.path.exists(f):

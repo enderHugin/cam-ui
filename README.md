@@ -73,7 +73,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   además, instalar una vez el certificado de cam-ui (botón «Instalar certificado» en esa misma
   pestaña, con su propio QR, abriendo esa página en Safari: Chrome y los demás navegadores de
   iPhone/iPad solo lo descargan como un archivo) — sin eso, Safari no deja usar la cámara ahí en
-  absoluto; en Android no hace falta. De momento solo vídeo, sin el sonido del móvil. Si ya tienes abierta la
+  absoluto; en Android no hace falta. En vez del QR también vale una contraseña, si se pone una
+  en Salida → Cámara del móvil: botón «🔑 Usar contraseña» en esa misma página del móvil. De
+  momento solo vídeo, sin el sonido del móvil. Si ya tienes abierta la
   página de «En la red» (puerto
   distinto, sin certificado) en el móvil, ahí también hay un botón «Añadir cámara del móvil» que
   lleva directo a esa misma dirección `/add`, sin tener que teclear ni recordar el otro puerto.

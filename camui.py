@@ -46,6 +46,7 @@ import ssl
 import math
 import time
 import secrets
+import hmac
 import argparse
 import queue
 import socket
@@ -83,7 +84,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 45                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 46                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -3443,6 +3444,16 @@ PHONECAM_SLOW_FPS = 10                 # por debajo, la página del móvil avisa
 PHONECAM_AUTO_LOW_FPS = 14             # «Auto»: por debajo, baja un escalón de resolución
 PHONECAM_KEEPALIVE_S = 20              # una conexión del móvil sin usar se cierra tras esto
 PHONECAM_SESSION_MAX_AGE = 120         # sesiones así de caducadas se olvidan del todo (no acumular)
+# Contraseña (opcional, Salida → Cámara del móvil): alternativa a leer el QR en «/add». Se prueba
+# por HTTPS en el cuerpo de la petición (nunca en la dirección). Contra quien intente adivinarla
+# desde la wifi: 5 intentos fallidos libres por móvil (dirección IP); después, espera de 30 s que
+# se dobla en cada fallo (hasta 15 min); y, entre todos, más de 20 fallos en 10 min cierran la
+# puerta de la contraseña a todo el mundo hasta que pasen (el QR sigue funcionando).
+PHONECAM_PW_FREE = 5
+PHONECAM_PW_LOCK_S = 30.0
+PHONECAM_PW_LOCK_MAX = 900.0
+PHONECAM_PW_GLOBAL_MAX = 20
+PHONECAM_PW_GLOBAL_WINDOW = 600.0
 PHONECAM_PAIR_TIMEOUT = 90             # sin escanear este QR de emparejamiento en este tiempo, se retira solo
 # Dispositivos ya emparejados antes (ver PhoneCamHub.add_device/known_device y PhoneCamDevicesDialog):
 # un móvil que ya haya pasado una vez por el QR de «/add» guarda un secreto propio (distinto del
@@ -3915,6 +3926,19 @@ button:active{background:#3a3f48}
 #retry{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:82%;
      text-align:center;font-size:15px;line-height:1.5;background:#20242b;
      border:1px solid #4a4f58;border-radius:10px;padding:18px 22px}
+#pwbtn{position:absolute;left:50%;bottom:max(22px, env(safe-area-inset-bottom));
+       transform:translateX(-50%);opacity:.93;white-space:nowrap}
+#pwbox{display:none;position:absolute;left:50%;top:36%;transform:translate(-50%,-50%);
+       width:min(86%,360px);box-sizing:border-box;background:#20242b;border:1px solid #4a4f58;
+       border-radius:10px;padding:16px 18px;font-size:15px;line-height:1.4}
+#pwbox .t{font-weight:600;margin-bottom:4px}
+#pwbox .h{font-size:13px;color:#aab0ba;margin-bottom:10px}
+#pw{width:100%;box-sizing:border-box;font-size:17px;padding:10px;border-radius:7px;
+    border:1px solid #4a4f58;background:#111;color:#eee}
+#pwbox .row{margin-top:12px;display:flex;gap:10px}
+#pwmsg{margin-top:10px;font-size:14px;min-height:1.2em}
+#pwmsg.err{color:#ffd9dc}
+#pwmsg.ok{color:#bdf5c5}
 </style></head>
 <body>
 <div id="stage">
@@ -3922,6 +3946,16 @@ button:active{background:#3a3f48}
   <div id="status">Pidiendo permiso de c&aacute;mara&hellip;</div>
   <div id="retry">
     <button id="retrybtn">&#128247; Reintentar</button>
+  </div>
+  <button id="pwbtn">&#128273; Usar contrase&ntilde;a</button>
+  <div id="pwbox">
+    <div class="t">Contrase&ntilde;a de este cam-ui</div>
+    <div class="h">La que est&aacute; puesta en el PC, en Salida &rarr; C&aacute;mara del m&oacute;vil.
+      En vez de leer el QR.</div>
+    <input id="pw" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"
+           spellcheck="false" enterkeyhint="go">
+    <div class="row"><button id="pwok">Entrar</button><button id="pwcancel">Cancelar</button></div>
+    <div id="pwmsg"></div>
   </div>
 </div>
 <script>
@@ -3986,6 +4020,58 @@ __JSQR_JS_PLACEHOLDER__
   }
 
   document.getElementById("retrybtn").onclick = startCamera;
+
+  // Alternativa al QR: la contraseña puesta en el PC (Salida → Cámara del móvil). Va por HTTPS
+  // en el cuerpo de la petición, nunca en la dirección; ver PHONECAM_PW_* y «/add/password».
+  var pwbtn = document.getElementById("pwbtn"), pwbox = document.getElementById("pwbox");
+  var pw = document.getElementById("pw"), pwmsg = document.getElementById("pwmsg");
+  var pwok = document.getElementById("pwok"), pwBusy = false;
+  function pwMsg(t, cls) { pwmsg.textContent = t; pwmsg.className = cls || ""; }
+  function fmtWait(s) { s = s || 0; return s >= 90 ? Math.ceil(s / 60) + " min" : s + " s"; }
+  pwbtn.onclick = function () {
+    pwbox.style.display = "block"; pwbtn.style.display = "none"; pwMsg(""); pw.value = ""; pw.focus();
+  };
+  document.getElementById("pwcancel").onclick = function () {
+    pwbox.style.display = "none"; pwbtn.style.display = "block";
+  };
+  function sendPw() {
+    if (pwBusy) { return; }
+    if (!pw.value) { pwMsg("Escribe la contraseña.", "err"); return; }
+    pwBusy = true; pwok.disabled = true; pwMsg("Comprobando…");
+    camuiDeviceLabel(function (label) {
+      fetch("/add/password", {method: "POST", headers: {"Content-Type": "application/json"},
+                              body: JSON.stringify({pass: pw.value, label: label})})
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          pwBusy = false; pwok.disabled = false;
+          if (j && j.ok && j.url) {
+            scanning = false;
+            if (timer) { clearInterval(timer); timer = null; }
+            pwMsg("¡Correcta! Conectando…", "ok");
+            window.location.href = j.url;
+            return;
+          }
+          var e = j && j.error;
+          if (e === "nopass") {
+            pwMsg("Este cam-ui no tiene contraseña: ponla en el PC (Salida → Cámara del móvil) o lee el QR.", "err");
+          } else if (e === "wait") {
+            pwMsg("Demasiados intentos: espera " + fmtWait(j.wait) + " y vuelve a probar.", "err");
+          } else {
+            pwMsg("Contraseña incorrecta." + (j && j.wait ? " Espera " + fmtWait(j.wait) +
+                  " antes de volver a probar." : ""), "err");
+          }
+          pw.select();
+        })
+        .catch(function () {
+          pwBusy = false; pwok.disabled = false;
+          pwMsg("No se pudo comprobar: ¿sigue abierto cam-ui?", "err");
+        });
+    });
+  }
+  pwok.onclick = sendPw;
+  pw.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); sendPw(); }
+  });
 
   // Si este móvil ya se emparejó antes con este mismo cam-ui, tiene guardado su propio secreto
   // (ver _PHONECAM_HTML / PhoneCamHub.add_device) -- se intenta reconectar solo con él antes de
@@ -4162,6 +4248,39 @@ class PhoneCamHub:
         self._https_srv = None
         self._local_srv = None
         self._cert_srv = None           # HTTP normal (sin cifrar): ver _PhoneCamCertHandler
+        self.password = ""              # contraseña para añadir un móvil sin QR ("" = solo QR)
+        self._pw_lk = threading.Lock()
+        self._pw_fail = {}              # ip -> (fallos seguidos, bloqueada hasta)
+        self._pw_global = deque()       # momentos de los fallos (de cualquiera)
+
+    def check_password(self, ip, given):
+        """Contraseña de «/add» (ver PHONECAM_PW_*). Devuelve (estado, segundos): "ok",
+        "nopass" (no hay contraseña puesta en este PC), "wrong" (y cuánto tendrá que esperar
+        antes del próximo intento, 0 si aún tiene intentos libres) o "wait" (bloqueado: cuánto
+        falta). Mientras está bloqueado no se mira siquiera si la contraseña es buena."""
+        now = time.time()
+        with self._pw_lk:
+            pw = self.password or ""
+            if not pw:
+                return "nopass", 0.0
+            while self._pw_global and now - self._pw_global[0] > PHONECAM_PW_GLOBAL_WINDOW:
+                self._pw_global.popleft()
+            n, until = self._pw_fail.get(ip, (0, 0.0))
+            if until > now:
+                return "wait", until - now
+            if len(self._pw_global) >= PHONECAM_PW_GLOBAL_MAX:
+                return "wait", self._pw_global[0] + PHONECAM_PW_GLOBAL_WINDOW - now
+            ok = hmac.compare_digest(given.encode("utf-8"), pw.encode("utf-8"))
+            if ok:
+                self._pw_fail.pop(ip, None)
+                return "ok", 0.0
+            n += 1
+            wait = 0.0
+            if n >= PHONECAM_PW_FREE:
+                wait = min(PHONECAM_PW_LOCK_MAX, PHONECAM_PW_LOCK_S * 2 ** (n - PHONECAM_PW_FREE))
+            self._pw_fail[ip] = (n, now + wait)
+            self._pw_global.append(now)
+            return "wrong", wait
 
     @property
     def active(self):
@@ -4236,7 +4355,7 @@ class PhoneCamHub:
             self._sessions = {}
             self._cond.notify_all()
 
-    def new_session(self, name):
+    def new_session(self, name, ip=None):
         sid = secrets.token_urlsafe(9)
         with self._lk:
             used = {s["name"] for s in self._sessions.values()}
@@ -4245,8 +4364,17 @@ class PhoneCamHub:
                 nm = "{0} #{1}".format(name, n)
                 n += 1
             self._sessions[sid] = {"name": nm, "jpeg": None, "ts": 0.0, "gen": 0, "announced": False,
-                                   "st": _PhoneStats()}
+                                   "st": _PhoneStats(), "ip": ip}
         return sid
+
+    def drop_waiting(self, ip):
+        """Quita las sesiones de ese móvil (por su IP) que aún esperaban a que leyera el QR -- sin
+        ningún fotograma todavía --: si al final entra con la contraseña, aquella sobra, y si se
+        quedara, su nombre haría que la nueva saliera como «… #2»."""
+        with self._lk:
+            for sid in [k for k, v in self._sessions.items()
+                        if v.get("ip") == ip and not v.get("announced") and v.get("jpeg") is None]:
+                del self._sessions[sid]
 
     def feed(self, sid, data, stats="", ua="", seq=0):
         """True si se aceptó (sesión válida). La primera vez que una sesión manda un fotograma
@@ -4492,8 +4620,40 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         hub = self.server.hub
         path, _, qs = self.path.partition("?")
-        if not path.startswith("/cam/ingest/"):
+        if not path.startswith("/cam/ingest/") and path != "/add/password":
             self._drain_body()
+        if path == "/add/password":
+            # alternativa al QR (ver PHONECAM_PW_*): {"pass": ..., "label": ...} en el cuerpo
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = 0
+            if n <= 0 or n > 4096:
+                self.close_connection = True
+                self._send(400, b"", "text/plain")
+                return
+            try:
+                req = json.loads(self.rfile.read(n).decode("utf-8"))
+                given, label = str(req.get("pass", "")), str(req.get("label", ""))[:80]
+            except Exception:
+                self._send(400, b"", "text/plain")
+                return
+            ip = self.client_address[0]
+            st, wait = hub.check_password(ip, given)
+            if st == "ok":
+                hub.drop_waiting(ip)
+                sid = hub.new_session(_phonecam_device_label(self.headers.get("User-Agent"), label))
+                log.info("cámara del móvil: %s (%s) entra con la contraseña", ip, hub.session_name(sid))
+                out = {"ok": True, "url": "/cam?t={0}&sid={1}".format(hub.token, sid)}
+            else:
+                if st == "wrong":
+                    log.warning("cámara del móvil: contraseña incorrecta desde %s%s", ip,
+                                " (tendrá que esperar {0:.0f} s)".format(wait) if wait else "")
+                    time.sleep(0.5)              # que probar a lo loco cueste
+                out = {"ok": False, "error": st, "wait": int(math.ceil(wait))}
+            self._send(200, json.dumps(out).encode("utf-8"), "application/json; charset=utf-8",
+                       cache=False)
+            return
         if path == "/add/ready":
             # el móvil que está en /add ya tiene permiso de su cámara (para leer el QR, no
             # para mandar vídeo todavía): se acuña una sesión nueva y se avisa a CamApp para
@@ -4501,7 +4661,8 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
             # la URL que lleva dentro (/cam?t=...&sid=...), la misma página de captura de
             # siempre, sin nada más que hacer aquí.
             sid = hub.new_session(_phonecam_device_label(
-                self.headers.get("User-Agent"), self._parse_qs(qs).get("label", "")))
+                self.headers.get("User-Agent"), self._parse_qs(qs).get("label", "")),
+                ip=self.client_address[0])
             ips = [ip for ip in _local_ips() if ip]
             host = ips[0] if ips else socket.gethostname()
             pair_url = _https_url(host, hub.port, "/cam?t={0}&sid={1}".format(hub.token, sid))
@@ -8414,6 +8575,11 @@ class CamApp:
         pport = (self._cfg.get("phonecam") or {}).get("port") \
             if isinstance(self._cfg.get("phonecam"), dict) else None
         self.v_phonecamport = t(value=str(pport or PHONECAM_PORT_DEFAULT))
+        ppass = (self._cfg.get("phonecam") or {}).get("pass") \
+            if isinstance(self._cfg.get("phonecam"), dict) else None
+        self.v_phonecampass = t(value=ppass if isinstance(ppass, str) else "")
+        self.phonecam.password = self.v_phonecampass.get()
+        self.v_phonecampass.trace_add("write", self._on_phonecampass)
         self.v_avoff = tk.IntVar(value=int(c.get("av_offset", 0)))
         self.v_abuf = tk.IntVar(value=int(c.get("abuf", 50)))
         a = c.get("audio", {})
@@ -9048,7 +9214,8 @@ class CamApp:
                        "-- es normal (es tu propio cam-ui, no un sitio de verdad), toca «Avanzado» y "
                        "«Continuar». De momento solo vídeo, sin el sonido del móvil. Tener que ver el "
                        "QR en la pantalla del PC es lo que de verdad protege esto: nadie en la wifi "
-                       "puede añadirse sin estar delante del ordenador. Sin ningún móvil conectado no "
+                       "puede añadirse sin estar delante del ordenador (salvo con la contraseña de "
+                       "más abajo, si pones una). Sin ningún móvil conectado no "
                        "consume apenas recursos (solo escucha en el puerto, igual que «En la red»)."
                   ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         self.btn_phonecam_cert = ttk.Button(
@@ -9074,6 +9241,29 @@ class CamApp:
                        "código -- aquí se ven cuáles (tipo y última conexión), y se pueden "
                        "renombrar u «olvidar»."
                   ).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
+        pwf = ttk.Frame(pf)
+        pwf.grid(row=8, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 2))
+        ttk.Label(pwf, text="Contraseña").pack(side="left")
+        self.e_phonecampass = ttk.Entry(pwf, textvariable=self.v_phonecampass, width=22, show="•")
+        self.e_phonecampass.pack(side="left", padx=(8, 6))
+        self.e_phonecampass.bind("<Return>", self._on_phonecampass_commit)
+        self.e_phonecampass.bind("<FocusOut>", self._on_phonecampass_commit)
+        self._live.add(str(self.e_phonecampass))            # no toca nada de la grabación en marcha
+        self.v_phonecampass_show = tk.BooleanVar(value=False)
+        chk_pw = ttk.Checkbutton(
+            pwf, text="ver", variable=self.v_phonecampass_show,
+            command=lambda: self.e_phonecampass.configure(
+                show="" if self.v_phonecampass_show.get() else "•"))
+        chk_pw.pack(side="left")
+        self._live.add(str(chk_pw))
+        ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Opcional: alternativa al QR. En la página del móvil, «🔑 Usar contraseña» "
+                       "y esta misma contraseña lo añaden sin tener que leer nada en esta pantalla. "
+                       "Vacía, solo con el QR. Quien la sepa y esté en la misma wifi puede añadir "
+                       "su cámara: que no sea fácil de adivinar. Tras 5 intentos fallidos, ese "
+                       "móvil tiene que esperar (cada vez más), y si fallan muchos a la vez, la "
+                       "contraseña deja de aceptarse un rato (el QR sigue valiendo)."
+                  ).grid(row=9, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
         df = ttk.Labelframe(tab, text="Destino")
         df.pack(fill="x", **pad)
         ttk.Label(df, text="Carpeta").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -10521,7 +10711,8 @@ class CamApp:
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
         cfg["ipout"] = {"on": bool(self.ipout_on), "size": list(ip_size_value(self.v_ipsize.get())),
                         "port": self._ip_port()}
-        cfg["phonecam"] = {"port": self._phonecam_port()}   # siempre activa: no hace falta guardar "on"
+        cfg["phonecam"] = {"port": self._phonecam_port(),   # siempre activa: no hace falta guardar "on"
+                           "pass": self.v_phonecampass.get()}
         # las cámaras de móvil se añaden solas cuando el móvil se conecta de verdad (su URL
         # depende de la sesión en marcha, no sobrevive a cerrar cam-ui) -- no se guardan, para
         # no dejar entradas "Sin señal" huérfanas la próxima vez que se abra el programa.
@@ -11701,6 +11892,15 @@ class CamApp:
             else:
                 self._set_link_list(self.frm_phonecamurl, "No está activa.", [])
         self._phonecam_close_popup_qr()
+
+    def _on_phonecampass(self, *_a):
+        """La contraseña de «/add» (Salida → Cámara del móvil) vale en cuanto se escribe; se
+        guarda en config.json al salir del campo (ver _on_phonecampass_commit)."""
+        self.phonecam.password = self.v_phonecampass.get()
+
+    def _on_phonecampass_commit(self, *_a):
+        if not self._loading:
+            self.save_config()
 
     def _on_phonecamport_commit(self, *_a):
         if self._loading or not self.phonecam_on:
