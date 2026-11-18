@@ -40,7 +40,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   Cerrar la tapa o suspenderlo a mano sí lo para; a batería, en portátiles con «Modern Standby»,
   Windows solo lo respeta unos minutos.
 - Encuadre, zoom, color y formato de celda por cámara; detección y prueba de modos de captura.
-- Tres modos de ventana: normal, compacto y mini (barra con Rec/Stop), con icono en la bandeja.
+- Modos de ventana: normal, compacto, mini (barra con Rec/Stop) y pantalla completa (solo el
+  mosaico, con la vista previa al tamaño de la pantalla; botón «⛶» sobre la imagen, Esc o doble
+  clic para salir), con icono en la bandeja.
 - Botón de pánico (F12) que cierra todos los ffmpeg.
 - Cámara virtual (OBS Studio + `pyvirtualcam`) para usar el mosaico en videollamadas; solo vídeo.
 - Cámara de red: un móvil por wifi (http/rtsp, p. ej. «IP Webcam» en Android) como una cámara más;
@@ -111,7 +113,7 @@ este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también nece
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
 `tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`, `tests/ui_phonecam.py`
-(este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`, `tests/ui_netretry.py`
+(este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`, `tests/ui_netretry.py`, `tests/ui_fullscreen.py`
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 `tests/unit_hub.py` y `tests/unit_ipout.py` usan el ffmpeg del PATH; con

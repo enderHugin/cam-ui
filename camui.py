@@ -84,7 +84,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 46                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 47                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -617,10 +617,14 @@ def prev_size(W, H, max_w=880.0, max_h=560.0):
     return _even(W * s), _even(H * s)
 
 
-def fit_size(w, h, vw, vh):
+def fit_size(w, h, vw, vh, grow=False):
     """Tamaño en pantalla de un fotograma w×h dentro de una vista vw×vh. Nunca se amplía
-    (ampliar en Python y pasarle megas a Tk en cada fotograma es lo que más cuesta)."""
-    s = min(1.0, max(1, vw) / float(w), max(1, vh) / float(h))
+    (ampliar en Python y pasarle megas a Tk en cada fotograma es lo que más cuesta) -- salvo
+    con grow (pantalla completa grabando: la vista previa no se puede pedir más grande sin cortar
+    la grabación, y mejor ampliada que en un sello en mitad de la pantalla)."""
+    s = min(max(1, vw) / float(w), max(1, vh) / float(h))
+    if not grow:
+        s = min(1.0, s)
     return max(2, int(w * s)), max(2, int(h * s))
 
 
@@ -1023,7 +1027,10 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
     clock = plan.get("sync", "clock") == "clock"
     fps = int(plan["fps"])
     W, H, tiles = plan_geometry(plan)
-    pw, ph = prev_size(W, H, 640.0, 440.0) if outfile else prev_size(W, H)
+    if plan.get("pv_max"):                        # pantalla completa (ver PREVIEW_FULL_MAX)
+        pw, ph = prev_size(W, H, float(plan["pv_max"][0]), float(plan["pv_max"][1]))
+    else:
+        pw, ph = prev_size(W, H, 640.0, 440.0) if outfile else prev_size(W, H)
 
     cmd = [ffmpeg, "-hide_banner", "-y"]
     cmd += ["-loglevel", "info", "-nostats"] if preview else ["-loglevel", "warning"]
@@ -6753,8 +6760,12 @@ class AboutDialog:
 
 
 GEO_RE = re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
-MODES = ("normal", "compact", "mini")
-MODE_NAMES = {"normal": "Modo normal", "compact": "Modo compacto", "mini": "Modo mini"}
+MODES = ("normal", "compact", "mini", "fullscreen")
+MODE_NAMES = {"normal": "Modo normal", "compact": "Modo compacto", "mini": "Modo mini",
+              "fullscreen": "Pantalla completa"}
+# pantalla completa: la vista previa se pide al tamaño de la pantalla (en la ventana, hasta
+# 880×560), con este tope -- más, y ffmpeg + Tk moverían cientos de MB por segundo para nada
+PREVIEW_FULL_MAX = (2560, 1440)
 GEO_FULL = (1280, 790)                 # tamaño por defecto de la ventana normal
 GEO_COMPACT = (640, 400)               # ... y del modo compacto
 MIN_FULL = (1060, 740)
@@ -6767,7 +6778,8 @@ def read_ui_cfg(ui):
     if not isinstance(ui, dict):
         ui = {}
     if ui.get("v") == 2:
-        mode = ui.get("mode") if ui.get("mode") in MODES else "normal"
+        mode = ui.get("mode") if ui.get("mode") in MODES and ui.get("mode") != "fullscreen" \
+            else "normal"
         g = ui.get("geo") if isinstance(ui.get("geo"), dict) else {}
         return mode, {m: g.get(m) for m in MODES}
     mode = "compact" if ui.get("mode") == "mini" else "normal"
@@ -7850,6 +7862,7 @@ class CamApp:
                               if isinstance(d, dict) and d.get("spec")) if isinstance(nc, dict) else {}
         ui = self._cfg.get("ui")
         self.mode, self._geo = read_ui_cfg(ui)               # modo con el que se cerró la última vez
+        self._fs_prev = self.mode if self.mode != "fullscreen" else "normal"   # al salir de pantalla completa
         ui = ui if isinstance(ui, dict) else {}
         self._pinned = bool(ui.get("pinned", False))         # «siempre encima» (solo en compacto)
         self._tray_asked = bool(ui.get("tray_asked", False))
@@ -7949,6 +7962,8 @@ class CamApp:
         return None
 
     def _remember_geo(self):
+        if self.mode == "fullscreen":
+            return
         g = self._cur_geo()
         if g:
             self._geo[self.mode] = g
@@ -8026,7 +8041,26 @@ class CamApp:
             if mode in modes:
                 w.pack(side="right", padx=3)
         self.lbl_timer.config(width=11 if mini else 0)
-        if mini:
+        full = mode == "fullscreen"
+        self.btn_viewfs.place_forget()
+        if full:
+            # solo el mosaico: sin barra, pestañas, vúmetros ni barra de estado
+            for w in (self.bar, self.sbar, self.left, self.mrow, self.lbl_info, self.lbl_hint):
+                w.pack_forget()
+            self.main.pack_configure(padx=0, pady=0)
+            self.right.pack_configure(padx=0)
+        else:
+            if not self.bar.winfo_manager():
+                self.bar.pack(fill="x", side="top", before=self.main)
+            if not self.sbar.winfo_manager():
+                self.sbar.pack(fill="x", side="bottom", after=self.main)
+            if not self.mrow.winfo_manager():
+                self.mrow.pack(fill="x", pady=(6, 0), after=self.view)
+            if not self.lbl_info.winfo_manager():
+                self.lbl_info.pack(fill="x", pady=(4, 0), after=self.mrow)
+        if full:
+            pass
+        elif mini:
             self.main.pack_forget()
             self.status.pack_forget()
             self.bar.pack_configure(fill="both", expand=True, padx=1, pady=1)
@@ -8056,7 +8090,7 @@ class CamApp:
         self._refresh_pin()
         self._refresh_buttons()
         self.root.update_idletasks()
-        if mini:
+        if mini or full:
             self.root.minsize(1, 1)
         elif mode == "compact":    # ancho mínimo: lo que necesita la barra de botones (+ cronómetro)
             self.root.minsize(max(MIN_COMPACT[0], self.bar.winfo_reqwidth() + 90), MIN_COMPACT[1])
@@ -8078,16 +8112,99 @@ class CamApp:
         if self.editing:
             self._exit_edit()
         self._remember_geo()
+        prev = self.mode
         old = parse_geometry(self._geo.get(self.mode))
+        if mode == "fullscreen":
+            self._fs_prev = prev
         self.mode = mode
+        if prev == "fullscreen":
+            self._fullscreen(False)
         self._decor(mode == "mini")
         self._apply_mode()
-        self._restore_geo(keep_pos=(old[2], old[3]) if old else None)
+        if mode == "fullscreen":
+            self._fullscreen(True)
+        else:
+            self._restore_geo(keep_pos=(old[2], old[3]) if old else None)
         self._show()
         log.info("modo %s", mode)
+        if "fullscreen" in (mode, prev):
+            self._fs_preview_size()
         self._sync_preview()
         self._tray_update(menu=True)
         self.save_config()                       # el modo se recuerda aunque se cierre a la fuerza
+
+    def _fullscreen(self, on):
+        try:
+            self.root.attributes("-fullscreen", bool(on))
+        except tk.TclError:
+            pass
+        try:
+            self.view.config(cursor="")
+        except tk.TclError:
+            pass
+
+    def _pv_max(self):
+        """Tamaño máximo de la vista previa en pantalla completa: el de la pantalla (o el de la
+        propia vista si ya es mayor, p. ej. con varios monitores), con PREVIEW_FULL_MAX de tope."""
+        w, h = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w, h = max(w, self.view.winfo_width()), max(h, self.view.winfo_height())
+        return [min(w, PREVIEW_FULL_MAX[0]), min(h, PREVIEW_FULL_MAX[1])]
+
+    def _fs_preview_size(self):
+        """Al entrar en pantalla completa (o salir), la vista previa se vuelve a pedir a ffmpeg al
+        tamaño que toca -- si cambia y no se está grabando (eso cortaría la grabación: mientras
+        tanto se amplía al dibujarla). Con el motor nuevo, sin volver a abrir las cámaras."""
+        if not self.previewing or self.recording:
+            return
+        m = self.eng.meta or {}
+        W, H = m.get("W"), m.get("H")
+        if not W or not H:
+            return
+        want = (prev_size(W, H, *map(float, self._pv_max())) if self.mode == "fullscreen"
+                else prev_size(W, H))
+        if tuple(want) != (m.get("pw"), m.get("ph")):
+            log.info("vista previa %sx%s -> %sx%s (%s)", m.get("pw"), m.get("ph"), want[0], want[1],
+                     self.mode)
+            self._restart_preview()
+
+    def toggle_fullscreen(self):
+        if self.mode == "fullscreen":
+            self.set_mode(self._fs_prev if self._fs_prev in MODES and
+                          self._fs_prev != "fullscreen" else "normal")
+        else:
+            self.set_mode("fullscreen")
+
+    def _fs_hint(self, _e=None):
+        """Botón sobre la imagen del mosaico: «⛶ Pantalla completa» (en la ventana) o «✕ Salir de
+        pantalla completa» (en ella). Aparece al mover el ratón por encima y se esconde solo a
+        los 2,5 s; en pantalla completa, con él se esconde también el puntero."""
+        if self.mode not in ("normal", "compact", "fullscreen") or self.editing:
+            return
+        b = self.btn_viewfs
+        b.config(text="✕  Salir de pantalla completa  (Esc)" if self.mode == "fullscreen"
+                 else "⛶  Pantalla completa")
+        if not b.winfo_ismapped():
+            b.place(in_=self.view, relx=1.0, x=-10, y=10, anchor="ne")
+            b.lift()
+        try:
+            self.view.config(cursor="")
+        except tk.TclError:
+            pass
+        if self._fs_hide_job is not None:
+            self.root.after_cancel(self._fs_hide_job)
+        self._fs_hide_job = self.root.after(2500, self._fs_hide)
+
+    def _fs_hide(self):
+        self._fs_hide_job = None
+        if self._fs_over_btn:
+            self._fs_hide_job = self.root.after(1000, self._fs_hide)
+            return
+        self.btn_viewfs.place_forget()
+        if self.mode == "fullscreen":
+            try:
+                self.view.config(cursor="none")
+            except tk.TclError:
+                pass
 
     def _idle_mini(self):
         """Mini sin cámara virtual ni salida en red: no hay vista previa y las cámaras quedan libres."""
@@ -8147,7 +8264,9 @@ class CamApp:
         self._show()
 
     def _on_escape(self, _e=None):
-        if self.mode == "mini":
+        if self.mode == "fullscreen":
+            self.toggle_fullscreen()
+        elif self.mode == "mini":
             self.set_mode("normal")
         else:
             self._exit_edit()
@@ -8230,7 +8349,7 @@ class CamApp:
                                     checked=lambda item, m=m: app.mode == m, radio=True)
         menu = pystray.Menu(
             pystray.MenuItem("Mostrar", post("show"), default=True, visible=False),
-            mode_item("normal"), mode_item("compact"), mode_item("mini"),
+            mode_item("normal"), mode_item("compact"), mode_item("mini"), mode_item("fullscreen"),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(lambda item: "■  Parar grabación" if app.recording else "●  Grabar",
                              post("rec")),
@@ -8813,8 +8932,16 @@ class CamApp:
         self.view.bind("<Button-4>", self._view_wheel)
         self.view.bind("<Button-5>", self._view_wheel)
         self.root.bind("<Escape>", self._on_escape)
+        self.btn_viewfs = ttk.Button(right, text="⛶  Pantalla completa",
+                                     command=self.toggle_fullscreen)
+        self._fs_hide_job, self._fs_over_btn = None, False
+        self.btn_viewfs.bind("<Enter>", lambda e: setattr(self, "_fs_over_btn", True))
+        self.btn_viewfs.bind("<Leave>", lambda e: setattr(self, "_fs_over_btn", False))
+        self.view.bind("<Motion>", self._fs_hint, add="+")
+        self.view.bind("<Enter>", self._fs_hint, add="+")
         mrow = ttk.Frame(right)
         mrow.pack(fill="x", pady=(6, 0))
+        self.mrow = mrow
         self.meter = tk.Canvas(mrow, bg=PANEL, height=38, highlightthickness=0)
         self.meter.pack(fill="x")
         self.lbl_info = ttk.Label(right, text="", style="Muted.TLabel")
@@ -8824,6 +8951,7 @@ class CamApp:
         self.lbl_hint.pack(fill="x")
         sbar = ttk.Frame(r, style="Bar.TFrame")
         sbar.pack(fill="x", side="bottom")
+        self.sbar = sbar
         self.lbl_ip_bar = ttk.Label(sbar, text="", style="Bar.TLabel", anchor="e", cursor="hand2")
         self.lbl_ip_bar.pack(side="right", ipady=3, padx=(0, 8))
         self.lbl_ip_bar.bind("<Button-1>", self._open_ip_url)
@@ -10002,7 +10130,7 @@ class CamApp:
         vw, vh = self.view.winfo_width(), self.view.winfo_height()
         if not w or not h or vw < 4 or vh < 4:
             return None
-        nw, nh = fit_size(w, h, vw, vh)
+        nw, nh = fit_size(w, h, vw, vh, grow=self.mode == "fullscreen")
         return ((vw - nw) / 2.0, (vh - nh) / 2.0, nw, nh)
 
     def _edit_window(self):
@@ -10047,7 +10175,8 @@ class CamApp:
             return
         # modo normal: marca de la cámara elegida
         m = self.eng.meta
-        if self.sel in self._run_labels and m.get("tiles") and m.get("W"):
+        if self.sel in self._run_labels and m.get("tiles") and m.get("W") and \
+                self.mode != "fullscreen":          # (en pantalla completa, solo mirar)
             i = self._run_labels.index(self.sel)
             if i < len(m["tiles"]):
                 sc = nw / float(m["W"])
@@ -10112,6 +10241,13 @@ class CamApp:
             kind = ("móvil (wifi)" if sid or reader == "móvil" else
                     "otro cam-ui" if reader == "camui" else
                     "red" if _is_net_spec(spec) else "local")
+            name = lab
+            if kind == "otro cam-ui":
+                # «cam-ui@Omen» en vez de «🌐 Omen · otro cam-ui» (como «enviando a cam-ui@…» en
+                # la página del móvil): el nombre que tiene aquí, sin el icono de la lista
+                nc = self.net_cams.get(lab) or {}
+                host = str(nc.get("name") or re.sub(r"^[^\w(]+", "", lab)).strip() or lab
+                name, kind = "cam-ui@" + host, None
             state, fps, approx = "", None, False
             if it:
                 src = it[2]
@@ -10129,7 +10265,7 @@ class CamApp:
                     state = "sin señal"
             else:
                 fps, approx = self._tile_fps(i), True
-            parts = [kind]
+            parts = [kind] if kind else []
             if state:
                 parts.append(state)
             else:
@@ -10139,7 +10275,7 @@ class CamApp:
                 sz = sizes.get(i)
                 if sz:
                     parts.append("{0}×{1}".format(sz[0], sz[1]))
-            out.append((lab, parts, bool(state)))
+            out.append((name, parts, bool(state)))
         self._tinfo = out
         return out
 
@@ -10186,6 +10322,9 @@ class CamApp:
 
     def _view_press(self, e):
         self._edit_drag = None
+        if self.mode == "fullscreen":          # solo mirar: ni elegir ni arrastrar casillas
+            self._fs_hint()
+            return
         r = self._img_rect
         if self.editing:
             cs = self.cams.get(self.editing)
@@ -10216,6 +10355,9 @@ class CamApp:
         self._edit_drag = None
 
     def _view_double(self, e):
+        if self.mode == "fullscreen":
+            self.toggle_fullscreen()            # como en los reproductores de vídeo
+            return
         if self.editing or self.recording or self.mode != "normal":
             return
         lab = self._tile_at(e.x, e.y)
@@ -10664,6 +10806,8 @@ class CamApp:
                             "pix": self.vcam.pix}
         if self.v_hub.get():
             plan["hub"] = True                 # el motor nuevo (ver CamHub)
+        if getattr(self, "mode", "") == "fullscreen":
+            plan["pv_max"] = self._pv_max()
         if self.ipout_on and self.ipsrv.active:
             # la forma real del mosaico, dentro del máximo elegido -- sin barras negras añadidas
             iw, ih = ip_fit_size(g["W"], g["H"], getattr(self.ipsrv, "box", None) or
@@ -10705,7 +10849,8 @@ class CamApp:
                "av_offset": _geti(self.v_avoff), "abuf": max(0, _geti(self.v_abuf, 50)),
                "audio": {"L": self.arow["L"].to_cfg(), "R": self.arow["R"].to_cfg()}}
         self._remember_geo()
-        cfg["ui"] = {"v": 2, "mode": self.mode, "pinned": bool(self._pinned),
+        cfg["ui"] = {"v": 2, "mode": self._fs_prev if self.mode == "fullscreen" else self.mode,
+                     "pinned": bool(self._pinned),
                      "geo": dict(self._geo), "tray_asked": bool(self._tray_asked)}
         cfg["startup"] = round(float(self.eng.startup_time), 2)     # para grabar sin vista previa
         cfg["vcam"] = {"on": bool(self.vcam_on), "size": list(vcam_size_value(self.v_vsize.get()))}
@@ -12206,7 +12351,7 @@ class CamApp:
             return
         self._last_fc, self._last_size = fc, size
         h, w = frame.shape[:2]
-        nw, nh = fit_size(w, h, size[0], size[1])
+        nw, nh = fit_size(w, h, size[0], size[1], grow=self.mode == "fullscreen")
         # BGR -> RGB sin copiar en NumPy; solo se reescala si la ventana es más pequeña
         pil = Image.frombuffer("RGB", (w, h), frame, "raw", "BGR", 0, 1)
         if (nw, nh) != (w, h):

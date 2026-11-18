@@ -1,5 +1,17 @@
 # Novedades de cam-ui
 
+## pack 47 — 2026.11.18
+- **Pantalla completa para la vista previa.** Un modo más: en el menú Modo (y en el del icono
+  de la bandeja), o con el botón «⛶ Pantalla completa» que aparece sobre la imagen del mosaico
+  al mover el ratón por encima. Solo el mosaico, ocupando toda la pantalla, y la vista previa se
+  pide a ffmpeg al tamaño de la pantalla (en la ventana, como mucho 880×560, para ahorrar). Para
+  salir: Esc, doble clic o el botón «✕ Salir de pantalla completa», que aparece al mover el
+  ratón; sin moverlo, se esconden el botón y el puntero. Si se está grabando al entrar, la
+  imagen se amplía al dibujarla (pedirla más grande cortaría la grabación). cam-ui nunca
+  arranca en pantalla completa.
+- Rótulo de la vista previa: una cámara que es otro cam-ui sale como «cam-ui@Omen» (su nombre
+  aquí), en vez de «🌐 Omen · otro cam-ui».
+
 ## pack 46 — 2026.11.18
 - **Contraseña como alternativa al QR para añadir un móvil.** En Salida → Cámara del móvil hay un
   campo «Contraseña» (oculta, con «ver» para enseñarla). En el móvil, mientras la página espera

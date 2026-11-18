@@ -118,9 +118,11 @@ try:
         return [app.view.itemcget(i, "text") for i in app.view.find_withtag("ov")
                 if app.view.type(i) == "text"]
     app.root.geometry("1100x760")
-    assert pump(lambda: any("otro cam-ui" in t and "320×240" in t and " fps" in t and "~" not in t
+    # (pack 47) «cam-ui@<nombre>» en vez de «🌐 nombre · otro cam-ui»
+    assert pump(lambda: any(t.startswith("cam-ui@Otro PC") and "320×240" in t and " fps" in t and
+                            "~" not in t and "otro cam-ui" not in t and "🌐" not in t
                             for t in overlay_texts()), 10), (overlay_texts(), app._tile_infos())
-    fps2b = re.search(r"(\d+) fps", [t for t in overlay_texts() if "otro cam-ui" in t][0])
+    fps2b = re.search(r"(\d+) fps", [t for t in overlay_texts() if "cam-ui@" in t][0])
     assert fps2b and 25 <= int(fps2b.group(1)) <= 32, overlay_texts()
     print("2b) rótulo sobre la casilla, solo en la vista previa: «{0}» OK".format(
         " / ".join(overlay_texts()).replace("\n", " | ")))
