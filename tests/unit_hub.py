@@ -284,7 +284,11 @@ def two_pc_run(ff, record_s=13.0):
         os.remove(out)
     plan = {"sync": "clock", "fps": 30, "crf": 18, "preset": "ultrafast",
             "audio": {"L": None, "R": None, "offset": 0}, "labels": labels,
-            "cams": [cam("eos"), cam("lenta"), cam("corte"), cam(url, src=None)],
+            # (la de otro PC, con su tamaño ya conocido, como la tiene guardada la aplicación tras
+            # verla una vez: desde el pack 49 una forma distinta de la prevista se ve entera con
+            # bandas negras -- antes, estirada -- hasta que la aplicación recoloca el mosaico, y
+            # aquí, sin aplicación, nadie lo recolocaría y el código de barras no se leería)
+            "cams": [cam("eos"), cam("lenta"), cam("corte"), cam(url, src=(W, H))],
             "geom": camui.layout_tiles([4 / 3.0] * 4, [4], 4 * W), "duration": record_s, "hub": True}
     t_s = time.time()
     ok, err = eng.start(plan, outfile=out)

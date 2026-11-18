@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 48                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 49                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -5101,6 +5101,30 @@ def _yuv_resize(data, sw, sh, dw, dh):
     return b"".join((y[ry][:, rx].tobytes(), u[rcy][:, rcx].tobytes(), v[rcy][:, rcx].tobytes()))
 
 
+def _yuv_fit(data, sw, sh, dw, dh):
+    """Encaja un fotograma yuv420p de sw×sh en dw×dh SIN deformarlo: a su forma, centrado y con
+    bandas negras (vecino más próximo). Para una cámara que llega con otra forma de la prevista
+    -- p. ej. otro cam-ui cuyo móvil se acaba de girar --: hasta que el mosaico se recoloca, o
+    mientras se graba (entonces el mosaico no cambia hasta parar), se ve entera y sin estirar.
+    Antes se estiraba a la casilla (_yuv_resize): «un vídeo muy alargado»."""
+    k = min(dw / float(sw), dh / float(sh))
+    nw = max(2, min(dw - dw % 2, int(round(sw * k / 2.0)) * 2))
+    nh = max(2, min(dh - dh % 2, int(round(sh * k / 2.0)) * 2))
+    ox, oy = ((dw - nw) // 4) * 2, ((dh - nh) // 4) * 2
+    y, u, v = _yuv_planes(data, sw, sh)
+    cw, ch = (dw + 1) // 2, (dh + 1) // 2
+    Y = np.full((dh, dw), 16, np.uint8)
+    U = np.full((ch, cw), 128, np.uint8)
+    V = np.full((ch, cw), 128, np.uint8)
+    Y[oy:oy + nh, ox:ox + nw] = y[np.arange(nh) * sh // nh][:, np.arange(nw) * sw // nw]
+    scw, sch = (sw + 1) // 2, (sh + 1) // 2
+    ncw, nch = nw // 2, nh // 2
+    rcy, rcx = np.arange(nch) * sch // nch, np.arange(ncw) * scw // ncw
+    U[oy // 2:oy // 2 + nch, ox // 2:ox // 2 + ncw] = u[rcy][:, rcx]
+    V[oy // 2:oy // 2 + nch, ox // 2:ox // 2 + ncw] = v[rcy][:, rcx]
+    return b"".join((Y.tobytes(), U.tobytes(), V.tobytes()))
+
+
 def _jpeg_to_yuv(data, max_side=None):
     """JPEG -> (ancho, alto, yuv420p en rango de vídeo). Se decodifica directamente a YCbCr
     (sin pasar por RGB) y, si es enorme, ya reducido por el propio decodificador (draft)."""
@@ -5743,7 +5767,12 @@ class _HubSession:
             if c[0] is data:
                 return c[1]
             try:
-                out = _yuv_resize(data, w, h, d["w"], d["h"])
+                # con la misma forma (otra resolución), a toda la casilla; con otra forma,
+                # entera y con bandas negras -- nunca estirada
+                if _same_shape((w, h), (d["w"], d["h"])):
+                    out = _yuv_resize(data, w, h, d["w"], d["h"])
+                else:
+                    out = _yuv_fit(data, w, h, d["w"], d["h"])
             except Exception:
                 return d["ph_off"]
             d["rs"] = (data, out)
@@ -8012,6 +8041,7 @@ class CamApp:
         self._drag_src = None
         self._tkimg = None
         self._slow_warned = set()
+        self._shape_warned = set()      # cambian de forma grabando: avisadas (ver _check_sources)
         self._ph_visible = True
         self._info_txt = None
         self._last_fc = -1
@@ -10908,6 +10938,10 @@ class CamApp:
                     self._set_status("⚠ «{0}» solo da {1:g} fps con este modo y frena el mosaico. "
                                      "Cámaras → Captura → «Detectar» y elige uno de 30 fps.".format(lab, f))
         changed = False
+        if getattr(self, "_shape_warned", None) is None:
+            self._shape_warned = set()
+        if not self.recording:
+            self._shape_warned.clear()
         for idx, lab in enumerate(self._run_labels):
             sz, cs = sizes.get(idx), self.cams.get(lab)
             if hub:
@@ -10922,6 +10956,15 @@ class CamApp:
                 if slot and sz != tuple(slot) and not self.recording and \
                         time.time() - self._hub_restart_t > 5.0:
                     changed = True
+                elif slot and self.recording and not _same_shape(sz, tuple(slot)) and \
+                        lab not in self._shape_warned:
+                    # grabando no se recoloca (el vídeo cambiaría de forma a mitad): se ve entera
+                    # con bandas negras (_yuv_fit) y se recoloca al parar
+                    self._shape_warned.add(lab)
+                    log.info("«%s» cambia de forma grabando: %s (casilla %s)", lab, sz, slot)
+                    self._set_status("«{0}» ha cambiado de forma ({1}×{2}): mientras se graba se ve "
+                                     "entera, con bandas negras; el mosaico se recoloca al parar."
+                                     .format(lab, sz[0], sz[1]))
                 continue
             if sz and cs is not None and cs.src != sz:
                 known_by_mode = mode_size(cs.mode.get()) is not None

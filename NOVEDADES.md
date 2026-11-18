@@ -1,5 +1,13 @@
 # Novedades de cam-ui
 
+## pack 49 — 2026.11.18
+- **Una cámara que cambia de forma ya no se ve estirada.** Caso típico: otro cam-ui encadenado
+  cuyo móvil se gira, y con él cambia la forma de todo su mosaico. Hasta que este mosaico se
+  recoloca (unos segundos) esa cámara se ve entera, con bandas negras, en vez de estirada a lo
+  ancho de su casilla (lo mismo en el otro PC con su propio móvil). **Grabando**, el mosaico no
+  se recoloca, porque el vídeo cambiaría de forma a mitad: se queda así, con un aviso, y se
+  recoloca al parar.
+
 ## pack 48 — 2026.11.18
 - **El mosaico se recoloca solo cuando una cámara de red cambia de forma**, también si no es
   otro cam-ui (IP Webcam, ESP32-CAM, la mayoría de cámaras IP por MJPEG): girar el móvil o
