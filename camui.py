@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 51                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 52                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -4356,6 +4356,245 @@ def _phonecam_pc_name():
     return "cam-ui@{0}.local".format(name) if name else "cam-ui"
 
 
+# La claqueta (ver SYNC_PATTERN): página que abre un móvil cualquiera. Destellos y pitidos van
+# atados al mismo reloj, el del sonido del propio móvil (Web Audio): cada pitido se programa a su
+# hora exacta y cada destello se dibuja cuando ese pitido de verdad sale por el altavoz
+# (getOutputTimestamp, que ya cuenta el retraso del altavoz; si no lo hay, outputLatency).
+_SYNC_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>cam-ui &middot; claqueta</title>
+<style>
+html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:system-ui,sans-serif;
+  overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+#flash{position:fixed;left:0;top:0;right:0;bottom:0;background:#fff;display:none;z-index:9}
+#ui{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box}
+h1{font-size:19px;font-weight:600;margin:0 0 18px;color:#ccc}
+#msg{font-size:17px;line-height:1.45;color:#bbb;max-width:420px;white-space:pre-line;margin:14px 0}
+#big{font-size:76px;font-weight:700;color:#555;min-height:90px}
+#big.quiet{color:#262626}
+button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:10px;padding:16px 34px;
+  font-size:21px;margin-top:10px}
+button:active{background:#3a3f48}
+</style></head><body>
+<div id="flash"></div>
+<div id="ui">
+  <h1 id="title">Claqueta</h1>
+  <div id="big"></div>
+  <div id="msg">&hellip;</div>
+  <button id="go">Empezar</button>
+</div>
+<script>
+var TOKEN = "__SYNC_TOKEN__";
+var P = __SYNC_PATTERN__;
+var HZ = __SYNC_TONE__;
+var COUNT = __SYNC_COUNT__;
+var PCNAME = __SYNC_PCNAME__;
+var ctx = null, unlocked = false, emitting = false, runSeen = 0, wake = null, closed = false;
+var flash = document.getElementById("flash"), msg = document.getElementById("msg");
+var big = document.getElementById("big"), go = document.getElementById("go");
+document.getElementById("title").textContent = "Claqueta de " + PCNAME;
+
+function say(t, b) { msg.textContent = t; big.textContent = (b === undefined) ? "" : b; }
+function show(b) { go.style.display = b ? "" : "none"; }
+function post(what, run) {
+  return fetch("/sync/" + what + "?t=" + TOKEN + "&run=" + (run || 0),
+               {method: "POST", body: "", cache: "no-store"}).catch(function () {});
+}
+function unlock() {
+  if (!ctx) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    try { ctx = new AC({latencyHint: "interactive"}); } catch (e) { ctx = new AC(); }
+  }
+  try { if (navigator.audioSession) { navigator.audioSession.type = "playback"; } } catch (e) {}
+  if (ctx.resume) { ctx.resume(); }
+  var b = ctx.createBuffer(1, 1, 22050), s = ctx.createBufferSource();
+  s.buffer = b; s.connect(ctx.destination); s.start(0);
+  unlocked = true;
+  try {
+    if (navigator.wakeLock) {
+      navigator.wakeLock.request("screen").then(function (w) { wake = w; }).catch(function () {});
+    }
+  } catch (e) {}
+}
+go.onclick = function () {
+  unlock();
+  show(false);
+  say("Preparando la grabación de prueba en el PC…");
+  post("go", 0);
+};
+// a qué hora (performance.now) se oye lo que el sonido del móvil toca a la hora ct
+function heard(ct) {
+  if (ctx.getOutputTimestamp) {
+    var ts = ctx.getOutputTimestamp();
+    if (ts && ts.performanceTime > 0 && ts.contextTime > 0) {
+      return ts.performanceTime + (ct - ts.contextTime) * 1000;
+    }
+  }
+  var lat = ctx.outputLatency || ctx.baseLatency || 0;
+  return performance.now() + (ct - ctx.currentTime + lat) * 1000;
+}
+function countdown(run) {
+  emitting = true;
+  var n = COUNT;
+  big.className = "";
+  say("Enseña esta pantalla a las cámaras.", n);
+  var iv = setInterval(function () {
+    n -= 1;
+    if (n > 0) { big.textContent = n; return; }
+    clearInterval(iv);
+    play(run);
+  }, 1000);
+}
+function play(run) {
+  var t0 = ctx.currentTime + 0.3, k;
+  for (k = 0; k < P.length; k++) {
+    var a = t0 + P[k][0], d = P[k][1];
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = HZ;
+    g.gain.setValueAtTime(0, a);
+    g.gain.linearRampToValueAtTime(0.9, a + 0.004);
+    g.gain.setValueAtTime(0.9, a + d - 0.004);
+    g.gain.linearRampToValueAtTime(0, a + d);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(a); o.stop(a + d + 0.02);
+  }
+  var end = t0 + P[P.length - 1][0] + P[P.length - 1][1];
+  post("started", run);
+  big.className = "quiet";
+  say("Enseña esta pantalla a cada cámara, unos segundos a cada una.\\nQue el micrófono del PC lo oiga.");
+  var frameMs = 16.7, last = 0;
+  function frame(now) {
+    if (last) { frameMs = 0.9 * frameMs + 0.1 * Math.min(50, now - last); }
+    last = now;
+    var shown = now + frameMs, on = false;      // lo de ahora se ve en el próximo refresco
+    for (var i = 0; i < P.length; i++) {
+      var a = heard(t0 + P[i][0]);
+      if (a > shown) { break; }
+      if (shown < a + P[i][1] * 1000) { on = true; break; }
+    }
+    flash.style.display = on ? "block" : "none";
+    var left = Math.ceil(end - ctx.currentTime);
+    big.textContent = left > 0 ? left : "";
+    if (ctx.currentTime < end + 0.3) { requestAnimationFrame(frame); return; }
+    flash.style.display = "none";
+    emitting = false;
+    big.className = "";
+    post("done", run);
+    say("Hecho. Midiendo en el PC…");
+  }
+  requestAnimationFrame(frame);
+}
+function poll() {
+  fetch("/sync/state?t=" + TOKEN + (unlocked && !emitting ? "&ready=1" : ""), {cache: "no-store"})
+    .then(function (r) {
+      if (r.status === 403) { closed = true; return null; }
+      return r.json();
+    })
+    .then(function (st) {
+      if (closed) { say("La sincronización se ha cerrado en el PC."); show(false); return; }
+      if (!st || emitting) { return; }
+      if (st.state === "grabando" && st.run !== runSeen) {
+        if (!unlocked) { say("Toca «Empezar»."); show(true); return; }
+        runSeen = st.run;
+        show(false);
+        countdown(st.run);
+      } else if (st.state === "hecho" || st.state === "error") {
+        say(st.msg || ""); go.textContent = "Otra vez"; show(true);
+      } else if (st.state === "analizando") {
+        say("Midiendo en el PC…"); show(false);
+      } else if (st.state === "preparando") {
+        say("Preparando la grabación de prueba en el PC…"); show(false);
+      } else if (st.state === "esperando") {
+        say(unlocked ? "Listo. Toca «Empezar» (aquí o en el PC)." :
+            "Sube el volumen y quita el modo silencio.\\nLuego toca «Empezar» y enseña esta " +
+            "pantalla a cada cámara."); show(true);
+      }
+    })
+    .catch(function () {})
+    .then(function () { if (!closed) { setTimeout(poll, 400); } });
+}
+poll();
+</script>
+</body></html>
+"""
+
+
+def sync_page(token, pcname=None):
+    """La página de la claqueta, lista para servir (bytes)."""
+    return (_SYNC_HTML.replace("__SYNC_TOKEN__", token)
+            .replace("__SYNC_PATTERN__", json.dumps([[t, d] for (t, d) in SYNC_PATTERN]))
+            .replace("__SYNC_TONE__", str(int(SYNC_TONE_HZ)))
+            .replace("__SYNC_COUNT__", str(int(SYNC_COUNTDOWN_S)))
+            .replace("__SYNC_PCNAME__", json.dumps(pcname or _phonecam_pc_name()))
+            .encode("utf-8"))
+
+
+class SyncBeacon:
+    """Lo que se cuentan el PC y la página de la claqueta (/sync, ver _SYNC_HTML), por el
+    servidor de «Cámara del móvil»: en qué paso va el PC (esperando, preparando, grabando,
+    analizando, hecho, error) y qué ha hecho el móvil (go: quiere empezar; started / done: empieza
+    / termina de parpadear). Sin token válido (el del QR de esta vez), nada."""
+
+    def __init__(self):
+        self._lk = threading.Lock()
+        self.token = None
+        self.state = "apagado"
+        self.run = 0
+        self.msg = ""
+        self.events = deque()
+        self.seen_t = 0.0             # la última vez que preguntó la página
+        self.ready_t = 0.0            # ... y dijo que está lista (sonido desbloqueado)
+
+    def open(self):
+        with self._lk:
+            if self.token is None:
+                self.token = secrets.token_urlsafe(9)
+            self.state, self.msg = "esperando", ""
+            self.events.clear()
+            return self.token
+
+    def close(self):
+        with self._lk:
+            self.token, self.state, self.msg = None, "apagado", ""
+            self.events.clear()
+
+    def valid(self, token):
+        with self._lk:
+            return bool(self.token) and hmac.compare_digest(str(token), self.token)
+
+    def set(self, state, msg="", new_run=False):
+        with self._lk:
+            if new_run:
+                self.run += 1
+            self.state, self.msg = state, msg
+            return self.run
+
+    def snapshot(self, ready=False):
+        with self._lk:
+            self.seen_t = time.time()
+            if ready:
+                self.ready_t = self.seen_t
+            return {"state": self.state, "run": self.run, "msg": self.msg}
+
+    def post(self, kind, run=0):
+        with self._lk:
+            self.events.append((kind, int(run or 0), time.time()))
+
+    def take(self):
+        with self._lk:
+            out = list(self.events)
+            self.events.clear()
+            return out
+
+    def phone_seen(self, secs=2.5):
+        return time.time() - self.seen_t < secs
+
+    def phone_ready(self, secs=2.5):
+        return time.time() - self.ready_t < secs
+
+
 class _PhoneStats:
     """Cómo llega un móvil (solo para camui.log, cada PHONECAM_STATS_SECONDS): fotogramas por
     segundo y el mayor hueco entre dos, tamaño y caudal, resolución, y lo que el propio móvil dice
@@ -4420,6 +4659,7 @@ class PhoneCamHub:
         self.token = None
         self.port = None
         self.viewer = None              # IpServer de «En la red» (botón «Ver lo que sale del PC»)
+        self.sync = SyncBeacon()        # la claqueta de «Sincronizar» (página /sync)
         self._https_srv = None
         self._local_srv = None
         self._cert_srv = None           # HTTP normal (sin cifrar): ver _PhoneCamCertHandler
@@ -4768,6 +5008,19 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
             # /add/ready más abajo, y el comentario junto a _PHONECAM_ADD_HTML).
             self._send(200, _PHONECAM_ADD_HTML, "text/html; charset=utf-8", cache=False)
             return
+        if path == "/sync" or path == "/sync/state":
+            # la claqueta de «Sincronizar» (ver SyncBeacon): solo con el token de su QR
+            params = self._parse_qs(qs)
+            b = getattr(hub, "sync", None)
+            if b is None or not b.valid(params.get("t", "")):
+                self._send(403, "Dirección no válida.".encode("utf-8"), "text/plain; charset=utf-8")
+                return
+            if path == "/sync":
+                self._send(200, sync_page(b.token), "text/html; charset=utf-8", cache=False)
+            else:
+                body = json.dumps(b.snapshot(ready=params.get("ready") == "1")).encode("utf-8")
+                self._send(200, body, "application/json", cache=False)
+            return
         if path != "/cam":
             self._send(404, b"", "text/plain")
             return
@@ -4806,6 +5059,19 @@ class _PhoneCamHandler(http.server.BaseHTTPRequestHandler):
         path, _, qs = self.path.partition("?")
         if not path.startswith("/cam/ingest/") and path != "/add/password":
             self._drain_body()
+        if path in ("/sync/go", "/sync/started", "/sync/done"):
+            params = self._parse_qs(qs)
+            b = getattr(hub, "sync", None)
+            if b is None or not b.valid(params.get("t", "")):
+                self._send(403, b"", "text/plain")
+                return
+            try:
+                run = int(params.get("run", "0") or 0)
+            except ValueError:
+                run = 0
+            b.post(path[len("/sync/"):], run)
+            self._send(200, b'{"ok":true}', "application/json", cache=False)
+            return
         if path == "/add/password":
             # alternativa al QR (ver PHONECAM_PW_*): {"pass": ..., "label": ...} en el cuerpo
             try:
@@ -5287,6 +5553,420 @@ def concat_recordings(parts, dst, ffmpeg=None):
             except Exception:
                 pass
     return ok, (r.stderr or "")[-300:]
+
+
+# ---- Sincronizar (pack 52): claqueta automática ----
+# Cada cámara tarda lo suyo en llegar al PC (una USB poco, un móvil por wifi más, otro cam-ui
+# encadenado bastante más) y el micrófono casi nada: en la grabación, el sonido iba por delante de
+# la imagen, cada cámara por una cantidad distinta. Con «Sincronizar», un móvil cualquiera abre la
+# página /sync (servida por cam-ui) y hace de claqueta: parpadea en blanco y pita a la vez, siguiendo
+# SYNC_PATTERN, mientras se enseña a cada cámara. cam-ui graba unos segundos de prueba, busca en el
+# sonido los pitidos y en la casilla de cada cámara los destellos, y con lo que llega tarde cada una
+# ajusta su «Retardo ms» y el «Ajuste A/V» del sonido -- todas a la vez que la más lenta.
+SYNC_TONE_HZ = 2500          # el pitido: por encima de la voz y de casi todo el ruido de una sala
+SYNC_COUNTDOWN_S = 3         # el móvil cuenta 3-2-1 antes del primero
+SYNC_TAIL_S = 4.0            # tras el último se sigue grabando esto (lo que tarde la más lenta)
+SYNC_SEARCH = (-1.0, 4.0)    # (s) una cámara puede ir de 1 s antes a 4 s después del sonido
+SYNC_MIN_EVENTS = 3          # destellos vistos (o pitidos oídos) para fiarse
+SYNC_MAX_SPREAD = 0.08       # (s) desacuerdo máximo (mediana) entre los destellos de una cámara
+SYNC_LIMIT_MS = 2000         # lo más que se pone en «Retardo ms» y en «Ajuste A/V»
+SYNC_START_TIMEOUT_S = 25.0  # grabando la prueba, si el móvil no empieza en este tiempo: se cancela
+
+
+def sync_pattern(n=24, seed=1121):
+    """[(instante, duración)] (s) de los destellos/pitidos de la claqueta. Separaciones y
+    duraciones irregulares (0,2 / 0,3 / 0,4 s), para que tres o cuatro seguidos no se confundan
+    con otros -- así vale que cada cámara vea solo unos pocos (mientras se le enseña el móvil) y
+    que el micrófono oiga otros. Siempre el mismo (la página del móvil lleva esta misma lista)."""
+    import random
+    rnd = random.Random(seed)
+    t, out, last = 0.0, [], None
+    for _ in range(n):
+        d = rnd.choice([x for x in (0.2, 0.3, 0.4) if x != last])
+        out.append((round(t, 3), d))
+        last = d
+        t += d + 0.55 + rnd.random() * 0.6
+    return out
+
+
+SYNC_PATTERN = sync_pattern()
+SYNC_PATTERN_END = SYNC_PATTERN[-1][0] + SYNC_PATTERN[-1][1]   # (s) lo que dura
+
+
+def _sync_run_ffmpeg(cmd, on_chunk=None, chunk=0, timeout=300):
+    """ffmpeg con la salida cruda por stdout (a trozos de «chunk» bytes a on_chunk, o entera) y
+    lo que cuenta por stderr (showinfo) en un archivo aparte -- sin atascarse con ninguno de los
+    dos. Devuelve (bytes de stdout o None, texto de stderr)."""
+    errf = tempfile.TemporaryFile()
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf, stdin=subprocess.DEVNULL,
+                             creationflags=CREATE_NO_WINDOW)
+        out = []
+        t_end = time.time() + timeout
+        try:
+            while True:
+                if time.time() > t_end:
+                    p.kill()
+                    break
+                if on_chunk is not None:
+                    b = p.stdout.read(chunk)
+                    if len(b) < chunk:
+                        break
+                    on_chunk(b)
+                else:
+                    b = p.stdout.read(1 << 20)
+                    if not b:
+                        break
+                    out.append(b)
+        finally:
+            p.stdout.close()
+            p.wait(30)
+        errf.seek(0)
+        err = errf.read().decode("utf-8", "replace")
+        return (None if on_chunk is not None else b"".join(out)), err
+    finally:
+        errf.close()
+
+
+_SHOWINFO_PTS_RE = re.compile(r"\bn:\s*\d+\s+pts:\s*-?\d+\s+pts_time:\s*(-?[0-9.]+)")
+
+
+def sync_read_audio(path, ffmpeg=None, sr=16000):
+    """(hora del primer instante, muestras mono float32 a sr) del sonido de una grabación, con
+    las horas de la propia grabación (-copyts: así casan con las del vídeo); (None, None) si no
+    tiene sonido."""
+    cmd = [ffmpeg or FFMPEG, "-hide_banner", "-nostdin", "-copyts", "-i", path, "-map", "0:a:0",
+           "-af", "ashowinfo,aresample={0},aformat=sample_fmts=flt:channel_layouts=mono".format(sr),
+           "-f", "f32le", "-"]
+    try:
+        raw, err = _sync_run_ffmpeg(cmd)
+    except Exception as e:
+        log.error("sincronizar: no se pudo leer el sonido: %r", e)
+        return None, None
+    m = _SHOWINFO_PTS_RE.search(err or "")
+    if not raw or m is None:
+        return None, None
+    x = np.frombuffer(raw[:len(raw) // 4 * 4], dtype="<f4").astype(np.float32)
+    return float(m.group(1)), x
+
+
+def sync_read_video(path, tiles, W, H, ffmpeg=None, cell=8, max_w=960):
+    """(horas de cada fotograma, [por casilla: brillo medio de cada cuadradito, fotogramas ×
+    cuadraditos]) de una grabación del mosaico. Se lee reducida (como mucho max_w de ancho) y en
+    gris, fotograma a fotograma, sin guardarla entera."""
+    s = max(1, int(math.ceil(W / float(max_w))))
+    w2, h2 = (W // s) - (W // s) % 2, (H // s) - (H // s) % 2
+    boxes = []
+    for (x, y, w, h) in tiles:
+        x0, y0 = int(x // s), int(y // s)
+        cw, ch = max(1, int(w // s) // cell), max(1, int(h // s) // cell)
+        x0, y0 = min(x0, w2 - cell), min(y0, h2 - cell)
+        cw, ch = max(1, min(cw, (w2 - x0) // cell)), max(1, min(ch, (h2 - y0) // cell))
+        boxes.append((x0, y0, cw, ch))
+    rows = [[] for _ in boxes]
+
+    def one(b):
+        f = np.frombuffer(b, dtype=np.uint8).reshape(h2, w2)
+        for i, (x0, y0, cw, ch) in enumerate(boxes):
+            r = f[y0:y0 + ch * cell, x0:x0 + cw * cell].reshape(ch, cell, cw, cell)
+            rows[i].append(r.mean(axis=(1, 3), dtype=np.float32))
+
+    cmd = [ffmpeg or FFMPEG, "-hide_banner", "-nostdin", "-copyts", "-i", path, "-map", "0:v:0",
+           "-vf", "scale={0}:{1}:flags=area,format=gray,showinfo".format(w2, h2),
+           "-f", "rawvideo", "-"]
+    _raw, err = _sync_run_ffmpeg(cmd, one, w2 * h2)
+    times = [float(t) for t in _SHOWINFO_PTS_RE.findall(err or "")]
+    n = min(len(times), len(rows[0]) if rows else 0)
+    return (np.array(times[:n], dtype=np.float64),
+            [np.array(r[:n], dtype=np.float32).reshape((n, ch, cw))
+             for r, (_x0, _y0, cw, ch) in zip(rows, boxes)])
+
+
+def sync_audio_lag(t0, x, sr, pattern=None, tone=SYNC_TONE_HZ):
+    """Dónde empieza la claqueta en el sonido: (hora del primer pitido, pitidos oídos,
+    desacuerdo entre ellos en s), o None si no se oye bien. Vale que solo se oigan algunos."""
+    pattern = pattern or SYNC_PATTERN
+    if x is None or t0 is None or len(x) < sr:
+        return None
+    X = np.fft.rfft(x.astype(np.float64))
+    f = np.fft.rfftfreq(len(x), 1.0 / sr)
+    X[(f < tone - 250) | (f > tone + 250)] = 0
+    y = np.fft.irfft(X, len(x))
+    hop = max(1, sr // 1000)                         # 1 ms por casilla
+    n = len(y) // hop
+    e = (y[:n * hop] ** 2).reshape(n, hop).mean(axis=1)
+    env = np.sqrt(np.convolve(e, np.ones(5) / 5.0, "same"))
+    noise = float(np.median(env)) + 1e-12
+    T = np.round(np.asarray([p[0] for p in pattern]) * 1000).astype(int)
+    DD = np.round(np.asarray([p[1] for p in pattern]) * 1000).astype(int)
+    lags = np.arange(130, n - T[-1] - DD[-1] - 131)
+    if len(lags) < 1:
+        return None
+    cs = np.concatenate([[0.0], np.cumsum(env)])
+
+    def wm(a, b):
+        return (cs[b] - cs[a]) / np.maximum(1, b - a).astype(np.float64)
+    S = np.empty((len(lags), len(T)))
+    for k, (tk, D) in enumerate(zip(T, DD)):
+        on = wm(lags + tk + 15, lags + tk + D - 10)
+        pre = wm(lags + tk - 120, lags + tk - 20)
+        post = wm(lags + tk + D + 25, lags + tk + D + 125)
+        S[:, k] = (on - np.maximum(pre, post)) / noise
+    score = np.clip(S - 4.0, 0, 30).sum(axis=1)
+    j = int(np.argmax(score))
+    lag = int(lags[j])
+    # eso dice más o menos dónde (un pitido fuerte «encaja» de sobra aunque se corra un poco):
+    # al milisegundo, donde mejor coinciden los bordes, al empezar y al acabar cada pitido
+    good = [k for k in range(len(T)) if S[j, k] >= 6.0]
+    fine = np.arange(max(130, lag - 250), min(n - T[-1] - DD[-1] - 131, lag + 251))
+    if good and len(fine):
+        E = np.zeros(len(fine))
+        for k in good:
+            tk, D = T[k], DD[k]
+            E += (wm(fine + tk + 2, fine + tk + 12) - wm(fine + tk - 12, fine + tk - 2) +
+                  wm(fine + tk + D - 12, fine + tk + D - 2) - wm(fine + tk + D + 2, fine + tk + D + 12))
+        lag = int(fine[int(np.argmax(E))])
+        j = int(np.clip(lag - lags[0], 0, len(lags) - 1))
+    ons = []
+    for k, (tk, D) in enumerate(zip(T, DD)):
+        if S[j, k] < 6.0:
+            continue
+        a, b = lag + tk - 40, lag + tk + 40
+        pre = wm(np.array([lag + tk - 120]), np.array([lag + tk - 20]))[0]
+        on = wm(np.array([lag + tk + 15]), np.array([lag + tk + D - 10]))[0]
+        mid = 0.5 * (pre + on)
+        seg = env[a:b]
+        idx = np.nonzero(seg >= mid)[0]
+        if len(idx):
+            ons.append((a + int(idx[0])) - tk)
+    if len(ons) < SYNC_MIN_EVENTS:
+        return None
+    med = float(np.median(ons))
+    spread = float(np.median(np.abs(np.asarray(ons) - med))) / 1000.0
+    if spread > 0.02:
+        return None
+    return t0 + med / 1000.0, len(ons), spread
+
+
+def _sync_frame_period(flat, dt):
+    """Cada cuánto trae de verdad una imagen nueva esta casilla (s): en el mosaico van todas a
+    los mismos fps, pero una cámara más lenta se repite (un móvil a 15 fps: cada imagen, dos
+    fotogramas seguidos). Entre dt y 0,1 s."""
+    if len(flat) < 20:
+        return dt
+    d = np.abs(np.diff(flat, axis=0)).mean(axis=1)
+    hi = float(np.percentile(d, 90))
+    if hi <= 0:
+        return dt
+    new = int(np.count_nonzero(d > 0.25 * hi)) + 1
+    return float(min(0.1, max(dt, dt * len(flat) / float(new))))
+
+
+def _rolling_min(x, w):
+    """Mínimo de cada columna en una ventana centrada de w filas (w impar), sin bucles largos."""
+    n = x.shape[0]
+    h = w // 2
+    pad = np.concatenate([np.repeat(x[:1], h, axis=0), x, np.repeat(x[-1:], h, axis=0)])
+    out, span, m = None, 1, pad
+    levels = {1: pad}
+    while span * 2 <= w:                        # mínimos de 2, 4, 8... filas seguidas
+        m = np.minimum(m[:-span], m[span:])
+        span *= 2
+        levels[span] = m
+    rest = w - span
+    out = levels[span][:n]
+    if rest > 0:
+        out = np.minimum(out, levels[span][rest:rest + n])
+    return out
+
+
+def sync_flashes(times, cells, delta=35.0):
+    """Destellos vistos en una casilla: [(empieza, dura, contraste)] (s, s, brillo). Un destello:
+    un trozo de imagen que se enciende bastante por encima de lo que había (el mínimo de ±0,6 s)
+    entre 0,12 y 0,55 s y vuelve a apagarse. Las horas, finas: el primer y el último fotograma
+    lo recogen a medias (lo encendido que se ven dice qué parte de su intervalo)."""
+    N = cells.shape[0]
+    if N < 10:
+        return []
+    flat = cells.reshape(N, -1).astype(np.float32)
+    dt = float(np.median(np.diff(times)))
+    w = max(3, int(round(1.2 / dt)) | 1)
+    base = _rolling_min(flat, w)
+    lit = (flat - base) > delta
+    rise = lit[1:] & ~lit[:-1]                     # fotograma i+1 se enciende
+    gw = cells.shape[2] if cells.ndim == 3 else 1
+    found = []
+    for i, c in zip(*np.nonzero(rise)):
+        s = i + 1
+        e = s
+        while e + 1 < N and lit[e + 1, c]:
+            e += 1
+        dur_f = (e - s + 1) * dt
+        if dur_f < 0.1 or dur_f > 0.6 or e + 1 >= N:
+            continue
+        b = flat[:, c]
+        bs = base[s, c]
+        body = b[s:e + 1]
+        plat = float(np.median(body[1:-1])) if len(body) > 2 else float(body.max())
+        span = plat - bs
+        if span <= delta:
+            continue
+        phi = min(1.0, max(0.0, (b[s] - bs) / span))
+        psi = min(1.0, max(0.0, (b[e + 1] - bs) / span))
+        t_on = times[s] - phi * (times[s] - times[s - 1])
+        t_off = times[e] + psi * (times[e + 1] - times[e])
+        cy, cx = divmod(int(c), gw)
+        found.append((float(t_on), float(t_off - t_on), span, cy, cx))
+    found.sort()
+
+    def near(a, b, r):
+        return abs(a[3] - b[3]) <= r and abs(a[4] - b[4]) <= r
+    out = []                                       # el mismo destello en varios cuadraditos
+    for f in found:
+        merged = False
+        for j in range(len(out) - 1, -1, -1):
+            g = out[j]
+            if f[0] - g[0] >= 1.5 * dt:
+                break
+            if abs(f[1] - g[1]) < 2 * dt and near(f, g, 6):
+                if f[2] > g[2]:
+                    out[j] = f
+                merged = True
+                break
+        if not merged:
+            out.append(f)
+    # un destello de la claqueta va solo (en su sitio no se enciende nada más en ±0,2 s, aparte
+    # de él mismo); algo que se mueve por la imagen enciende un cuadradito tras otro, al lado,
+    # en fotogramas seguidos: eso no cuenta
+    keep = []
+    for i, f in enumerate(out):
+        busy = False
+        for j in range(i - 1, -1, -1):
+            if f[0] - out[j][0] > 0.2:
+                break
+            if f[0] - out[j][0] >= 1.5 * dt and near(f, out[j], 4):
+                busy = True
+                break
+        for j in range(i + 1, len(out)):
+            if busy or out[j][0] - f[0] > 0.2:
+                break
+            if out[j][0] - f[0] >= 1.5 * dt and near(f, out[j], 4):
+                busy = True
+        if not busy:
+            keep.append(f[:3])
+    return keep
+
+
+def sync_video_lag(times, cells, lo, hi, pattern=None):
+    """Dónde empieza la claqueta en una casilla del vídeo (entre lo y hi): (hora del primer
+    destello, destellos vistos, desacuerdo en s), o None si no se ve bien. cells: brillo de cada
+    cuadradito (fotogramas × filas × columnas). El móvil puede estar en cualquier sitio de la
+    imagen, moverse, y verse solo un rato: se buscan destellos (sync_flashes) y se ve en qué
+    momento de la claqueta encajan más -- cada uno con su duración (0,2 / 0,3 / 0,4 s)."""
+    pattern = pattern or SYNC_PATTERN
+    if cells is None or len(times) < 10 or cells.shape[0] != len(times) or hi <= lo:
+        return None
+    dt = float(np.median(np.diff(times)))
+    if not dt > 0:
+        return None
+    per = _sync_frame_period(cells.reshape(len(times), -1), dt)
+    fl = sync_flashes(times, cells)
+    if len(fl) < SYNC_MIN_EVENTS:
+        return None
+    tol_d = 0.06 + per / 2.0
+    tol_t = max(0.04, 0.6 * per + 0.01)
+    cand = []                                      # (desfase, destello, n.º en la claqueta)
+    for i, (t, d, _c) in enumerate(fl):
+        for k, (tk, dk) in enumerate(pattern):
+            L = t - tk
+            if lo <= L <= hi and abs(d - dk) <= tol_d:
+                cand.append((L, i, k))
+    if not cand:
+        return None
+    Ls = np.array([c[0] for c in cand])
+
+    def votes(L0):
+        """cuántos de la claqueta encajan con desfase L0 (cada uno una vez), y cuáles."""
+        best = {}
+        for (L, i, k) in cand:
+            if abs(L - L0) <= tol_t and (k not in best or abs(L - L0) < abs(best[k][0] - L0)):
+                best[k] = (L, i)
+        used, out = set(), []
+        for k, (L, i) in sorted(best.items()):
+            if i not in used:
+                used.add(i)
+                out.append((L, i, k))
+        return out
+    grid = np.arange(lo, hi, 0.01)
+    counts = np.array([np.count_nonzero(np.abs(Ls - g) <= tol_t) for g in grid])
+    order = np.argsort(-counts)
+    best_m, best_L = [], None
+    for gi in order[:12]:                          # los picos más altos, contados como es debido
+        m = votes(grid[gi])
+        if len(m) > len(best_m):
+            best_m, best_L = m, grid[gi]
+    if len(best_m) < SYNC_MIN_EVENTS:
+        return None
+    L0 = float(np.median([m[0] for m in best_m]))
+    best_m = votes(L0)
+    # otro desfase casi igual de bueno: dudoso, mejor no decir nada
+    far = [g for g in grid[order[:40]] if abs(g - L0) > 0.15]
+    second = max([len(votes(g)) for g in far] or [0])
+    if second >= max(SYNC_MIN_EVENTS, len(best_m) - 1) and second * 1.5 > len(best_m):
+        return None
+    ons = [fl[i][0] - pattern[k][0] for (_L, i, k) in best_m]
+    med = float(np.median(ons))
+    spread = float(np.median(np.abs(np.asarray(ons) - med)))
+    if spread > SYNC_MAX_SPREAD:
+        return None
+    return med, len(ons), spread
+
+
+def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, pattern=None):
+    """Mide una grabación de prueba con la claqueta: {"audio": (hora, oídos, desacuerdo) o
+    None, "cams": {etiqueta: (hora, vistos, desacuerdo) o None}}."""
+    pattern = pattern or SYNC_PATTERN
+    res = {"audio": None, "cams": {}}
+    if has_audio:
+        t0, x = sync_read_audio(path, ffmpeg)
+        res["audio"] = sync_audio_lag(t0, x, 16000, pattern)
+    times, series = sync_read_video(path, tiles, W, H, ffmpeg)
+    a = res["audio"][0] if res["audio"] else None
+    for i, lab in enumerate(labels):
+        if i >= len(series) or not len(times):
+            res["cams"][lab] = None
+            continue
+        if a is not None:
+            lo, hi = a + SYNC_SEARCH[0], a + SYNC_SEARCH[1]
+        else:
+            lo, hi = float(times[0]) - pattern[-1][0] - pattern[-1][1], float(times[-1])
+        res["cams"][lab] = sync_video_lag(times, series[i], lo, hi, pattern)
+    log.info("sincronizar: sonido %s; cámaras %s", res["audio"], res["cams"])
+    return res
+
+
+def sync_corrections(res, delays, av):
+    """Con lo medido (analyze_sync) y los ajustes con que se midió ({etiqueta: «Retardo ms»},
+    «Ajuste A/V ms»): (nuevos retardos, nuevo ajuste A/V, {etiqueta: ms que llegaba tarde}), o
+    None si no se vio ninguna. Todas a la vez que la más lenta: el sonido se retrasa lo que
+    llega tarde la más lenta y cada cámara lo que le falta para ir con ella. Sin sonido medido,
+    solo las cámaras entre sí (el sonido, como estaba con la más lenta). Una cámara que no vio la
+    claqueta sigue como estaba respecto al sonido. Al final, todo junto lo menos posible (el
+    retardo más pequeño, 0): mismo resultado con menos espera."""
+    cams = dict((l, r) for l, r in (res.get("cams") or {}).items() if r and l in delays)
+    if not cams:
+        return None
+    a = res["audio"][0] if res.get("audio") else None
+    ref = a if a is not None else max(r[0] for r in cams.values())
+    late = dict((l, (r[0] - ref) * 1000.0) for l, r in cams.items())
+    dA = max(late.values()) if a is not None else 0.0
+    new = dict((l, float(d) + (dA - late[l] if l in late else dA)) for l, d in delays.items())
+    newA = float(av) + dA
+    m = min(new.values())
+    lim = SYNC_LIMIT_MS
+    new = dict((l, int(round(max(-lim, min(lim, v - m))))) for l, v in new.items())
+    newA = int(round(max(-lim, min(lim, newA - m))))
+    return new, newA, dict((l, int(round(v))) for l, v in late.items())
 
 
 def _yuv_fit(data, sw, sh, dw, dh):
@@ -7858,6 +8538,92 @@ class PhoneCamQrDialog:
             pass
 
 
+class SyncDialog:
+    """Ventana de «Sincronizar» (ver CamApp.sync_open): el QR de la claqueta para el móvil, en qué
+    paso va, el resultado, y «Empezar» / «Deshacer» / «Cerrar»."""
+
+    def __init__(self, parent, photo, url, on_start, on_undo, on_close):
+        self.alive = True
+        self.photo = photo
+        self._on_close = on_close
+        top = self.top = tk.Toplevel(parent)
+        top.title("Sincronizar sonido y cámaras")
+        top.configure(bg=PANEL)
+        top.resizable(False, False)
+        try:
+            top.transient(parent)
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        frm = ttk.Frame(top, padding=16)
+        frm.pack(fill="both")
+        ttk.Label(frm, text="Sincronizar sonido y cámaras",
+                  font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        left = ttk.Frame(frm)
+        left.grid(row=1, column=0, sticky="n", pady=(10, 0))
+        if photo is not None:
+            ttk.Label(left, image=photo).pack()
+        lbl_url = ttk.Label(left, text=url, style="Muted.TLabel", wraplength=220,
+                            justify="left", cursor="hand2")
+        lbl_url.pack(pady=(4, 0))
+        lbl_url.bind("<Button-1>", lambda e: webbrowser.open(url))
+        ttk.Label(frm, justify="left", wraplength=330, text=(
+            "1. Abre este código con un móvil (cualquiera: no hace falta que sea una de las "
+            "cámaras). Sube su volumen y quita el modo silencio.\n\n"
+            "2. Toca «Empezar» en el móvil (o aquí, cuando ya esté abierto).\n\n"
+            "3. Cuando parpadee y pite, enséñaselo a cada cámara, unos segundos a cada una, "
+            "cerca del micrófono del PC.\n\n"
+            "cam-ui mide cuánto tarda en llegar cada cámara y ajusta solo su «Retardo» y el del "
+            "sonido. La prueba no se guarda.")).grid(row=1, column=1, sticky="nw", padx=(16, 0),
+                                                    pady=(10, 0))
+        self.lbl_state = ttk.Label(frm, text="", wraplength=560, justify="left",
+                                   font=("Segoe UI", 10, "bold"))
+        self.lbl_state.grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        self.lbl_res = ttk.Label(frm, text="", wraplength=560, justify="left")
+        self.lbl_res.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        bar = ttk.Frame(frm)
+        bar.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        self.btn_undo = ttk.Button(bar, text="Deshacer", command=on_undo, state="disabled")
+        self.btn_undo.pack(side="right", padx=(0, 6))
+        self.btn_start = ttk.Button(bar, text="Empezar", command=on_start, state="disabled",
+                                    style="Accent.TButton")
+        self.btn_start.pack(side="left")
+        try:
+            top.update_idletasks()
+            px, py = parent.winfo_rootx(), parent.winfo_rooty()
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            w, h = top.winfo_width(), top.winfo_height()
+            top.geometry("+{0}+{1}".format(px + max(0, (pw - w) // 2), py + max(0, (ph - h) // 3)))
+        except Exception:
+            pass
+
+    def update(self, state, result=None, can_start=False, can_undo=False):
+        if not self.alive:
+            return
+        try:
+            if self.lbl_state.cget("text") != state:
+                self.lbl_state.config(text=state)
+            if result is not None and self.lbl_res.cget("text") != result:
+                self.lbl_res.config(text=result)
+            self.btn_start.state(["!disabled"] if can_start else ["disabled"])
+            self.btn_undo.state(["!disabled"] if can_undo else ["disabled"])
+        except tk.TclError:
+            self.alive = False
+
+    def close(self):
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+        if self._on_close is not None:
+            self._on_close()
+
+
 class PhoneCamCertDialog:
     """Ventanita flotante con el QR (o la dirección, si falta «qrcode») para instalar en un
     iPhone/iPad el certificado de confianza de cam-ui (ver CamApp._phonecam_show_cert_dialog).
@@ -8234,6 +9000,11 @@ class CamApp:
         self._rec_canvas = None         # grabando en trozos: el tamaño de vídeo no cambia
         self._flip_t = {}               # cámara girada grabando: desde cuándo
         self._reseg_t = 0.0
+        self._sync = None               # «Sincronizar» en curso (ver sync_open)
+        self._sync_dlg = None
+        self._sync_prev = None          # (retardos, ajuste A/V) de antes, para «Deshacer»
+        self._sync_result = ""
+        self._sync_ui_t = 0.0
         self._ph_visible = True
         self._info_txt = None
         self._last_fc = -1
@@ -9266,6 +10037,7 @@ class CamApp:
         rbtn("Registro", self._open_log, {N})
         rbtn("⚠  Reiniciar", self.panic_reset, {N})
         rbtn("Diagnóstico", self._diagnose, {N})
+        self.btn_sync = rbtn("⏱  Sincronizar", self.sync_open, {N})
         rbtn("☕  Acerca de", self.show_about, {N})
         rbtn("🔄  Actualizaciones", self.show_updates, {N})
         # barra mini (sin marco de ventana): cerrar, restaurar (= modo normal, como Esc) y minimizar
@@ -9289,6 +10061,7 @@ class CamApp:
                                        command=self.toggle_ipout)
         self.mode_menu.add_command(label="Abrir en VLC (para enviar a Chromecast)…",
                                    command=self._open_in_vlc)
+        self.mode_menu.add_command(label="Sincronizar sonido y cámaras…", command=self.sync_open)
         self.mode_menu.add_command(label="Reiniciar cámaras (pánico)  F12", command=self.panic_reset)
         self.mode_menu.add_command(label="Icono de la bandeja…", command=lambda: self._tray_boot(True))
         self.mode_menu.add_command(label="Salir", command=self.on_close)
@@ -9632,13 +10405,14 @@ class CamApp:
         sf = ttk.Labelframe(tab, text="Sincronía audio ↔ vídeo")
         sf.pack(fill="x", **pad)
         ttk.Label(sf, text="Ajuste A/V ms").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Spinbox(sf, from_=-1000, to=1000, increment=10, width=6,
+        ttk.Spinbox(sf, from_=-SYNC_LIMIT_MS, to=SYNC_LIMIT_MS, increment=10, width=6,
                     textvariable=self.v_avoff).grid(row=0, column=1, sticky="w")
         ttk.Label(sf, style="Muted.TLabel", justify="left", wraplength=250,
-                  text="Calibra una vez: graba una palmada ante la cámara. Si en la "
-                       "reproducción el sonido llega antes que la imagen, sube el valor; "
-                       "si llega después, bájalo."
+                  text="+ = el sonido se oye más tarde. Lo pone solo «Sincronizar» (con un "
+                       "móvil que hace de claqueta), junto con el «Retardo» de cada cámara."
                   ).grid(row=0, column=2, rowspan=2, padx=8, pady=4, sticky="w")
+        ttk.Button(sf, text="⏱  Sincronizar…", command=self.sync_open).grid(
+            row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
         ttk.Label(sf, text="Búfer audio ms").grid(row=1, column=0, sticky="w", padx=6, pady=4)
         ttk.Spinbox(sf, from_=0, to=500, increment=10, width=6,
                     textvariable=self.v_abuf).grid(row=1, column=1, sticky="w")
@@ -11942,6 +12716,13 @@ class CamApp:
         cámara), cancela lo que esté en curso y vuelve a empezar."""
         if getattr(self, "_panic_on", False):
             return
+        sync_dir = None
+        if getattr(self, "_sync", None) is not None:   # la prueba de «Sincronizar»: se tira
+            sync_dir = self._sync.get("dir")
+            self._sync, self.recording = None, False
+            self._rec_parts = []
+            self._lock(False)
+            self.phonecam.sync.set("error", "Cancelado (se reiniciaron las cámaras).")
         if self.recording and not messagebox.askyesno(
                 "Reiniciar cámaras",
                 "Se está grabando. Reiniciar corta la grabación (lo grabado hasta ahora se guarda)."
@@ -11984,6 +12765,8 @@ class CamApp:
                     shown = self._finalize(rec_path, rec_final)[1]
                 except Exception:
                     log.error("pánico, finalizar:\n%s", traceback.format_exc())
+            if sync_dir:
+                shutil.rmtree(sync_dir, ignore_errors=True)
             time.sleep(RELEASE_GAP + 0.5)
             self._tray_q.append(("panic_done", (n, shown)))
         threading.Thread(target=work, daemon=True).start()
@@ -12362,7 +13145,8 @@ class CamApp:
         p = path.split("?", 1)[0]
         if p in ("/certificado", "/certificado.cer"):
             return self.phonecam.cert_port if self.phonecam.active else None
-        if p in ("/movil", "/add", "/cam") or p.startswith("/cam/"):   # ojo: /camui/clock no
+        if p in ("/movil", "/add", "/cam", "/sync") or p.startswith("/cam/") or \
+                p.startswith("/sync/"):                               # ojo: /camui/clock no
             return "https"                    # escrito sin «https://»: se redirige
         return self.ipsrv.port if self.ipsrv.active else None
 
@@ -12705,6 +13489,9 @@ class CamApp:
 
     # ------------------------------------------------------------ grabación
     def toggle_rec(self):
+        if getattr(self, "_sync", None) is not None:
+            self._set_status("Espera a que termine la sincronización (o ciérrala).")
+            return
         if self.busy:
             if self.mode == "mini":
                 self._set_status("Un momento…")
@@ -12770,7 +13557,8 @@ class CamApp:
         grabando en otro con el mosaico recolocado -- mismo tamaño de vídeo (_rec_canvas), para
         que al parar se junten sin recodificar (concat_recordings). Se pierden unas décimas."""
         m = self.eng.meta or {}
-        if not (m.get("W") and m.get("H")) or not self._rec_parts:
+        if not (m.get("W") and m.get("H")) or not self._rec_parts or \
+                getattr(self, "_sync", None) is not None:
             return
         self._rec_canvas = (int(m["W"]), int(m["H"]))
         plan = self._plan()
@@ -12863,6 +13651,276 @@ class CamApp:
         if ok:
             return True, final, ""
         return True, tmp, "MP4 no generado; el vídeo quedó en MKV"
+
+    # ------------------------------------------------------------ sincronizar (claqueta)
+    def sync_open(self):
+        """Botón «Sincronizar»: abre la ventana con el QR de la claqueta (ver SYNC_PATTERN). Un
+        móvil la abre, se le da a «Empezar» (en él o aquí), y cam-ui graba una prueba, mide y
+        ajusta solo el «Retardo ms» de cada cámara y el «Ajuste A/V» del sonido."""
+        if self._sync_dlg is not None and self._sync_dlg.alive:
+            try:
+                self._sync_dlg.top.lift()
+            except Exception:
+                pass
+            return
+        if not self.phonecam.active:
+            self._phonecam_enable(quiet=True)     # la claqueta la sirve «Cámara del móvil»
+        if not self.phonecam.active:
+            messagebox.showerror("Sincronizar", "No se pudo abrir el servidor de la página del "
+                                 "móvil (el de «Cámara del móvil», puerto {0}). Prueba con otro "
+                                 "puerto en «Ajustes».".format(self._phonecam_port()))
+            return
+        token = self.phonecam.sync.open()
+        ips = _local_ips()
+        url = _https_url(ips[0] if ips else socket.gethostname(), self.phonecam.port,
+                         "/sync?t={0}".format(token))
+        photo = self._phonecam_qr_photo(url)
+        self._sync_dlg = SyncDialog(self.root, photo, url, self._sync_begin, self._sync_undo,
+                                    self._sync_closed)
+        self._sync_result = ""
+        self._sync_ui(force=True)
+
+    def _sync_closed(self):
+        """Se cerró la ventana: se cancela una prueba en curso y la página del móvil se apaga."""
+        self._sync_dlg = None
+        s = self._sync
+        if s is not None and s.get("recording"):
+            self._sync_finish(cancel="Cancelado.")
+        self.phonecam.sync.close()
+
+    def _sync_ui(self, force=False):
+        """Pone al día la ventana (unas pocas veces por segundo, desde _tick)."""
+        dlg = self._sync_dlg
+        if dlg is None or not dlg.alive:
+            return
+        now = time.time()
+        if not force and now - self._sync_ui_t < 0.3:
+            return
+        self._sync_ui_t = now
+        b = self.phonecam.sync
+        st = b.state
+        ready = b.phone_ready()
+        if st == "preparando":
+            txt = "Preparando la grabación de prueba…"
+        elif st == "grabando":
+            s = self._sync or {}
+            txt = ("Grabando la prueba: enseña el móvil a cada cámara (no se guarda)…"
+                   if s.get("t_started") else "Grabando la prueba: el móvil cuenta 3, 2, 1…")
+        elif st == "analizando":
+            txt = "Midiendo lo que tarda cada cámara…"
+        elif st in ("hecho", "error"):
+            txt = b.msg.split("\n", 1)[0]
+        elif ready:
+            txt = "Móvil listo: toca «Empezar» (aquí o en el móvil)."
+        elif b.phone_seen():
+            txt = "Móvil conectado: toca «Empezar» en él (así puede pitar)."
+        else:
+            txt = "Esperando a que un móvil abra el código…"
+        busy = self._sync is not None
+        dlg.update(txt, self._sync_result, can_start=ready and not busy and not self.recording,
+                   can_undo=self._sync_prev is not None and not busy and not self.recording)
+
+    def _sync_tick(self):
+        b = self.phonecam.sync
+        if b.token is None and self._sync is None:
+            return
+        for kind, run, t in b.take():
+            s = self._sync
+            if kind == "go":
+                self._sync_begin()
+            elif s is not None and run == s["run"]:
+                if kind == "started":
+                    s["t_started"] = t
+                elif kind == "done":
+                    s["t_done"] = t
+        s = self._sync
+        if s is not None and s.get("recording"):
+            now = time.time()
+            if s.get("t_done") and now - s["t_done"] >= SYNC_TAIL_S:
+                self._sync_finish()
+            elif s.get("t_started") and not s.get("t_done") and \
+                    now - s["t_started"] > SYNC_PATTERN_END + SYNC_TAIL_S + 15:
+                self._sync_finish()                # el móvil no avisó del final: se mide igual
+            elif not s.get("t_started") and now - s["t_rec"] > SYNC_START_TIMEOUT_S:
+                self._sync_finish(cancel="El móvil no empezó a parpadear (¿se cerró su página?). "
+                                         "Vuelve a probar.")
+        self._sync_ui()
+
+    def _sync_begin(self):
+        """El móvil (o el botón de la ventana) dice «Empezar»: grabación de prueba, como «Grabar»
+        pero a una carpeta temporal y sin tocar nada más."""
+        b = self.phonecam.sync
+        if self._sync is not None:
+            return
+        why = None
+        if self.recording:
+            why = "El PC está grabando: para la grabación y vuelve a probar."
+        elif self.editing:
+            why = "Termina el encuadre en el PC (Esc o «Listo») y vuelve a probar."
+        elif self.busy:
+            why = "El PC estaba ocupado: vuelve a tocar «Empezar»."
+        plan = None if why else self._plan()
+        if why is None and plan is None:
+            why = "No hay cámaras en el mosaico: márcalas en el PC."
+        if why:
+            b.set("error", why)
+            self._sync_result = why
+            self._sync_ui(force=True)
+            return
+        run = b.set("preparando", new_run=True)
+        tmpdir = tempfile.mkdtemp(prefix="camui_sincronizar_")
+        outfile = os.path.join(tmpdir, "prueba.mkv")
+        aud = plan.get("audio") or {}
+        s = self._sync = {
+            "run": run, "dir": tmpdir, "file": outfile, "labels": list(plan["labels"]),
+            "delays": dict((l, _geti(self.cams[l].delay)) for l in plan["labels"]),
+            "av": _geti(self.v_avoff), "has_audio": bool(aud.get("L") or aud.get("R")),
+            "recording": False, "t_rec": 0.0, "t_started": 0.0, "t_done": 0.0}
+        self._sync_result = ""
+        warm = max(1.0, self.eng.startup_time + 0.3)
+        self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
+        self._run_plan, self._tinfo_t = plan, 0.0
+        self.previewing = False
+        self._set_status("Sincronizar: preparando la grabación de prueba…")
+        log.info("sincronizar: prueba %d con %s (sonido: %s)", run, s["labels"], s["has_audio"])
+
+        def work():
+            self.eng.stop()
+            time.sleep(0.0 if plan.get("hub") else 0.5)
+            return self._engine_start(plan, outfile=outfile, warmup=warm)
+
+        def done(res):
+            ok, err = res if isinstance(res, tuple) else (False, str(res))
+            if self._sync is not s:
+                return
+            m = self.eng.meta or {}
+            if ok and m.get("tiles") and m.get("W") and m.get("H"):
+                self.recording = True
+                self.previewing = True
+                self.rec_path = self.rec_final = outfile
+                self._rec_parts, self._rec_canvas = [outfile], None
+                self.rec_clock0 = None
+                self._last_fc = -1
+                self._lock(True)
+                s.update(recording=True, t_rec=time.time(), tiles=list(m["tiles"]),
+                         W=int(m["W"]), H=int(m["H"]))
+                b.set("grabando")
+                self._set_status("Sincronizar: enseña el móvil a cada cámara…")
+            else:
+                self._sync = None
+                shutil.rmtree(tmpdir, ignore_errors=True)
+                why = "No se pudo grabar la prueba: {0}".format((err or "")[-200:])
+                b.set("error", why)
+                self._sync_result = why
+                self._set_idle("No se pudo grabar la prueba de sincronización.")
+                self.root.after(500, lambda: self._start_preview(1))
+            self._sync_ui(force=True)
+            self._refresh_buttons()
+
+        self._bg(work, done)
+
+    def _sync_finish(self, cancel=None):
+        """Para la grabación de prueba y la mide (o la tira, si cancel)."""
+        s = self._sync
+        if s is None or not s.get("recording"):
+            return
+        s["recording"] = False
+        self.recording = False
+        self.previewing = False
+        self._rec_parts, self._rec_canvas = [], None
+        b = self.phonecam.sync
+        b.set("error" if cancel else "analizando", cancel or "")
+        self._set_status("Sincronizar: midiendo…" if not cancel else "Sincronizar: cancelado.")
+
+        def work():
+            self.eng.stop()
+            if cancel:
+                return None
+            return analyze_sync(s["file"], s["tiles"], s["W"], s["H"], s["labels"],
+                                has_audio=s["has_audio"], ffmpeg=self.eng.ffmpeg)
+
+        def done(res):
+            self._lock(False)
+            self.lbl_timer.config(text="")
+            shutil.rmtree(s["dir"], ignore_errors=True)
+            self._sync = None
+            if cancel:
+                self._sync_result = cancel
+            elif isinstance(res, Exception) or not isinstance(res, dict):
+                log.error("sincronizar: la medida falló: %r", res)
+                self._sync_result = "No se pudo medir la prueba ({0}).".format(res)
+                b.set("error", self._sync_result)
+            else:
+                self._sync_result = self._sync_apply_result(s, res)
+                b.set("hecho" if self._sync_prev is not None and s.get("applied") else "error",
+                      self._sync_result)
+            self._sync_ui(force=True)
+            self.root.after(300, lambda: self._start_preview(1))
+
+        self._bg(work, done)
+
+    def _sync_apply_result(self, s, res):
+        """Aplica lo medido (sync_corrections) y devuelve el texto del resultado."""
+        corr = sync_corrections(res, s["delays"], s["av"])
+        if corr is None:
+            return ("No se vio la claqueta en ninguna cámara: no se ha cambiado nada. Enseña la "
+                    "pantalla del móvil a cada cámara, más cerca, mientras parpadea.")
+        new, av, late = corr
+        self._sync_prev = (dict(s["delays"]), s["av"])
+        self._sync_set(new, av)
+        s["applied"] = True
+        heard = res.get("audio") is not None
+        slow = max(late, key=lambda l: late[l]) if heard else None
+        lines = []
+        if heard:
+            lines.append("Sincronizado: todo va ahora a la vez que «{0}», la que más tarda en "
+                         "llegar.".format(slow) if late[slow] > 15 else
+                         "Ya estaba sincronizado: apenas hacía falta cambiar nada.")
+        else:
+            lines.append("Las cámaras van ahora a la vez entre sí, pero el micrófono no oyó los "
+                         "pitidos: el sonido sigue como estaba. (¿Hay micrófono elegido en "
+                         "«Audio»? ¿Volumen del móvil?)")
+        for lab in s["labels"]:
+            if lab in late:
+                if heard:
+                    what = "llegaba {0} ms {1} que el sonido".format(
+                        abs(late[lab]), "más tarde" if late[lab] >= 0 else "antes")
+                else:
+                    what = "medida"
+                lines.append("• «{0}»: {1} → Retardo {2} ms".format(lab, what, new[lab]))
+            else:
+                lines.append("• «{0}»: no vio la claqueta (sigue como estaba respecto al "
+                             "sonido: Retardo {1} ms)".format(lab, new[lab]))
+        lines.append("• Sonido: Ajuste A/V {0} ms".format(av))
+        if max(new.values()) > 400:
+            lines.append("La vista previa irá unos {0} s por detrás: es lo que tarda en llegar "
+                         "la más lenta.".format(("%.1f" % (max(new.values()) / 1000.0)).replace(".", ",")))
+        log.info("sincronizar: %s", " | ".join(lines))
+        return "\n".join(lines)
+
+    def _sync_set(self, delays, av):
+        """Pone esos «Retardo ms» y ese «Ajuste A/V» (sin reiniciar la vista previa por cada uno)."""
+        self._loading = True
+        try:
+            for lab, v in delays.items():
+                if lab in self.cams:
+                    self.cams[lab].delay.set(int(v))
+            self.v_avoff.set(int(av))
+        finally:
+            self._loading = False
+        self.save_config()
+
+    def _sync_undo(self):
+        if self._sync_prev is None or self._sync is not None or self.recording:
+            return
+        delays, av = self._sync_prev
+        self._sync_prev = None
+        self._sync_set(delays, av)
+        self._sync_result = "Deshecho: los retardos y el ajuste A/V vuelven a como estaban."
+        self.phonecam.sync.set("esperando")
+        self._sync_ui(force=True)
+        if self.previewing:
+            self._restart_preview()
 
     def take_photo(self):
         frame, _ = self.eng.get_latest()
@@ -12970,6 +14028,7 @@ class CamApp:
             while self._phonecam_q:
                 name, url = self._phonecam_q.popleft()
                 self._phonecam_auto_add(name, url)
+            self._sync_tick()
             while self._phonecam_pair_q:
                 self._phonecam_show_pair_qr(self._phonecam_pair_q.popleft())
             while self._phonecam_remote_q:
@@ -13110,6 +14169,11 @@ class CamApp:
         self.lbl_timer.config(text=txt, foreground=REC_RED)
 
     def _on_died(self):
+        if getattr(self, "_sync", None) is not None and self._sync.get("recording"):
+            log.error("sincronizar: ffmpeg se detuvo grabando la prueba:\n%s", self.eng.last_errors())
+            self._sync_finish(cancel="Se cortó la grabación de prueba (¿se desconectó una "
+                                     "cámara?). Vuelve a probar.")
+            return
         was_rec, path, final = self.recording, self.rec_path, self.rec_final
         err = self.eng.last_errors()
         log.error("ffmpeg murio solo (rec=%s). Ultimas lineas:\n%s", was_rec, err)
@@ -13164,6 +14228,15 @@ class CamApp:
         messagebox.showerror("Vista previa colgada", msg)
 
     def on_close(self):
+        if getattr(self, "_sync", None) is not None:   # la prueba de «Sincronizar» no se guarda
+            if self._sync.get("recording"):
+                self.recording = self.previewing = False
+                try:
+                    self.eng.release_devices()
+                except Exception:
+                    pass
+            shutil.rmtree(self._sync.get("dir") or "", ignore_errors=True)
+            self._sync = None
         if self.recording and not messagebox.askyesno(
                 "Grabando", "Se está grabando.\n\n¿Parar la grabación, guardar el vídeo y salir?"):
             return

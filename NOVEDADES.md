@@ -1,5 +1,23 @@
 # Novedades de cam-ui
 
+## pack 52 — 2026.11.21
+- **«⏱ Sincronizar»: sonido y cámaras a la vez, con un botón.** Cada cámara tarda lo suyo en
+  llegar al PC (una USB poco, un móvil por wifi más, otro cam-ui encadenado bastante más) y el
+  micrófono casi nada, así que en la grabación el sonido iba por delante de la imagen, y cada
+  cámara por una cantidad distinta. Ahora un móvil cualquiera hace de claqueta: se abre el
+  código QR de la ventana «Sincronizar», se toca «Empezar» y, mientras parpadea en blanco y
+  pita, se enseña a cada cámara unos segundos. cam-ui graba una prueba (no se guarda), busca los
+  pitidos en el sonido y los destellos en la casilla de cada cámara, y pone solo el «Retardo» de
+  cada una y el «Ajuste A/V» del sonido para que todo vaya a la vez que la más lenta. Dice cuánto
+  llegaba tarde cada cámara, y tiene «Deshacer».
+  - Vale que cada cámara vea solo unos pocos destellos y que el micrófono oiga solo algunos
+    pitidos (cada destello tiene su duración y su separación, y no se confunden). Una cámara que
+    no lo ve se queda como estaba; si el micrófono no oye nada, se igualan solo las cámaras.
+  - El botón está arriba («⏱ Sincronizar»), en el menú «Modo» y en la pestaña «Audio».
+  - Con otro cam-ui encadenado: sincroniza primero el otro PC (sus cámaras entre sí) y luego
+    este.
+  - La vista previa va tan por detrás como la cámara más lenta: es lo que hay que esperarla.
+
 ## pack 51 — 2026.11.18
 - **Las cámaras vuelven a su sitio.** Cada combinación de cámaras recuerda cómo la dejaste: orden
   y disposición («2 + 2», «1 + 2», «Auto», por filas o columnas). Cuando esas mismas cámaras

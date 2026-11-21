@@ -22,6 +22,9 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 
 ## Funciones principales
 - Sincronía de cámaras y audio con un reloj común; vúmetros L/R.
+- «⏱ Sincronizar»: un móvil cualquiera hace de claqueta (abre el código QR, parpadea y pita);
+  se le enseña a cada cámara unos segundos y cam-ui mide lo que tarda en llegar cada una
+  respecto al sonido y pone solo el «Retardo» de cada cámara y el «Ajuste A/V». Con «Deshacer».
 - En la vista previa (solo ahí), un rótulo sobre cada cámara: nombre, cómo llega (local, red,
   otro cam-ui, móvil), fps reales y resolución.
 - Direcciones sin número de puerto cuando el 80 y el 443 de este PC están libres: «En la red» en
@@ -121,13 +124,14 @@ Probado con cámaras simuladas en Linux (Xvfb + ffmpeg). Lo que depende de hardw
 (cámaras DirectShow, bandeja, ventana mini, cámara virtual de OBS) se valida en el equipo del usuario.
 Pruebas sin hardware: `python tests/unit_modes.py`, `tests/unit_vcam.py`, `tests/unit_netcam.py`,
 `tests/unit_update.py`, `tests/unit_chain.py`, `tests/unit_hub.py`, `tests/unit_awake.py`, `tests/unit_tiles.py`, `tests/unit_logrot.py`, `tests/unit_mjpeg.py`,
-`tests/unit_segments.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
+`tests/unit_segments.py`, `tests/unit_sync.py`, `tests/geom_test.py`, `tests/unit_hls.py` (necesitan ffmpeg en el PATH,
 este último con libx264 y el muxer hls); `tests/unit_phonecam.py` también necesita ffmpeg, además
 del paquete `cryptography` (certificado HTTPS de prueba) y de `qrcode` (para comprobar el QR de
 emparejamiento de «/add»); `tests/unit_vlc.py` y
 `tests/unit_viewer_html.py` no necesitan ffmpeg. `tests/ui_netcam_edit.py`, `tests/ui_phonecam.py`
 (este último también necesita `qrcode`, por el mismo motivo), `tests/ui_hub.py`, `tests/ui_netretry.py`, `tests/ui_fullscreen.py`, `tests/ui_layout_auto.py`,
-`tests/ui_chain_reshape.py`, `tests/ui_layout_memory.py`
+`tests/ui_chain_reshape.py`, `tests/ui_layout_memory.py`, `tests/ui_sync.py`,
+`tests/ui_sync_page.py` (con Node + Playwright)
 y `tests/ui_window_layout.py` prueban diálogos y ventanas reales con Tk: en Linux hace falta un
 display (`xvfb-run -a python3 tests/ui_window_layout.py`), en Windows basta con tener Tk.
 `tests/unit_hub.py` y `tests/unit_ipout.py` usan el ffmpeg del PATH; con
