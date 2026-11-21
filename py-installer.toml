@@ -1,0 +1,46 @@
+# py-installer.toml
+# Instalador, pagina de descarga y update.json de cam-ui, montados por py-installer
+# (https://github.com/enderHugin/py-installer). Las carpetas, el entorno, los accesos y la entrada en
+# "Aplicaciones instaladas" son los mismos que los del instalador anterior: reinstalar actualiza encima.
+
+[app]
+id = "cam-ui"
+name = "cam-ui"
+entry = "camui.py"
+description = "Mosaico de camaras USB con audio L/R para grabar o usar en videollamadas"
+publisher = "cam-ui"
+os = ["windows"]            # Linux y macOS todavia no
+folder = "cam-ui"           # %LOCALAPPDATA%\cam-ui y %LOCALAPPDATA%\Programs\cam-ui, como siempre
+venv = "venv"               # el instalador anterior lo llamaba asi
+env_prefix = "CAMUI"        # CAMUI_INSTALL_DIR, CAMUI_NO_LAUNCH...
+issues_url = "https://github.com/enderHugin/cam-ui/issues"
+
+[icon]
+ico = "assets/cam-ui.ico"
+
+[deps]
+required = ["numpy", "pillow"]
+optional = [
+  { pkg = "pystray", why = "sin el no habra icono de bandeja" },
+  { pkg = "pyvirtualcam", why = "sin el no habra camara virtual" },
+  { pkg = "cryptography", why = "sin el no funcionara la camara del movil por el navegador" },
+  { pkg = "qrcode", why = "el emparejamiento de la camara del movil se vera solo como texto, sin codigo QR" },
+]
+
+[check]
+code = "import numpy, PIL, tkinter; tkinter.Tcl()"
+
+[data]
+# al desinstalar sin borrar datos, se conserva esto
+keep = ["config.json", "Capturas", "camui.log", "actualizacion.json", "backups_programa"]
+
+[site]
+windows_name = "cam-ui-instalar.cmd"   # el nombre de siempre (lo enlaza la pagina)
+
+[[extra]]
+os = "windows"
+url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+extract = ["ffmpeg.exe", "ffplay.exe"]
+to = "bin"
+label = "ffmpeg (unos 100 MB, solo la primera vez)"
+required = true

@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 53 — 2026.11.21
+- **Instalador y actualizaciones con py-installer.** El instalador de Windows y el sistema de
+  actualizaciones son ahora los comunes de [py-installer](https://github.com/enderHugin/py-installer),
+  el mismo para todos los programas del autor: un arreglo en uno llega a todos. Para ti no cambia
+  nada: misma carpeta, mismos accesos directos, misma entrada en «Aplicaciones instaladas», y las
+  mismas opciones en «Actualizaciones» (avisar al abrir, actualizar sin preguntar, vigilar sola).
+  - Esta actualización trae un archivo nuevo junto a camui.py, `pyi_update.py` (el actualizador
+    común). Se baja solo, comprobado con su huella, y desde ahora se actualiza solo con lo demás.
+  - «Volver a la anterior» sigue funcionando también con las copias que ya tenías.
+
 ## pack 52 — 2026.11.21
 - **«⏱ Sincronizar»: sonido y cámaras a la vez, con un botón.** Cada cámara tarda lo suyo en
   llegar al PC (una USB poco, un móvil por wifi más, otro cam-ui encadenado bastante más) y el

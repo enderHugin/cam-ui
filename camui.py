@@ -85,12 +85,11 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 52                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 53                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
 APP_FILE = os.path.abspath(__file__)
-UPDATE_FILES = ("camui.py",)
 # «vigilar sola, sin avisos» (casilla oculta, ver UpdateDialog): comprobación aparte de la
 # normal (update_auto_check, una vez al abrir, con su propia hora de descanso), para quien
 # quiera ver aplicarse una publicación nueva sin tener que cerrar y abrir cam-ui a mano
@@ -8024,151 +8023,107 @@ def update_set_auto_apply(on):
     update_state_save()
 
 
-def _sha256_file(p):
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def _pyi_update_module():
+    """El motor de actualizaciones es el común de py-installer (pyi_update.py, que el instalador
+    deja junto a camui.py y que se actualiza solo con el resto). Una instalación de antes de
+    py-installer no lo tiene: la primera vez se baja de la web del proyecto, comprobando su
+    huella en update.json, y se guarda junto a camui.py."""
+    try:
+        import pyi_update
+        return pyi_update
+    except ImportError:
+        pass
+    import importlib.util
+    import urllib.request
+    import ssl
+    d = os.path.dirname(APP_FILE)
+    dest = os.path.join(d, "pyi_update.py")
+    if not os.path.exists(dest):
+        def get(url, limit):
+            if not url.startswith(UPDATE_BASE):
+                raise ValueError("dirección no permitida")
+            try:
+                import certifi
+                ctx = ssl.create_default_context(cafile=certifi.where())
+            except Exception:
+                ctx = ssl.create_default_context()
+            req = urllib.request.Request(url, headers={"User-Agent": "cam-ui", "Cache-Control": "no-cache"})
+            with urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)).open(req, timeout=20) as r:
+                if not r.geturl().startswith(UPDATE_BASE):
+                    raise ValueError("redirección a otro sitio rechazada")
+                data = r.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError("la respuesta es demasiado grande")
+            return data
+        info = json.loads(get(UPDATE_BASE + "update.json?t=%d" % int(time.time()), 262144).decode("utf-8"))
+        meta = info.get("files", {}).get("pyi_update.py")
+        if not meta:
+            raise ValueError("la web todavía no publica el actualizador nuevo; inténtalo más tarde")
+        data = get(UPDATE_BASE + "pyi_update.py?v=" + str(meta["sha256"])[:12], int(meta["size"]))
+        if hashlib.sha256(data).hexdigest() != str(meta["sha256"]).lower():
+            raise ValueError("pyi_update.py: lo descargado no coincide con la huella publicada")
+        compile(data, "pyi_update.py", "exec")
+        with open(dest + ".nuevo", "wb") as f:
+            f.write(data)
+        os.replace(dest + ".nuevo", dest)
+    spec = importlib.util.spec_from_file_location("pyi_update", dest)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules["pyi_update"] = mod
+    return mod
+
+
+def _upd():
+    """Motor común (pyi_update.Updater) con los datos de cam-ui. Comparte con update_state() el
+    mismo diccionario de preferencias (actualizacion.json), así que la ventana de
+    «Actualizaciones» y el motor ven siempre lo mismo."""
+    u = _pyi_update_module().Updater(APP_FILE, pack=APP_PACK, version=APP_VERSION, base=UPDATE_BASE,
+                                     state_path=UPDATE_STATE, backups_dir=UPDATE_BACKUPS,
+                                     user_agent="cam-ui", log=log.info)
+    u._st = update_state()
+    return u
 
 
 def update_local_info():
     try:
-        sha = _sha256_file(APP_FILE)
-    except OSError:
-        sha = ""
-    return {"pack": APP_PACK, "sha256": sha, "label": APP_VERSION, "file": APP_FILE}
+        return _upd().local_info()
+    except Exception:
+        return {"pack": APP_PACK, "sha256": "", "label": APP_VERSION, "file": APP_FILE}
 
 
 def _update_get(url, limit, timeout=20):
     """Descarga una dirección de la web del proyecto (y nada más: ni siquiera si hay una
     redirección a otro sitio)."""
-    import urllib.request
-    import ssl
-    if not url.startswith(UPDATE_BASE):
-        raise ValueError("dirección no permitida")
-
-    class _Same(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            if not newurl.startswith(UPDATE_BASE):
-                raise ValueError("redirección a otro sitio rechazada")
-            return super().redirect_request(req, fp, code, msg, headers, newurl)
-    try:
-        import certifi
-        ctx = ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        ctx = ssl.create_default_context()
-    op = urllib.request.build_opener(_Same(), urllib.request.HTTPSHandler(context=ctx))
-    with op.open(urllib.request.Request(url, headers={"User-Agent": "cam-ui", "Cache-Control": "no-cache"}),
-                 timeout=timeout) as r:
-        data = r.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError("la respuesta es demasiado grande")
-    return data
+    return _upd()._get(url, limit, timeout)
 
 
 def update_check():
     """Mira la versión publicada. Devuelve {ok, state: newer|same|older|diverged, info, local}
     o {ok: False, error}."""
     try:
-        info = json.loads(_update_get(UPDATE_BASE + "update.json?t=%d" % int(time.time()),
-                                      262144).decode("utf-8"))
-        meta = info["files"]["camui.py"]
-        pack, sha, size = int(info["pack"]), str(meta["sha256"]).lower(), int(meta["size"])
-        if not re.fullmatch(r"[0-9a-f]{64}", sha) or size <= 0 or size > 12 * 1048576:
-            raise ValueError("update.json no es válido")
+        u = _upd()
     except Exception as e:
         return {"ok": False, "error": str(e) or e.__class__.__name__}
-    loc = update_local_info()
-    if pack > loc["pack"]:
-        st = "newer"
-    elif pack < loc["pack"]:
-        st = "older"
-    else:
-        st = "same" if sha == loc["sha256"] else "diverged"
-    update_state()["last_check"] = time.time()
-    update_state_save()
-    return {"ok": True, "state": st, "info": info, "local": loc}
-
-
-def _update_file(info, name):
-    if name not in UPDATE_FILES:
-        raise ValueError("archivo no permitido")
-    meta = info["files"][name]
-    # con la huella en la dirección no se sirve una copia vieja de la caché
-    data = _update_get(UPDATE_BASE + name + "?v=" + str(meta["sha256"])[:12], int(meta["size"]))
-    if len(data) != int(meta["size"]) or hashlib.sha256(data).hexdigest() != str(meta["sha256"]).lower():
-        raise ValueError("%s: lo descargado no coincide con la huella publicada (se cancela; si "
-                         "acaban de publicar, inténtalo de nuevo en unos minutos)" % name)
-    compile(data, name, "exec")           # que al menos sea Python válido antes de tocar nada
-    return data
-
-
-def _update_put(path, data):
-    tmp = path + ".nuevo"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
-
-
-def _update_bkname():
-    """Nombre libre para una copia (nunca pisa otra, aunque se hagan dos en el mismo segundo)."""
-    base = os.path.join(UPDATE_BACKUPS, "camui.pack%d.%s" % (APP_PACK, time.strftime("%Y%m%d-%H%M%S")))
-    p, i = base + ".py", 2
-    while os.path.exists(p):
-        p = "%s-%d.py" % (base, i)
-        i += 1
-    return p
+    return u.check()
 
 
 def update_apply(info):
-    """Descarga y comprueba la versión publicada, guarda una copia de la actual y la sustituye.
-    Devuelve {backup}."""
-    d = os.path.dirname(APP_FILE)
-    if not os.access(d, os.W_OK) or not os.access(APP_FILE, os.W_OK):
-        raise ValueError("No hay permiso para escribir en la carpeta del programa (%s)." % d)
-    data = _update_file(info, "camui.py")
-    m = re.search(rb"^APP_PACK\s*=\s*(\d+)", data, re.M)
-    if not m or int(m.group(1)) != int(info["pack"]):
-        raise ValueError("El archivo publicado no es el de la versión anunciada (se cancela).")
-    os.makedirs(UPDATE_BACKUPS, exist_ok=True)
-    bk = _update_bkname()
-    shutil.copyfile(APP_FILE, bk)
-    _update_put(APP_FILE, data)
-    st = update_state()
-    st.update({"last_backup": bk, "from_pack": APP_PACK, "to_pack": int(info["pack"]), "applied": time.time()})
-    update_state_save()
-    try:                                   # se conservan las 5 últimas copias
-        olds = sorted((os.path.join(UPDATE_BACKUPS, f) for f in os.listdir(UPDATE_BACKUPS)
-                       if f.startswith("camui.pack")), key=os.path.getmtime)
-        for f in olds[:-5]:
-            os.remove(f)
-    except OSError:
-        pass
-    return {"backup": bk}
+    """Descarga y comprueba la versión publicada (todos sus archivos), guarda una copia de lo
+    que cambia y lo sustituye. Devuelve {backup, files}."""
+    return _upd().apply(info)
 
 
 def update_backup_available():
-    bk = update_state().get("last_backup")
-    return bool(bk) and os.path.exists(bk) and os.path.abspath(os.path.dirname(bk)) == os.path.abspath(UPDATE_BACKUPS)
+    try:
+        return _upd().backup_available()
+    except Exception:
+        return False
 
 
 def update_rollback():
     """Vuelve a la copia guardada en la última actualización (y deja la actual como copia, por
     si quieres volver a ella)."""
-    if not update_backup_available():
-        raise ValueError("No hay una copia anterior a la que volver.")
-    st = update_state()
-    bk = st["last_backup"]
-    with open(bk, "rb") as f:
-        data = f.read()
-    compile(data, "camui.py", "exec")
-    cur = _update_bkname()
-    shutil.copyfile(APP_FILE, cur)
-    _update_put(APP_FILE, data)
-    st.update({"last_backup": cur, "applied": time.time()})
-    update_state_save()
-    return {"backup": cur}
+    return _upd().rollback()
 
 
 def update_spawn_restart(delay=3):
