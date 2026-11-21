@@ -8,7 +8,7 @@ Interfaz Tkinter + FFmpeg (DirectShow). Un único archivo: `camui.py`.
 ## Instalación rápida (Windows)
 Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no necesitas tener Python instalado
 (prepara el suyo), descarga ffmpeg y crea accesos en el menú Inicio y el escritorio. Para quitarlo, desde
-«Aplicaciones instaladas» de Windows. Fuente: [`installers/install-windows.cmd`](installers/install-windows.cmd).
+«Aplicaciones instaladas» de Windows. El instalador lo genera [py-installer](https://github.com/enderHugin/py-installer) a partir de [`py-installer.toml`](py-installer.toml).
 
 ## Requisitos (instalación a mano)
 - Windows, Python 3.10+ con Tkinter.
@@ -145,9 +145,15 @@ pack en el nombre.
 [Abre un issue](https://github.com/enderHugin/cam-ui/issues/new/choose): hay plantillas para opinión, fallo y petición de función.
 
 ## La página
-`site/` es la página (HTML estático, ES/EN). `tools/build_site.sh` la monta en `_site/` junto con los archivos
-descargables, y `.github/workflows/pages.yml` la publica en GitHub Pages en cada push a `main`
-(Settings → Pages → Source: GitHub Actions). La versión sale del archivo `VERSION`.
+`site/` es la página (HTML estático, ES/EN). [py-installer](https://github.com/enderHugin/py-installer) la monta
+en `_site/` junto con el instalador, `camui.py` y `update.json`, según [`py-installer.toml`](py-installer.toml).
+`.github/workflows/pages.yml` la publica en GitHub Pages en cada push a `main` (Settings → Pages → Source:
+GitHub Actions); en cada pull request además instala cam-ui de verdad en Windows. La versión sale del archivo
+`VERSION`.
+
+Las actualizaciones dentro del programa usan el actualizador común de py-installer (`pyi_update.py`, que el
+instalador deja junto a `camui.py`; la copia de este repo es para ejecutar desde el código fuente y los tests).
+Las instalaciones anteriores lo descargan solas la primera vez que buscan actualizaciones.
 
 ## Apoyo
 [Ko-fi](https://ko-fi.com/jaimeluisolguinmesina) · Licencia MIT.

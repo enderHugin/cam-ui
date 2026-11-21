@@ -1,9 +1,12 @@
+# pages.yml
+# Publica la pagina, el instalador y update.json con py-installer (https://github.com/enderHugin/py-installer).
 name: Publicar la página
 
 on:
   push:
     branches: [main]
-    paths: ["site/**", "installers/**", "camui.py", "VERSION", "tools/build_site.sh", ".github/workflows/pages.yml"]
+    paths: ["site/**", "assets/**", "camui.py", "VERSION", "NOVEDADES.md", "py-installer.toml", ".github/workflows/pages.yml"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -12,21 +15,77 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: enderHugin/py-installer@v1
+        with:
+          base-url: https://enderhugin.github.io/cam-ui
+      - name: Comprobaciones
+        run: |
+          test -f _site/dl/cam-ui-instalar.cmd
+          test -f _site/dl/pyi_update.py
+          python3 -c "import json; u = json.load(open('_site/dl/update.json')); assert {'camui.py', 'pyi_update.py'} <= set(u['files']) and u['pack'] > 0, u"
+          ! grep -q '__BASE_URL__\|__VERSION__' _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  instalar-windows:
+    # instala de verdad cam-ui en Windows desde el sitio recien montado (servido en local)
+    runs-on: windows-latest
+    env:
+      CAMUI_NO_LAUNCH: '1'
+      PYI_NO_PAUSE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: enderHugin/py-installer
+          ref: v1
+          path: _pyi
+      - name: Montar y servir el sitio en local
+        shell: bash
+        run: |
+          python -m pip install -q pillow
+          python _pyi/pyi.py build --app . --base http://127.0.0.1:8765 --out _site
+          (cd _site && nohup python -m http.server 8765 --bind 127.0.0.1 > ../http.log 2>&1 &)
+          for i in $(seq 1 20); do curl -fsS --max-time 2 http://127.0.0.1:8765/dl/update.json > /dev/null && exit 0; sleep 1; done; exit 1
+      - name: Instalar
+        shell: cmd
+        run: call _site\dl\cam-ui-instalar.cmd
+      - name: Comprobar
+        shell: pwsh
+        run: |
+          $prog = Join-Path $env:LOCALAPPDATA 'Programs\cam-ui'
+          foreach ($f in 'camui.py', 'pyi_update.py', 'install_info.json', 'icon.ico', 'bin\ffmpeg.exe', 'venv\Scripts\pythonw.exe') {
+            if (-not (Test-Path (Join-Path $prog $f))) { throw "falta $f" }
+          }
+          & "$prog\venv\Scripts\python.exe" -c "import numpy, PIL, tkinter; tkinter.Tcl(); import sys; sys.path.insert(0, r'$prog'); import pyi_update; print('ok')"
+          if ($LASTEXITCODE -ne 0) { throw 'no cargan las librerias' }
+          if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'cam-ui.lnk'))) { throw 'falta el acceso directo' }
+          if (-not (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\cam-ui')) { throw 'falta la entrada en Aplicaciones instaladas' }
+          'OK'
+      - name: Registro (si algo falla)
+        if: failure()
+        shell: bash
+        run: tail -n 100 "$LOCALAPPDATA/cam-ui/logs/instalacion.log" || true
+
   deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - run: bash tools/build_site.sh
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
