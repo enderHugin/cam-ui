@@ -235,10 +235,13 @@ def phone_clapper(token, out):
         req("POST", "/sync/started?t={0}&run={1}".format(token, run))
         out["started"] = True
         msgs = out["msgs"] = []
+        devs = out["devs"] = []
         while time.time() < World.epoch + 80:                      # hasta que el PC pida parar
             j = json.loads(req("GET", "/sync/state?t={0}".format(token))[1])
             if j.get("msg") and (not msgs or msgs[-1] != j["msg"]):
                 msgs.append(j["msg"])
+            if j.get("devs") and (not devs or devs[-1] != j["devs"]):
+                devs.append(j["devs"])
             if j["state"] == "terminando":
                 break
             time.sleep(0.3)
@@ -345,6 +348,30 @@ try:
     new = dict((l, int(app.cams[l].delay.get())) for l in labs)
     av1 = int(app.v_avoff.get())
     print("   resultado: " + fin["msg"].replace("\n", " | "))
+    # el mapa de aparatos en el móvil (y en la ventana): en directo, cuántas faltan (cada vez
+    # menos) y cuánto va cada una detrás de la primera; al final, lo medido respecto al sonido
+    dv = [d for d in out["devs"] if d.get("phase") == "directo"]
+    assert dv and len(dv[0]["rows"]) == 8, out["devs"][:2]
+    oks = [sum(1 for r in d["rows"] if r["st"] == "ok") for d in dv]
+    assert oks == sorted(oks) and oks[0] < 8 and oks[-1] >= 7, oks
+    last = dict((r["n"], r["ms"]) for r in dv[-1]["rows"] if r["st"] == "ok")
+    first = min(c[1] for c in CAMS if "📱 " + c[0] in last)
+    rel_err = dict((l, ms - (dict(("📱 " + c[0], c[1]) for c in CAMS)[l] - first) * 1000)
+                   for l, ms in last.items())
+    assert all(abs(e) <= 80 for e in rel_err.values()), rel_err
+    fd = fin.get("devs") or {}
+    assert fd.get("phase") == "medido" and fd.get("sound") == 0, fd
+    for r in fd["rows"]:                             # (con retardos 0 y ajuste 0 al medir:
+        if r["st"] == "ok":                          # llegaba tarde = ajuste A/V - Retardo nuevos)
+            assert abs(r["ms"] - (av1 - new[r["n"]])) <= 1, (r, av1, new[r["n"]])
+    k_ok = sum(1 for r in fd["rows"] if r["st"] == "ok")
+    assert app._sync_dlg.devs_head == "Medidas {0} de 8".format(k_ok) + \
+        ("" if k_ok == 8 else " · sin medir: {0}".format(8 - k_ok)), app._sync_dlg.devs_head
+    print("2c) el mapa (en el móvil y en la ventana): en directo «Faltan k de 8», cada vez menos "
+          "({0}), y cuánto va cada una detrás de la primera (error ≤ {1:.0f} ms); al final, «{2}» "
+          "y lo que llegaba tarde cada una respecto al sonido OK".format(
+              " → ".join(str(8 - k) for k in oks), max(abs(e) for e in rel_err.values()),
+              app._sync_dlg.devs_head))
     print("2a) en directo: «✓ lista» sobre cada casilla en cuanto se le enseña el móvil (a los " +
           ", ".join("{0:.1f}".format(marks[l] - CAMS[i][1] - SHOW[i][0]) for i, l in enumerate(labs)) +
           " s), «falta» en las demás; el móvil recibe «{0}»…; con las ocho, termina sola a los "

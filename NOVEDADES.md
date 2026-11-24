@@ -1,5 +1,29 @@
 # Novedades de cam-ui
 
+## pack 58 — 2026.11.24
+- **Imagen y sonido, igual de sincronizados en todas las grabaciones.** Con «Sincronía: Marcas del
+  dispositivo» (en «Avanzado») y el motor nuevo, el sonido empezaba a contar cuando se abría el
+  micrófono, y eso tarda unas décimas, cada vez distinto: lo que medía «Sincronizar» valía para su
+  grabación de prueba, pero en la siguiente el desfase ya era otro. Ahora, con el motor nuevo, el
+  sonido va siempre por el reloj del PC, igual que las cámaras, esté como esté esa opción.
+- **Si tenías «Marcas del dispositivo», pulsa «Sincronizar» una vez.** El «Ajuste A/V» que dejó la
+  última sincronización se midió con la cuenta de antes y ahora sobraría (en tu caso, más de un
+  segundo), así que se pone a 0 y abajo se avisa hasta que vuelvas a sincronizar. Los retardos de
+  cada cámara se conservan.
+- **Cuántas faltan, y cómo van entre sí, a la vista.** En la ventana de «Sincronizar» y en el
+  móvil: «Faltan 2 de 5» mientras parpadea (en el móvil, apagadito para no estorbar), y un dibujo
+  con una línea por cámara: ✓ / falta, y un punto con lo que va cada una detrás de la primera.
+  Al acabar, «Medidas 4 de 5» y lo que llegaba tarde cada una respecto al sonido (y cuál no se vio).
+- **Una cámara que sale ✓ ya no se queda sin ajustar.** Antes podía salir «✓ lista» en directo y
+  luego, al medir la grabación entera, descartarse por poco («se parece poco», «sus trozos no
+  coinciden»). Ahora se la busca justo donde se la vio en directo, y sale. También se miran más
+  posibles sitios del código, y a las cámaras de 15 o 10 fps se les pide lo que pueden dar.
+- **«Sincronía audio ↔ vídeo», en su ventanita.** El «Ajuste A/V» y el «Búfer audio» ya no están
+  sueltos en «Audio»: hay un botón que abre una ventanita con los dos (y «Sincronizar…»), y la de
+  «Sincronizar» tiene «Sonido ↔ vídeo…» para abrirla al lado, sin tapar el código.
+- En el registro: si la cámara de otro PC tarda más de lo que el mosaico puede esperar (1 s), se
+  dice cuánto haría falta y cuánto irá tarde.
+
 ## pack 57 — 2026.11.24
 - **«Sincronizar»: ✓ sobre cada cámara en cuanto ya está.** Mientras dura la claqueta, en el
   mosaico del PC sale «✓ lista» sobre cada cámara que ya ha visto bastante (unos 2 segundos

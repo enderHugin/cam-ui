@@ -15,7 +15,11 @@ Se sabe exactamente cuándo llega cada cosa, y se comprueba que se mide eso, al 
    que no la ve nunca, «no vista» (nada de inventarse un número);
 3) las correcciones («Retardo ms» y «Ajuste A/V») para que todas vayan con la más lenta; sin
    sonido, solo las cámaras entre sí;
-4) la página de la claqueta lleva el mismo código que se busca en la grabación."""
+4) la página de la claqueta lleva el mismo código que se busca en la grabación;
+5) en directo (SyncLive): ✓ en orden, según se les enseña el móvil;
+6) (pack 58) tres cámaras que ven la claqueta flojita: solas no salen («se parece poco»), pero
+   si salieron ✓ en directo se buscan donde se las vio y salen bien (± 30 ms); a una que no la vio
+   nunca no se le inventa nada aunque se le dé una pista, y una pista equivocada no cuela."""
 import os
 import re
 import sys
@@ -51,7 +55,7 @@ def lit_fraction(a, b):
     return (F(b) - F(a)) / (b - a)
 
 
-def make(path, secs, audio=True):
+def make(path, secs, audio=True, amp=None, noise=3):
     rng = np.random.default_rng(11)
     bg = []
     for _ in TILES:
@@ -94,7 +98,7 @@ def make(path, secs, audio=True):
             per = FPS // CFPS[c] if c < 8 else 1
             if i % per == 0 or held[c] is None:   # una imagen nueva de esa cámara (las lentas se repiten)
                 img = bg[c] * (1.0 + 0.08 * np.sin(2 * np.pi * ti / 7.0 + c))   # la luz sube y baja
-                img = img + rng.normal(0, 3, (h, w))
+                img = img + rng.normal(0, noise, (h, w))
                 bx = int((i * 6 + c * 70) % (w - 60))                           # algo que se mueve
                 img[150:200, bx:bx + 50] = 200
                 if c == 8:                                                      # una luz que parpadea sola
@@ -106,7 +110,7 @@ def make(path, secs, audio=True):
                         py = int(60 + 30 * np.sin((s - a) * 0.7))
                         px = int(150 + 25 * (s - a))
                         f = lit_fraction(s - per / float(FPS), s) if a <= s <= b else 0.0
-                        img[py:py + 18, px:px + 9] = 15 + f * 225
+                        img[py:py + 18, px:px + 9] = 15 + f * (225 if amp is None else amp[c])
                 held[c] = np.clip(img, 0, 255).astype(np.uint8)
             fr[y0:y0 + h, x0:x0 + w] = held[c]
         p.stdin.write(fr.tobytes())
@@ -236,6 +240,31 @@ try:
     print("5) en directo: las ocho, ✓ una tras otra según se les enseña el móvil (a los " +
           ", ".join("{0:.0f}".format(marks[LABELS[c]] - SEE[c][0] - LLAT[c]) for c in range(8)) +
           " s de empezar a verlo); «Lejos», sin ✓ OK")
+
+    # 6) flojas: con lo visto en directo
+    WEAK = {0: 16, 3: 22, 4: 16}                       # Cam1 (30 fps), Cam4 (15), Cam5 (10)
+    rec3 = os.path.join(TMP, "flojas.mkv")
+    make(rec3, secs, amp=[WEAK.get(c, 225) for c in range(8)], noise=8)
+    plain = camui.analyze_sync(rec3, TILES, W, H, LABELS, nbits=NBITS)
+    for c in WEAK:
+        assert plain["cams"][LABELS[c]] is None, (LABELS[c], plain["cams"][LABELS[c]])
+    OFF = 500.0                                        # hora del PC = hora de la grabación + OFF
+    hint = dict((LABELS[c], A_LAG + LAT[c] + OFF + 0.02) for c in range(8))   # (en directo, 20 ms off)
+    hint["Lejos"] = A_LAG + 0.4 + OFF                  # una pista para la que no la vio nunca
+    res3 = camui.analyze_sync(rec3, TILES, W, H, LABELS, nbits=NBITS, live=hint)
+    e3 = []
+    for c in WEAK:
+        r = res3["cams"][LABELS[c]]
+        assert r is not None and res3["info"][LABELS[c]].get("con_directo"), (LABELS[c], res3["info"])
+        e3.append((r[0] - A_LAG - LAT[c]) * 1000)
+        assert abs(e3[-1]) <= 30, (LABELS[c], e3[-1])
+    assert res3["cams"]["Lejos"] is None
+    bad = dict(hint, Cam4=hint["Cam4"] + 0.3)          # pista equivocada (0,3 s)
+    res4 = camui.analyze_sync(rec3, TILES, W, H, LABELS, nbits=NBITS, live=bad)
+    assert res4["cams"]["Cam4"] is None, res4["cams"]["Cam4"]
+    print("6) tres cámaras que la ven flojita: solas, no salen; con lo visto en directo, sí (error " +
+          ", ".join("{0:+.1f}".format(e) for e in e3) + " ms); a la que no la vio, nada aunque se le "
+          "dé pista; y una pista equivocada (0,3 s) no cuela OK")
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 print("TODO OK unit_sync")

@@ -26,8 +26,11 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   como un código de barras en el tiempo, unos diez trozos por segundo blancos con pitido o
   negros en silencio, que nunca se repite. Se le enseña a cada cámara 3 o 4 segundos, una detrás
   de otra (8 cámaras, sin problema); sobre cada una sale «✓ lista» en el mosaico en cuanto ya
-  está, y con todas termina sola. cam-ui mide al milisegundo lo que tarda en llegar cada una
-  respecto al sonido y pone solo el «Retardo» de cada cámara y el «Ajuste A/V». Con «Deshacer».
+  está, y con todas termina sola. En la ventana y en el móvil, cuántas faltan y un dibujo con
+  lo que va cada una respecto a las demás y al sonido. cam-ui mide al milisegundo lo que tarda
+  en llegar cada una respecto al sonido y pone solo el «Retardo» de cada cámara y el «Ajuste
+  A/V» (en su ventanita «Sincronía audio ↔ vídeo», que se abre desde «Audio» y desde la de
+  «Sincronizar»). Con «Deshacer».
 - En la vista previa (solo ahí), un rótulo sobre cada cámara: nombre, cómo llega (local, red,
   otro cam-ui, móvil), fps reales y resolución.
 - Direcciones sin número de puerto cuando el 80 y el 443 de este PC están libres: «En la red» en

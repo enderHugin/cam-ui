@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.24"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 57                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 58                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1187,7 +1187,16 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
     t0 = time.time() if t0 is None else t0
     cams = plan["cams"]
     n = len(cams)
-    clock = plan.get("sync", "clock") == "clock"
+    hub = plan.get("hub") if isinstance(plan.get("hub"), dict) and plan["hub"].get("ports") else None
+    # Con el concentrador (motor nuevo), el vídeo YA va por la hora del reloj del PC (cada tic es
+    # «lo que había D s antes», ver _HubSession), así que el sonido tiene que ir también por ella,
+    # sea cual sea «Sincronía». Con «Marcas del dispositivo» empezaba en el 0 del vídeo, pero el
+    # micrófono se abre cuando arranca ffmpeg -- unas décimas después y cada vez distinto -- y el
+    # desfase cambiaba de una grabación a otra: «Sincronizar» lo medía en su prueba (+1270 ms de
+    # «Ajuste A/V» en el camui.log de un usuario) y en la siguiente grabación ya era otro.
+    # Probado: con el micro abriéndose 0,1 s o 1 s tarde, la imagen salía +370 / +1261 ms detrás
+    # del sonido; por el reloj, igual en las dos (tests/ui_hub_audio_device.py).
+    clock = plan.get("sync", "clock") == "clock" or hub is not None
     fps = int(plan["fps"])
     W, H, tiles = plan_geometry(plan)
     if plan.get("pv_max"):                        # pantalla completa (ver PREVIEW_FULL_MAX)
@@ -1204,7 +1213,6 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         pre += ["-use_wallclock_as_timestamps", "1"]
 
     labels = plan.get("labels") or []
-    hub = plan.get("hub") if isinstance(plan.get("hub"), dict) and plan["hub"].get("ports") else None
     fc = []
     # ---- vídeo ----
     for i, c in enumerate(cams):
@@ -4379,12 +4387,29 @@ button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:10px
   font-size:21px;margin-top:10px}
 button:active{background:#3a3f48}
 #stop{background:#111;color:#555;border-color:#222;display:none}
+#devs{width:100%;max-width:440px;font-size:14px;color:#aaa;margin:2px 0 6px}
+#devs .h{font-size:22px;font-weight:700;color:#e3b341;margin:4px 0 2px}
+#devs .h.ok{color:#3ddc84}
+#devs .c{font-size:12px;color:#777;margin:0 0 6px}
+#devs .r{display:flex;align-items:center;margin:4px 0}
+#devs .n{flex:0 0 42%;text-align:left;font-size:13px;line-height:1.15;overflow-wrap:anywhere}
+#devs .s{flex:0 0 58px;text-align:center;font-size:12px}
+#devs .t{flex:1;position:relative;height:1px;background:#3a3f48}
+#devs .d{position:absolute;top:-5px;width:10px;height:10px;border-radius:50%;margin-left:-5px}
+#devs .z{position:absolute;top:-9px;height:18px;border-left:1px dashed #555}
+#devs .v{flex:0 0 66px;text-align:right;font-size:12px}
+#ui.quiet #devs{color:#4a4a4a}
+#ui.quiet #devs .h{color:#6b5a26}
+#ui.quiet #devs .h.ok{color:#1f6f43}
+#ui.quiet #devs .c{color:#333}
+#ui.quiet #devs .t{background:#222}
 </style></head><body>
 <div id="flash"></div>
 <div id="ui">
   <h1 id="title">Claqueta</h1>
   <div id="big"></div>
   <div id="msg">&hellip;</div>
+  <div id="devs"></div>
   <button id="go">Empezar</button>
   <button id="stop">Terminar</button>
 </div>
@@ -4403,6 +4428,58 @@ var stop = document.getElementById("stop"), ui = document.getElementById("ui");
 document.getElementById("title").textContent = "Claqueta de " + PCNAME;
 
 function say(t, b) { msg.textContent = t; big.textContent = (b === undefined) ? "" : b; }
+// el mapa de aparatos (lo mismo que en la ventana del PC: ver sync_devs_text y SyncDialog)
+var devsKey = "", devsDiv = document.getElementById("devs");
+function esc(t) {
+  return String(t).replace(/[&<>"]/g, function (c) {
+    return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]; });
+}
+function shortName(t) {          // muy largo: el principio y el final (el final dice cuál es: «#3»)
+  t = String(t);
+  return t.length > 26 ? t.slice(0, 12) + "\u2026" + t.slice(-12) : t;
+}
+function drawDevs(d) {
+  var quiet = ui.className === "quiet";       // parpadeando: todo apagado, que no estorbe
+  var key = JSON.stringify(d || null) + quiet;
+  if (key === devsKey) { return; }
+  devsKey = key;
+  if (!d || !d.rows) { devsDiv.innerHTML = ""; return; }
+  var rows = d.rows.slice(), n = rows.length, k = 0, i, head, cap = "", vals = [];
+  for (i = 0; i < n; i++) { if (rows[i].st === "ok") { k++; } }
+  if (d.phase === "directo") {
+    head = k < n ? "Faltan " + (n - k) + " de " + n : "Todas listas \u2713 (" + n + ")";
+    cap = "\u2022 = cu\u00e1nto va cada una detr\u00e1s de la primera, ahora";
+  } else if (d.phase === "medido") {
+    head = "Medidas " + k + " de " + n + (k < n ? " \u00b7 sin medir: " + (n - k) : "");
+    cap = d.sound !== null && d.sound !== undefined ?
+      "\u2022 = cu\u00e1nto llegaba tarde respecto al sonido (ahora van a la vez)" :
+      "\u2022 = cu\u00e1nto llegaba tarde respecto a la primera";
+  } else {
+    head = n + (n === 1 ? " c\u00e1mara" : " c\u00e1maras") + " por sincronizar";
+  }
+  if (d.sound !== null && d.sound !== undefined) { rows.push({n: "Sonido", st: "sonido", ms: d.sound}); }
+  for (i = 0; i < rows.length; i++) { if (rows[i].ms !== null && rows[i].ms !== undefined) { vals.push(rows[i].ms); } }
+  var lo = Math.min.apply(null, vals.concat([0])), hi = Math.max.apply(null, vals.concat([0]));
+  var span = Math.max(100, hi - lo);
+  lo -= 0.08 * span; hi += 0.08 * span;
+  function pc(ms) { return (100 * (ms - lo) / (hi - lo)).toFixed(1) + "%"; }
+  var col = quiet ? {ok: "#1f6f43", falta: "#6b5a26", no: "#444", sonido: "#24467a"} :
+                    {ok: "#3ddc84", falta: "#e3b341", no: "#777", sonido: "#3b82f6"};
+  var mark = {ok: "\u2713", falta: "falta", no: "no se vio", sonido: ""};
+  var h = '<div class="h' + (n && k === n ? ' ok' : '') + '">' + esc(head) + '</div>';
+  if (cap) { h += '<div class="c">' + esc(cap) + '</div>'; }
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i], has = r.ms !== null && r.ms !== undefined, c = col[r.st] || "#777";
+    h += '<div class="r"><span class="n" style="color:' + (r.st === "sonido" ? c : "") + '">' +
+         esc(shortName(r.n)) + '</span><span class="s" style="color:' + c +
+         (r.st === "ok" ? ';font-size:17px;font-weight:700' : '') + '">' + esc(mark[r.st] || "") +
+         '</span><span class="t">' + (vals.length ? '<span class="z" style="left:' + pc(0) +
+         '"></span>' : '') + (has ? '<span class="d" style="left:' + pc(r.ms) + ';background:' +
+         c + '"></span>' : '') + '</span><span class="v" style="color:' + c + '">' +
+         (has ? (r.ms >= 0 ? "+" : "") + Math.round(r.ms) + " ms" : "") + '</span></div>';
+  }
+  devsDiv.innerHTML = h;
+}
 function show(b) { go.style.display = b ? "" : "none"; }
 function post(what, run, extra) {
   return fetch("/sync/" + what + "?t=" + TOKEN + "&run=" + (run || 0) + (extra || ""),
@@ -4520,9 +4597,10 @@ function poll() {
     .then(function (st) {
       if (closed) { if (playing) { finish(true); } say("La sincronización se ha cerrado en el PC."); show(false); return; }
       if (!st) { return; }
+      drawDevs(st.devs);                                     // cuántas faltan, y cómo van
       if (emitting) {
         if (st.state === "terminando" && playing) { finish(true); }
-        else if (playing && st.msg) { msg.textContent = st.msg; }   // «Listas 5 de 8. Faltan: ...»
+        else if (playing && st.msg && !st.devs) { msg.textContent = st.msg; }  // «Listas 5 de 8...»
         return;
       }
       if (st.state === "grabando" && st.run !== runSeen) {
@@ -4578,19 +4656,26 @@ class SyncBeacon:
         self.events = deque()
         self.seen_t = 0.0             # la última vez que preguntó la página
         self.ready_t = 0.0            # ... y dijo que está lista (sonido desbloqueado)
+        self.devs = None              # cómo va cada aparato (ver CamApp._sync_devs)
 
     def open(self):
         with self._lk:
             if self.token is None:
                 self.token = secrets.token_urlsafe(9)
             self.state, self.msg = "esperando", ""
+            self.devs = None
             self.events.clear()
             return self.token
 
     def close(self):
         with self._lk:
             self.token, self.state, self.msg = None, "apagado", ""
+            self.devs = None
             self.events.clear()
+
+    def set_devs(self, devs):
+        with self._lk:
+            self.devs = devs
 
     def valid(self, token):
         with self._lk:
@@ -4608,7 +4693,10 @@ class SyncBeacon:
             self.seen_t = time.time()
             if ready:
                 self.ready_t = self.seen_t
-            return {"state": self.state, "run": self.run, "msg": self.msg}
+            out = {"state": self.state, "run": self.run, "msg": self.msg}
+            if self.devs is not None:
+                out["devs"] = self.devs
+            return out
 
     def post(self, kind, run=0, extra=None):
         with self._lk:
@@ -5614,6 +5702,8 @@ SYNC_SEARCH = (-1.0, 4.0)    # (s) una cámara puede ir de 1 s antes a 4 s despu
 SYNC_MIN_SEEN_S = 1.5        # lo que una cámara tiene que ver (u oír el micrófono) para fiarse
 SYNC_MAX_SPREAD = 0.025      # (s) lo más que pueden discrepar los trozos de lo visto entre sí
 SYNC_LIMIT_MS = 2000         # lo más que se pone en «Retardo ms» y en «Ajuste A/V»
+SYNC_CANDIDATES = 8         # picos de la búsqueda gruesa que se afinan (con 3, una cámara que veía
+                            # poco y flojo podía quedarse fuera aunque encajara con 0,9)
 SYNC_START_TIMEOUT_S = 25.0  # grabando la prueba, si el móvil no empieza en este tiempo: se cancela
 
 
@@ -5879,7 +5969,8 @@ def _sync_source_frames(flat, times, dt):
     return times[owner], wmap[owner]
 
 
-def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, quick=False):
+def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, quick=False,
+                   min_rho=0.75, spread_k=1.0):
     """Dónde empieza el código de la claqueta en una casilla del vídeo (entre lo y hi): (hora del
     primer trozo, segundos vistos, desacuerdo en s entre trozos), o None si no se ve bien (y en
     info["why"], por qué). El móvil puede estar en cualquier sitio de la imagen y moverse, y verse
@@ -5887,7 +5978,8 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
     empezado antes que estas imágenes: así se mira también en directo, ver SyncLive). Cada
     fotograma recoge la luz de su intervalo (y una cámara lenta se repite en el mosaico): se
     compara con lo que vería, trozo a trozo, al milisegundo. quick: afinando menos (en directo
-    solo hace falta saber si se ve; ver SyncLive)."""
+    solo hace falta saber si se ve; ver SyncLive). min_rho / spread_k: lo exigente (ver
+    analyze_sync: una cámara que ya salió ✓ en directo, buscada solo donde se la vio)."""
     info = {} if info is None else info
     code = list(SYNC_CODE[:SYNC_MAX_BITS] if code is None else code)
     if cells is None or len(times) < 20 or cells.shape[0] != len(times) or hi <= lo or not code:
@@ -5939,7 +6031,7 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
     score = corrs(g, Ls)
     cands = []                                     # los picos más altos, separados
     for kk in np.argsort(-score):
-        if score[kk] <= 0 or len(cands) >= 3:
+        if score[kk] <= 0 or len(cands) >= SYNC_CANDIDATES:
             break
         if all(abs(Ls[kk] - Ls[c]) > 2.5 * dt for c in cands):
             cands.append(int(kk))
@@ -6006,7 +6098,7 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
         return None
     _q, rho, n, Lf, run = ev[0]
     info["vistos"] = run
-    if n < SYNC_MIN_SEEN_S or rho < 0.75:
+    if n < SYNC_MIN_SEEN_S or rho < min_rho:
         info["why"] = ("vista muy poco rato ({0} s seguidos)".format(n) if n < SYNC_MIN_SEEN_S else
                        "se parece poco ({0:.2f})".format(rho))
         return None
@@ -6025,16 +6117,20 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
             parts.append(fine(g, Lf, (rel >= s0) & (rel < s0 + 2)))
     spread = float(np.median(np.abs(np.asarray(parts) - Lf))) if parts else 0.0
     info["desacuerdo_ms"] = round(spread * 1000, 1)
-    if spread > SYNC_MAX_SPREAD:
+    # lo que se puede pedir depende de cuántas imágenes da la cámara: a 30 fps, 25 ms; una de 15
+    # fps (camui.log real: la EOS, 26 ms, rechazada por 1 ms) o de 10, la mitad de su imagen
+    lim = spread_k * max(SYNC_MAX_SPREAD, 0.5 / max(1.0, info["fps_camara"]))
+    if spread > lim:
         info["why"] = "sus trozos no coinciden entre sí ({0:.0f} ms)".format(spread * 1000)
         return None
     return Lf, float(len(seen)), spread
 
 
-def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=None):
+def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=None, live=None):
     """Mide una grabación de prueba con la claqueta: {"audio": (hora, segundos oídos, desacuerdo)
     o None, "cams": {etiqueta: (hora, segundos vistos, desacuerdo) o None}}. nbits: los trozos
-    del código que llegó a dar el móvil (si terminó antes)."""
+    del código que llegó a dar el móvil (si terminó antes). live: {etiqueta: hora (del PC) a la
+    que empezaba la claqueta en esa cámara} de las que salieron ✓ en directo (SyncLive.lags)."""
     code = SYNC_CODE[:max(10, min(SYNC_MAX_BITS, int(nbits or SYNC_MAX_BITS)))]
     res = {"audio": None, "cams": {}, "info": {}}
     t_a = time.time()
@@ -6053,10 +6149,10 @@ def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=N
              len(series), len(code), time.time() - t_a)
     a = res["audio"][0] if res["audio"] else None
 
-    def measure(i, lab, lo, hi):
+    def measure(i, lab, lo, hi, **kw):
         inf = res["info"][lab] = {}
         try:
-            r = sync_video_lag(times, series[i], lo, hi, code, info=inf)
+            r = sync_video_lag(times, series[i], lo, hi, code, info=inf, **kw)
         except Exception as e:
             log.error("sincronizar: falló la medida de «%s»: %r", lab, e)
             return None
@@ -6082,6 +6178,28 @@ def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=N
         for i, lab in enumerate(labels):
             if res["cams"][lab] is None and i < len(series):
                 res["cams"][lab] = measure(i, lab, lo, hi)
+    # Las que salieron ✓ en directo (dos miradas seguidas, en el mismo sitio del código) y aquí
+    # no: se buscan solo donde se las vio, pidiendo algo menos. Caso real (camui.log): ✓ en
+    # directo y luego «se parece poco (0,71)» -- en el mosaico decía lista, y se quedó sin
+    # ajustar. La hora de la grabación es la del PC menos lo mismo para todas: se saca de las
+    # que salieron en las dos.
+    live = dict((l, v) for l, v in (live or {}).items() if v is not None and l in res["cams"])
+    offs = [res["cams"][l][0] - v for l, v in live.items() if res["cams"][l]]
+    if offs:
+        off = float(np.median(offs))
+        for i, lab in enumerate(labels):
+            if res["cams"][lab] is not None or lab not in live or i >= len(series):
+                continue
+            first = res["info"].get(lab, {}).get("why")
+            p = live[lab] + off
+            r = measure(i, lab, p - 0.25, p + 0.25, min_rho=0.6, spread_k=2.0)
+            if r is not None and abs(r[0] - p) <= 0.12:
+                res["cams"][lab] = r
+                res["info"][lab]["con_directo"] = True
+                log.info("sincronizar: «%s» medida buscándola donde salió ✓ en directo (a %.0f ms "
+                         "de lo previsto; antes: %s)", lab, (r[0] - p) * 1000, first)
+            else:
+                res["info"][lab]["why"] = first or res["info"][lab].get("why")
     log.info("sincronizar: medido en %.1f s", time.time() - t_a)
     return res
 
@@ -6111,7 +6229,7 @@ class SyncLive:
         self.buf = [deque() for _ in self.boxes]
         self.lock = threading.Lock()
         self.t0 = None                 # hora (del PC) a la que el móvil empezó la claqueta
-        self.ok = {}                   # etiqueta -> (hora, segundos vistos) en que quedó lista
+        self.ok = {}                   # etiqueta -> (hora, segundos vistos, hora de la claqueta)
         self._last = {}                # etiqueta -> hora de la claqueta que vio en la mirada anterior
         self.version = 0               # cambia con cada una que queda lista
         self.frames = 0
@@ -6157,7 +6275,7 @@ class SyncLive:
             if r is not None and r[1] >= SYNC_LIVE_SEEN_S and prev is not None and \
                     abs(prev - r[0]) < 0.07:
                 with self.lock:
-                    self.ok[lab] = (time.time(), r[1])
+                    self.ok[lab] = (time.time(), r[1], r[0])
                     self.version += 1
                 log.info("sincronizar: «%s» lista en directo, %.1f s después de empezar la "
                          "claqueta (%.0f s vistos)", lab, time.time() - self.t0, r[1])
@@ -6167,6 +6285,12 @@ class SyncLive:
     def missing(self):
         with self.lock:
             return [l for l in self.labels if l not in self.ok]
+
+    def lags(self):
+        """{etiqueta: hora (del PC) a la que, en la vista previa, empezaba la claqueta} de las
+        listas: lo que van unas respecto a otras ahora mismo (con sus «Retardo ms»)."""
+        with self.lock:
+            return dict((l, v[2]) for l, v in self.ok.items())
 
     def start(self):
         def loop():
@@ -7056,10 +7180,15 @@ class CamHub:
     def plan_delay(slots):
         """D: lo justo para que, en cada tic, el fotograma que toca de cada cámara ya esté aquí
         (otro cam-ui tarda lo suyo en llegar; un «Retardo ms» negativo adelanta esa cámara)."""
+        return min(HUB_DELAY_MAX, CamHub.raw_delay(slots))
+
+    @staticmethod
+    def raw_delay(slots):
+        """El D que haría falta, sin el tope HUB_DELAY_MAX."""
         need = HUB_DELAY_MIN
         for sl in slots:
             need = max(need, sl["src"].need() - sl["delay"])
-        return min(HUB_DELAY_MAX, need)
+        return need
 
     def start_session(self, slots, fps, delay, t_start):
         self.end_session()
@@ -7298,8 +7427,11 @@ class FFmpegEngine:
         plan["hub"] = {"ports": ports, "sizes": [(sl["w"], sl["h"]) for sl in slots],
                        "pix": HUB_PIX, "delay": d}
         self.hub_delay = d
-        log.info("concentrador: %d cámara(s), D=%d ms, tamaños %s", len(slots), int(d * 1000),
-                 plan["hub"]["sizes"])
+        raw = self.hub.raw_delay(slots)
+        log.info("concentrador: %d cámara(s), D=%d ms, tamaños %s%s", len(slots), int(d * 1000),
+                 plan["hub"]["sizes"], "" if raw <= d + 0.001 else
+                 " (haría falta D={0:.0f} ms: la de otro PC irá hasta {1:.0f} ms tarde)".format(
+                     raw * 1000, (raw - d) * 1000))
         return t_start - d
 
     def input_info(self):
@@ -8441,11 +8573,33 @@ class PhoneCamQrDialog:
             pass
 
 
+def sync_devs_text(d):
+    """(cuántas, qué dice el dibujo) del mapa de aparatos de «Sincronizar» (ver
+    CamApp._sync_devs); lo mismo dice la página del móvil (_SYNC_HTML, drawDevs)."""
+    rows = (d or {}).get("rows") or []
+    n = len(rows)
+    k = sum(1 for r in rows if r.get("st") == "ok")
+    ph = (d or {}).get("phase")
+    if ph == "directo":
+        head = "Faltan {0} de {1}".format(n - k, n) if k < n else "Todas listas ✓ ({0})".format(n)
+        cap = "• = cuánto va cada una detrás de la primera, ahora mismo (el sonido se mide al final)"
+    elif ph == "medido":
+        head = "Medidas {0} de {1}".format(k, n) + (" · sin medir: {0}".format(n - k) if k < n else "")
+        cap = ("• = cuánto llegaba tarde cada una respecto al sonido, antes de ajustar (ahora van "
+               "a la vez)" if d.get("sound") is not None else
+               "• = cuánto llegaba tarde cada una respecto a la primera, antes de ajustar")
+    else:
+        head = "{0} cámara{1} por sincronizar".format(n, "" if n == 1 else "s")
+        cap = ""
+    return head, cap
+
+
 class SyncDialog:
     """Ventana de «Sincronizar» (ver CamApp.sync_open): el QR de la claqueta para el móvil, en qué
-    paso va, el resultado, y «Empezar» / «Deshacer» / «Cerrar»."""
+    paso va, el mapa de aparatos (cuántos faltan y cuánto va cada uno respecto a los demás: ver
+    set_devices), el resultado, y «Empezar» / «Deshacer» / «Cerrar»."""
 
-    def __init__(self, parent, photo, url, on_start, on_undo, on_close):
+    def __init__(self, parent, photo, url, on_start, on_undo, on_close, on_audio=None):
         self.alive = True
         self.photo = photo
         self._on_close = on_close
@@ -8479,8 +8633,8 @@ class SyncDialog:
             "segundo), enséñaselo a cada cámara, 3 o 4 segundos a cada una, y que el micrófono "
             "del PC lo oiga un rato.\n\n"
             "4. Sobre cada cámara del mosaico sale «✓ lista» en cuanto ya está, y «falta» en las "
-            "que no: así sabes a cuál enseñárselo. Con todas, termina sola (o «Terminar», en el "
-            "móvil o aquí). Dura como mucho {0} s.\n\n"
+            "que no; aquí debajo (y en el móvil), cuántas faltan y cuánto va cada una. Con todas, "
+            "termina sola (o «Terminar», en el móvil o aquí). Dura como mucho {0} s.\n\n"
             "cam-ui mide cuánto tarda en llegar cada cámara y ajusta solo su «Retardo» y el del "
             "sonido. La prueba no se guarda.".format(int(SYNC_MAX_S)))).grid(
                 row=1, column=1, sticky="nw", padx=(16, 0),
@@ -8488,16 +8642,25 @@ class SyncDialog:
         self.lbl_state = ttk.Label(frm, text="", wraplength=560, justify="left",
                                    font=("Segoe UI", 10, "bold"))
         self.lbl_state.grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        # el mapa: cuántos faltan, y cada aparato en una línea de tiempo (ver set_devices)
+        self.cv = tk.Canvas(frm, width=560, height=40, bg=PANEL2, highlightthickness=0)
+        self.cv.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self._devs_key = None
+        self.devs_head = ""
         self.lbl_res = ttk.Label(frm, text="", wraplength=560, justify="left")
-        self.lbl_res.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.lbl_res.grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
         bar = ttk.Frame(frm)
-        bar.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        bar.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(14, 0))
         ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
         self.btn_undo = ttk.Button(bar, text="Deshacer", command=on_undo, state="disabled")
         self.btn_undo.pack(side="right", padx=(0, 6))
         self.btn_start = ttk.Button(bar, text="Empezar", command=on_start, state="disabled",
                                     style="Accent.TButton")
         self.btn_start.pack(side="left")
+        self.btn_audio = None
+        if on_audio is not None:                 # la ventanita «Sincronía audio ↔ vídeo»
+            self.btn_audio = ttk.Button(bar, text="Sonido ↔ vídeo…", command=on_audio)
+            self.btn_audio.pack(side="left", padx=(6, 0))
         try:
             top.update_idletasks()
             px, py = parent.winfo_rootx(), parent.winfo_rooty()
@@ -8506,6 +8669,77 @@ class SyncDialog:
             top.geometry("+{0}+{1}".format(px + max(0, (pw - w) // 2), py + max(0, (ph - h) // 3)))
         except Exception:
             pass
+
+    def set_devices(self, d):
+        """Dibuja el mapa (d: ver CamApp._sync_devs): arriba cuántos faltan; debajo, una línea por
+        cámara (y el sonido) con ✓ / «falta» / «no se vio» y un punto en una línea de tiempo: lo
+        que va cada una respecto a las demás -- en directo, detrás de la primera; medido, respecto
+        al sonido."""
+        if not self.alive:
+            return
+        key = json.dumps(d, sort_keys=True)
+        if key == self._devs_key:
+            return
+        self._devs_key = key
+        try:
+            self._draw_devices(d or {})
+        except tk.TclError:
+            self.alive = False
+
+    def _draw_devices(self, d):
+        c = self.cv
+        c.delete("all")
+        rows = list(d.get("rows") or [])
+        head, cap = sync_devs_text(d)
+        self.devs_head = head
+        W = int(c.cget("width"))
+        f, fb = ("Segoe UI", 9), ("Segoe UI", 10, "bold")
+        left = sum(1 for r in rows if r.get("st") != "ok")
+        c.create_text(10, 8, anchor="nw", text=head, font=fb,
+                      fill=OK_GREEN if rows and not left else (WARN if d.get("phase") == "directo"
+                                                               else FG))
+        y = 30
+        if cap:
+            c.create_text(10, y, anchor="nw", text=cap, font=f, fill=MUTED, width=W - 20)
+            y += 18
+        snd = d.get("sound")
+        lines = [(r.get("n", ""), r.get("st"), r.get("ms")) for r in rows]
+        if snd is not None:
+            lines.append(("Sonido", "sonido", snd))
+        vals = [ms for _n, _st, ms in lines if ms is not None]
+        lo, hi = min(vals + [0]), max(vals + [0])
+        span = max(100.0, float(hi - lo))
+        lo, hi = lo - 0.08 * span, hi + 0.08 * span
+        X0, X1 = 250, W - 70
+
+        def xm(ms):
+            return X0 + (X1 - X0) * (ms - lo) / float(hi - lo)
+        RH = 20
+        top = y + 4
+        if vals:
+            xz = xm(0)
+            c.create_line(xz, top - 2, xz, top + RH * len(lines), fill=LINE, dash=(3, 3))
+        for i, (name, st, ms) in enumerate(lines):
+            yy = top + i * RH + RH / 2
+            short = name if len(name) <= 26 else name[:25] + "…"
+            c.create_text(10, yy, anchor="w", text=short, font=f,
+                          fill=ACC if st == "sonido" else FG)
+            mark, col = {"ok": ("✓", OK_GREEN), "falta": ("falta", WARN),
+                         "no": ("no se vio", MUTED), "sonido": ("", ACC)}.get(st, ("", MUTED))
+            c.create_text(X0 - 12, yy, anchor="e", text=mark, fill=col,
+                          font=("Segoe UI", 11, "bold") if st == "ok" else f)
+            c.create_line(X0, yy, X1, yy, fill=LINE)
+            if ms is not None:
+                x = xm(ms)
+                c.create_oval(x - 5, yy - 5, x + 5, yy + 5, fill=col, outline="")
+                c.create_text(X1 + 8, yy, anchor="w", font=f, fill=col,
+                              text="{0:+d} ms".format(int(round(ms))))
+        y = top + RH * len(lines) + 6
+        if not lines:
+            c.create_text(10, y, anchor="nw", text="(sin cámaras en el mosaico)", font=f,
+                          fill=MUTED)
+            y += 18
+        c.config(height=int(y + 4))
 
     def update(self, state, result=None, can_start=False, can_undo=False, start_text="Empezar"):
         if not self.alive:
@@ -8519,6 +8753,108 @@ class SyncDialog:
                 self.lbl_res.config(text=result)
             self.btn_start.state(["!disabled"] if can_start else ["disabled"])
             self.btn_undo.state(["!disabled"] if can_undo else ["disabled"])
+        except tk.TclError:
+            self.alive = False
+
+    def close(self):
+        if not self.alive:
+            return
+        self.alive = False
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+        if self._on_close is not None:
+            self._on_close()
+
+
+def _center_over(top, ref):
+    """Coloca la ventana top centrada sobre ref (otra ventana), un poco hacia arriba."""
+    try:
+        top.update_idletasks()
+        px, py = ref.winfo_rootx(), ref.winfo_rooty()
+        pw, ph = ref.winfo_width(), ref.winfo_height()
+        w, h = top.winfo_width(), top.winfo_height()
+        top.geometry("+{0}+{1}".format(px + max(0, (pw - w) // 2), py + max(0, (ph - h) // 3)))
+    except Exception:
+        pass
+
+
+def _place_beside(top, ref):
+    """Coloca top al lado de ref (a la derecha; si no cabe, a la izquierda; si tampoco, pegada
+    al borde derecho de la pantalla): para no tapar el QR de «Sincronizar» (a su izquierda)."""
+    try:
+        top.update_idletasks()
+        ref.update_idletasks()
+        w = top.winfo_width()
+        rx, ry, rw = ref.winfo_rootx(), ref.winfo_rooty(), ref.winfo_width()
+        sw = top.winfo_screenwidth()
+        if rx + rw + 8 + w <= sw:
+            x = rx + rw + 8
+        elif rx - 8 - w >= 0:
+            x = rx - 8 - w
+        else:
+            x = max(0, sw - w)
+        top.geometry("+{0}+{1}".format(x, max(0, ry)))
+        top.update_idletasks()                   # ya, antes de traerla delante (lift)
+    except Exception:
+        pass
+
+
+class AvSyncDialog:
+    """Ventanita «Sincronía audio ↔ vídeo» (pack 58): el «Ajuste A/V», el «Búfer audio» y el
+    botón «Sincronizar…». Se abre desde la pestaña «Audio» y desde la ventana de «Sincronizar»
+    (ver CamApp.avsync_open), así que desde cualquiera de las dos se llega a la otra. Los
+    números son las mismas variables de siempre: lo que pone «Sincronizar» se ve aquí al momento,
+    y lo que se toque aquí se aplica igual que antes en la pestaña."""
+
+    def __init__(self, parent, v_avoff, v_abuf, on_sync, on_close=None, near=None):
+        self.alive = True
+        self._on_close = on_close
+        top = self.top = tk.Toplevel(parent)
+        top.title("Sincronía audio ↔ vídeo")
+        top.configure(bg=PANEL)
+        top.resizable(False, False)
+        try:
+            top.transient(parent)
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        frm = ttk.Frame(top, padding=14)
+        frm.pack(fill="both")
+        ttk.Label(frm, text="Sincronía audio ↔ vídeo", font=("Segoe UI", 12, "bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(frm, text="Ajuste A/V ms").grid(row=1, column=0, sticky="w", pady=4)
+        self.sp_av = ttk.Spinbox(frm, from_=-SYNC_LIMIT_MS, to=SYNC_LIMIT_MS, increment=10,
+                                 width=6, textvariable=v_avoff)
+        self.sp_av.grid(row=1, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(frm, style="Muted.TLabel", justify="left", wraplength=250,
+                  text="+ = el sonido se oye más tarde. Lo pone solo «Sincronizar» (con un "
+                       "móvil que hace de claqueta), junto con el «Retardo» de cada cámara."
+                  ).grid(row=1, column=2, rowspan=2, padx=(10, 0), pady=4, sticky="w")
+        ttk.Label(frm, text="Búfer audio ms").grid(row=2, column=0, sticky="w", pady=4)
+        self.sp_buf = ttk.Spinbox(frm, from_=0, to=500, increment=10, width=6,
+                                  textvariable=v_abuf)
+        self.sp_buf.grid(row=2, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(frm, style="Muted.TLabel", wraplength=380, justify="left",
+                  text="Menos búfer = menos retardo. Pon 0 si un micro da error al abrirse."
+                  ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(2, 4))
+        bar = ttk.Frame(frm)
+        bar.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        self.btn_sync = ttk.Button(bar, text="⏱  Sincronizar…", command=on_sync)
+        self.btn_sync.pack(side="left")
+        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        if near is not None:
+            _place_beside(top, near)
+        else:
+            _center_over(top, parent)
+
+    def lift(self):
+        try:
+            self.top.deiconify()
+            self.top.lift()
+            self.top.focus_force()
         except tk.TclError:
             self.alive = False
 
@@ -8912,6 +9248,8 @@ class CamApp:
         self._reseg_t = 0.0
         self._sync = None               # «Sincronizar» en curso (ver sync_open)
         self._sync_dlg = None
+        self._avsync_dlg = None          # ventanita «Sincronía audio ↔ vídeo» (ver avsync_open)
+        self._sync_map = None            # el mapa de la última medida (ver _sync_devs)
         self._sync_prev = None          # (retardos, ajuste A/V) de antes, para «Deshacer»
         self._sync_result = ""
         self._sync_ui_t = 0.0
@@ -9765,7 +10103,21 @@ class CamApp:
         self.v_phonecampass = t(value=ppass if isinstance(ppass, str) else "")
         self.phonecam.password = self.v_phonecampass.get()
         self.v_phonecampass.trace_add("write", self._on_phonecampass)
-        self.v_avoff = tk.IntVar(value=int(c.get("av_offset", 0)))
+        av = int(c.get("av_offset", 0) or 0)
+        # pack 58: con el motor nuevo, el sonido va siempre por el reloj del PC (ver build_command).
+        # Un «Ajuste A/V» guardado antes con «Marcas del dispositivo» compensaba sobre todo lo que
+        # tardaba en abrirse el micrófono AQUELLA vez: con la cuenta nueva sobra entero (en el
+        # camui.log real, +1270 ms = el sonido más de un segundo tarde). Se pone a 0 una sola vez
+        # y se pide volver a «Sincronizar»; los «Retardo ms» de las cámaras siguen valiendo (son
+        # de unas respecto a otras).
+        self._av_reset = None
+        if av and c.get("av_ref") != "clock" and c.get("sync") == "device" and hub_from_cfg(c):
+            log.warning("«Ajuste A/V» de %d ms medido con «Marcas del dispositivo» (el sonido "
+                        "empezaba en el 0 del vídeo): con el motor nuevo el sonido ya va por el "
+                        "reloj del PC y ese ajuste sobra: se pone a 0; hay que volver a "
+                        "«Sincronizar» una vez", av)
+            self._av_reset, av = av, 0
+        self.v_avoff = tk.IntVar(value=av)
         self.v_abuf = tk.IntVar(value=int(c.get("abuf", 50)))
         a = c.get("audio", {})
         self.arow = {"L": AudioRow(a.get("L"), self._on_change),
@@ -10285,23 +10637,18 @@ class CamApp:
         for txt, fn in (("Estéreo normal", self._preset_stereo), ("Mono a ambos", self._preset_mono),
                         ("Un micro por canal", self._preset_split)):
             ttk.Button(pf, text=txt, command=fn).pack(side="left", padx=6, pady=6)
+        # pack 58: los ajustes, en su ventanita (AvSyncDialog), que también se abre desde la
+        # de «Sincronizar»; aquí, el botón y cómo están ahora
         sf = ttk.Labelframe(tab, text="Sincronía audio ↔ vídeo")
         sf.pack(fill="x", **pad)
-        ttk.Label(sf, text="Ajuste A/V ms").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Spinbox(sf, from_=-SYNC_LIMIT_MS, to=SYNC_LIMIT_MS, increment=10, width=6,
-                    textvariable=self.v_avoff).grid(row=0, column=1, sticky="w")
-        ttk.Label(sf, style="Muted.TLabel", justify="left", wraplength=250,
-                  text="+ = el sonido se oye más tarde. Lo pone solo «Sincronizar» (con un "
-                       "móvil que hace de claqueta), junto con el «Retardo» de cada cámara."
-                  ).grid(row=0, column=2, rowspan=2, padx=8, pady=4, sticky="w")
-        ttk.Button(sf, text="⏱  Sincronizar…", command=self.sync_open).grid(
-            row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
-        ttk.Label(sf, text="Búfer audio ms").grid(row=1, column=0, sticky="w", padx=6, pady=4)
-        ttk.Spinbox(sf, from_=0, to=500, increment=10, width=6,
-                    textvariable=self.v_abuf).grid(row=1, column=1, sticky="w")
-        ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Menos búfer = menos retardo. Pon 0 si un micro da error al abrirse."
-                  ).grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
+        self.btn_avsync = ttk.Button(sf, text="⏱  Sincronía audio ↔ vídeo…",
+                                     command=self.avsync_open)
+        self.btn_avsync.grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
+        self.v_avsum = tk.StringVar(value=self._avsync_summary())
+        ttk.Label(sf, style="Muted.TLabel", textvariable=self.v_avsum).grid(
+            row=1, column=0, sticky="w", padx=8, pady=(0, 6))
+        for v in (self.v_avoff, self.v_abuf):
+            v.trace_add("write", lambda *_a: self.v_avsum.set(self._avsync_summary()))
 
     def _build_out_tab(self, tab):
         pad = {"padx": 8, "pady": 4}
@@ -10480,7 +10827,8 @@ class CamApp:
         ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
                   text="«Reloj común» alinea todas las cámaras y el audio en una misma línea "
                        "de tiempo. «Marcas del dispositivo» se fía de la hora que da cada cámara: "
-                       "con el motor de siempre, una que la dé mal frena todo el mosaico."
+                       "con el motor de siempre, una que la dé mal frena todo el mosaico. Con el "
+                       "motor nuevo no cuenta: siempre el reloj común."
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
         ttk.Checkbutton(sf, text="Motor nuevo: cada cámara por separado (recomendado)",
                         variable=self.v_hub).grid(row=2, column=0, columnspan=2, sticky="w",
@@ -11913,8 +12261,13 @@ class CamApp:
         if time.time() - self._hub_restart_t < 10.0:
             return
         self._hub_restart_t = time.time()
+        raw = self.hub.raw_delay(s.slots)
         log.info("concentrador: la cámara de otro PC llega más tarde de lo previsto "
-                 "(D %d -> %d ms): se reajusta", s.delay * 1000, want * 1000)
+                 "(D %d -> %d ms): se reajusta%s", s.delay * 1000, want * 1000,
+                 "" if raw <= want + 0.001 else
+                 " -- haría falta {0:.0f} ms, más que el máximo ({1:.0f}): irá hasta {2:.0f} ms "
+                 "tarde respecto a las demás".format(raw * 1000, HUB_DELAY_MAX * 1000,
+                                                     (raw - want) * 1000))
         self._schedule_restart(200)
 
     def _hub_event(self, kind, label, detail):
@@ -12057,6 +12410,8 @@ class CamApp:
                "hub_v": 2,
                "dir": self.v_dir.get(), "name": self.v_name.get(),
                "av_offset": _geti(self.v_avoff), "abuf": max(0, _geti(self.v_abuf, 50)),
+               "av_ref": "clock" if (self.v_hub.get() or
+                                     _pair_value(SYNCS, self.v_sync.get()) == "clock") else "device",
                "audio": {"L": self.arow["L"].to_cfg(), "R": self.arow["R"].to_cfg()}}
         self._remember_geo()
         cfg["ui"] = {"v": 2, "mode": self._fs_prev if self.mode == "fullscreen" else self.mode,
@@ -12448,7 +12803,8 @@ class CamApp:
                 self.previewing = True
                 self._last_fc = -1
                 self._set_status(self._edit_hint() if self.editing else
-                                 "Vista previa en marcha · {0} cámara(s).".format(len(plan["cams"])))
+                                 "Vista previa en marcha · {0} cámara(s).".format(len(plan["cams"])) +
+                                 self._resync_note())
             elif retry < 3 and retry > 0:
                 self.root.after(900, lambda: self._start_preview(retry + 1))
             else:
@@ -12723,7 +13079,8 @@ class CamApp:
             self.previewing = ok
             self._last_fc = -1
             if ok:
-                self._set_status(self._edit_hint() if self.editing else "Cambios aplicados.")
+                self._set_status(self._edit_hint() if self.editing else
+                                 "Cambios aplicados." + self._resync_note())
             else:
                 self.paused = True
                 self._set_idle("No se pudo aplicar el cambio. Pulsa F5 para reintentar.")
@@ -13561,6 +13918,24 @@ class CamApp:
         return True, tmp, "MP4 no generado; el vídeo quedó en MKV"
 
     # ------------------------------------------------------------ sincronizar (claqueta)
+    def _avsync_summary(self):
+        return "Ahora: ajuste A/V {0:+d} ms · búfer {1} ms".format(_geti(self.v_avoff),
+                                                            max(0, _geti(self.v_abuf, 50)))
+
+    def avsync_open(self, near=None):
+        """La ventanita «Sincronía audio ↔ vídeo» (AvSyncDialog): una sola; si ya está, delante."""
+        d = getattr(self, "_avsync_dlg", None)
+        if near is None and self._sync_dlg is not None and self._sync_dlg.alive:
+            near = self._sync_dlg.top
+        if d is not None and d.alive:
+            if near is not None:
+                _place_beside(d.top, near)        # que no tape el QR de «Sincronizar»
+            d.lift()
+            return
+        self._avsync_dlg = AvSyncDialog(self.root, self.v_avoff, self.v_abuf, self.sync_open,
+                                        on_close=lambda: setattr(self, "_avsync_dlg", None),
+                                        near=near)
+
     def sync_open(self):
         """Botón «Sincronizar»: abre la ventana con el QR de la claqueta (ver SYNC_CODE). Un
         móvil la abre, se le da a «Empezar» (en él o aquí), se enseña a cada cámara, «Terminar», y
@@ -13585,7 +13960,11 @@ class CamApp:
                          "/sync?t={0}".format(token))
         photo = self._phonecam_qr_photo(url)
         self._sync_dlg = SyncDialog(self.root, photo, url, self._sync_button, self._sync_undo,
-                                    self._sync_closed)
+                                    self._sync_closed, on_audio=self.avsync_open)
+        d = self._avsync_dlg
+        if d is not None and d.alive:              # abierta desde la ventanita: las dos a la vista
+            _place_beside(d.top, self._sync_dlg.top)
+            d.lift()
         self._sync_result = ""
         self._sync_ui(force=True)
 
@@ -13637,12 +14016,37 @@ class CamApp:
             txt = "Móvil conectado: toca «Empezar» en él (así puede pitar)."
         else:
             txt = "Esperando a que un móvil abra el código…"
+        devs = self._sync_devs()
+        dlg.set_devices(devs)
+        b.set_devs(devs)                               # el móvil lo pinta igual (drawDevs)
         busy = self._sync is not None
         rec = busy and self._sync.get("recording") and st == "grabando"
         dlg.update(txt, self._sync_result,
                    can_start=rec or (ready and not busy and not self.recording),
                    can_undo=self._sync_prev is not None and not busy and not self.recording,
                    start_text="Terminar" if rec else "Empezar")
+
+    def _sync_devs(self):
+        """El mapa de aparatos de «Sincronizar», para su ventana (SyncDialog.set_devices) y para
+        el móvil (/sync/state, drawDevs): {"phase": "antes" | "directo" | "medido", "rows": [{"n":
+        cámara, "st": "ok" | "falta" | "no", "ms": cuánto va detrás (o None)}], "sound": el
+        sonido en esa misma cuenta (o None)}. En directo, cuánto va cada una detrás de la
+        primera, ahora (con sus «Retardo ms»: ver SyncLive.lags); medido, lo que llegaba tarde
+        cada una respecto al sonido antes de ajustar (ver _sync_apply_result)."""
+        s = self._sync
+        live = s.get("live") if s else None
+        if live is not None and s.get("t_started"):
+            lags = live.lags()
+            ref = min(lags.values()) if lags else 0.0
+            return {"phase": "directo", "sound": None,
+                    "rows": [{"n": l, "st": "ok" if l in lags else "falta",
+                              "ms": int(round((lags[l] - ref) * 1000)) if l in lags else None}
+                             for l in live.labels]}
+        if s is None and self._sync_map is not None:
+            return self._sync_map
+        labels = list(s["labels"]) if s else list(getattr(self, "_run_labels", None) or [])
+        return {"phase": "antes", "sound": None,
+                "rows": [{"n": l, "st": "falta", "ms": None} for l in labels]}
 
     def _sync_button(self):
         """«Empezar» / «Terminar» de la ventana."""
@@ -13731,6 +14135,7 @@ class CamApp:
             self._sync_ui(force=True)
             return
         run = b.set("preparando", new_run=True)
+        self._sync_map = None
         tmpdir = tempfile.mkdtemp(prefix="camui_sincronizar_")
         outfile = os.path.join(tmpdir, "prueba.mkv")
         aud = plan.get("audio") or {}
@@ -13819,7 +14224,8 @@ class CamApp:
                 return None
             return analyze_sync(s["file"], s["tiles"], s["W"], s["H"], s["labels"],
                                 has_audio=s["has_audio"], ffmpeg=self.eng.ffmpeg,
-                                nbits=s.get("bits"))
+                                nbits=s.get("bits"),
+                                live=live.lags() if live is not None else None)
 
         def done(res):
             self._lock(False)
@@ -13844,6 +14250,8 @@ class CamApp:
     def _sync_apply_result(self, s, res):
         """Aplica lo medido (sync_corrections) y devuelve el texto del resultado."""
         corr = sync_corrections(res, s["delays"], s["av"])
+        self._sync_map = {"phase": "medido", "sound": None,
+                          "rows": [{"n": l, "st": "no", "ms": None} for l in s["labels"]]}
         if corr is None:
             return ("No se vio la claqueta en ninguna cámara: no se ha cambiado nada. Enseña la "
                     "pantalla del móvil a cada cámara, más cerca y unos segundos seguidos, mientras "
@@ -13853,6 +14261,13 @@ class CamApp:
         self._sync_set(new, av)
         s["applied"] = True
         heard = res.get("audio") is not None
+        base = 0.0 if heard else min(late.values())       # sin sonido: desde la primera
+        self._sync_map = {"phase": "medido", "sound": 0 if heard else None,
+                          "rows": [{"n": l, "st": "ok" if l in late else "no",
+                                    "ms": int(round(late[l] - base)) if l in late else None}
+                                   for l in s["labels"]]}
+        if heard:
+            self._av_reset = None              # «Ajuste A/V» ya medido con la cuenta nueva
         slow = max(late, key=lambda l: late[l]) if heard else None
         lines = []
         if heard:
@@ -13887,6 +14302,12 @@ class CamApp:
                          "la más lenta.".format(("%.1f" % (max(new.values()) / 1000.0)).replace(".", ",")))
         log.info("sincronizar: %s", " | ".join(lines))
         return "\n".join(lines)
+
+    def _resync_note(self):
+        """Aviso tras la vista previa mientras el «Ajuste A/V» esté por volver a medir (pack 58,
+        ver _make_vars)."""
+        return (" Pulsa «Sincronizar» una vez: el sonido ahora se coloca de otra forma (más "
+                "fiable)." if getattr(self, "_av_reset", None) else "")
 
     def _sync_set(self, delays, av):
         """Pone esos «Retardo ms» y ese «Ajuste A/V» (sin reiniciar la vista previa por cada uno)."""

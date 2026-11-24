@@ -46,6 +46,11 @@ const { chromium } = require('playwright');
         const on = f.style.display === 'block';
         if (on !== last) { window.__flash.push([now, on]); last = on; }
       }
+      const h = document.querySelector('#devs .h');
+      if (h && document.getElementById('ui').className === 'quiet' && !window.__devsQuiet &&
+          h.textContent.indexOf('Faltan') === 0) {
+        window.__devsQuiet = [h.textContent, getComputedStyle(h).color];
+      }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -58,6 +63,10 @@ const { chromium } = require('playwright');
   const out = await page.evaluate(() => ({
     flashes: window.__flash,
     msg: document.getElementById('msg').textContent,
+    devsHead: (document.querySelector('#devs .h') || {}).textContent || null,
+    devsRows: Array.prototype.map.call(document.querySelectorAll('#devs .r'),
+                                       function (r) { return r.textContent; }),
+    devsQuiet: window.__devsQuiet || null,
     button: document.getElementById('go').textContent,
     outTs: !!(window.AudioContext && AudioContext.prototype.getOutputTimestamp)}));
   out.title = title;
@@ -104,7 +113,16 @@ try:
             marks.setdefault(kind, (run, t, extra))
             if kind == "go":
                 b.set("grabando", new_run=True)          # el PC ya graba la prueba
+            elif kind == "started":                      # en directo: una de tres lista
+                b.set_devs({"phase": "directo", "sound": None, "rows": [
+                    {"n": "USB2.0 PC CAMERA #3", "st": "ok", "ms": 0},
+                    {"n": "Cam <B>", "st": "falta", "ms": None},
+                    {"n": "Otra", "st": "falta", "ms": None}]})
             elif kind == "done":
+                b.set_devs({"phase": "medido", "sound": 0, "rows": [
+                    {"n": "USB2.0 PC CAMERA #3", "st": "ok", "ms": -408},
+                    {"n": "Cam <B>", "st": "ok", "ms": 489},
+                    {"n": "Otra", "st": "no", "ms": None}]})
                 b.set("hecho", "Prueba hecha: todo bien.")
         if "started" in marks and "done" not in marks and b.state == "grabando" and \
                 time.time() > marks["started"][1] + STOP_AFTER:
@@ -139,6 +157,17 @@ try:
 
     assert "Prueba hecha" in res["msg"] and res["button"] == "Otra vez", res
     print("3) al acabar, la página enseña lo que dice el PC y ofrece «Otra vez» OK")
+    q = res["devsQuiet"]
+    assert q and q[0] == "Faltan 2 de 3", q
+    rgb = [int(v) for v in q[1][q[1].index("(") + 1:q[1].index(")")].split(",")[:3]]
+    assert max(rgb) < 120, q                      # mientras parpadea, apagado: no estorba
+    assert res["devsHead"] == "Medidas 2 de 3 \u00b7 sin medir: 1", res["devsHead"]
+    rows = res["devsRows"]
+    assert len(rows) == 4 and "Cam <B>" in rows[1] and "+489 ms" in rows[1], rows
+    assert "no se vio" in rows[2] and rows[3].startswith("Sonido") and "+0 ms" in rows[3], rows
+    print("3b) el mapa en el móvil: parpadeando, «Faltan 2 de 3» en apagado; al acabar, «{0}», una "
+          "línea por cámara (✓ / no se vio, cuánto llegaba tarde) y el sonido OK".format(
+              res["devsHead"]))
 
     b.close()
     import urllib.request
