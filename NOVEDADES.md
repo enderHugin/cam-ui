@@ -1,5 +1,23 @@
 # Novedades de cam-ui
 
+## pack 55 — 2026.11.24
+- **«Sincronizar», mucho más preciso y con 8 cámaras sin problema.** La claqueta ya no son 24
+  destellos sueltos en 30 segundos (con 8 cámaras, a cada una le tocaban tres o cuatro y la
+  medida salía justa o no salía): ahora es un código largo, como un código de barras en el
+  tiempo, de unos diez trozos por segundo, cada uno blanco con pitido o negro en silencio, que
+  parece al azar y nunca se repite (1023 trozos distintos; la idea de usar pi, pero hecho a
+  propósito para esto). Cualquier segundo y medio que vea una cámara basta para saber
+  exactamente en qué momento del código está, y cada cambio blanco/negro afina la medida.
+  - Se enseña el móvil a cada cámara **3 o 4 segundos**, una detrás de otra, y se toca
+    **«Terminar»** (en el móvil o en el PC) cuando todas lo han visto. Dura como mucho 90 s.
+  - La medida va al milisegundo: en las pruebas, con 8 cámaras de 10 a 30 fps que llegaban entre
+    0,1 y 1 s tarde, cada una viendo el móvil solo 3 s y moviéndose, el error fue de unos pocos
+    milisegundos; corregido, todo queda a la vez que el sonido ± un fotograma (más fino no
+    puede ser: cada imagen sale en un fotograma).
+  - Cuando no está segura (dos momentos del código que encajan casi igual), no se inventa
+    nada: esa cámara se queda como estaba.
+  - El resultado dice, para cada cámara, cuántos segundos vio la claqueta y con qué precisión.
+
 ## pack 54 — 2026.11.24
 - El atajo secreto de «vigilar sola, sin avisos» (**Ctrl+Shift+Alt+F12**) ya no exige además la
   tecla Win, y funciona desde cualquier ventana de cam-ui: abre «Actualizaciones» con la casilla

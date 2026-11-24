@@ -1,11 +1,12 @@
-"""La página de la claqueta (pack 52) en un navegador de verdad (Chromium, con Playwright de Node:
-hace falta «node» con el paquete «playwright»; si no está, se dice y no se prueba nada).
+"""La página de la claqueta (packs 52 y 55) en un navegador de verdad (Chromium, con Playwright de
+Node: hace falta «node» con el paquete «playwright»; si no está, se dice y no se prueba nada).
 
 El servidor de «Cámara del móvil» de verdad (PhoneCamHub) sirve /sync; el navegador la abre, se
-toca «Empezar», y aquí se hace de PC: al «go» se pone a grabar, y se apuntan «started» y «done».
-En la página se anota, fotograma a fotograma, cuándo está en blanco la pantalla: los destellos
-tienen que salir todos, con sus duraciones y sus separaciones (las de SYNC_PATTERN, ± un
-refresco de pantalla), y al acabar la página enseña lo que dice el PC."""
+toca «Empezar», y aquí se hace de PC: al «go» se pone a grabar, se apunta «started», a los 12 s se
+le pide que termine («terminando», como el botón «Terminar» del PC) y se apunta «done» con los
+trozos que llegó a dar. En la página se anota, refresco a refresco, cuándo está la pantalla en
+blanco: los cambios blanco/negro tienen que caer donde los del código (SYNC_CODE, a SYNC_BIT_S
+cada trozo), ± un refresco de pantalla; y al acabar, la página enseña lo que dice el PC."""
 import os
 import sys
 import json
@@ -25,8 +26,9 @@ HOME = tempfile.mkdtemp(prefix="camui_claqueta_")
 for n_ in ("PHONECAM_CERT_FILE", "PHONECAM_KEY_FILE", "PHONECAM_CA_CERT_FILE", "PHONECAM_CA_KEY_FILE"):
     setattr(camui, n_, os.path.join(HOME, n_.lower() + ".pem"))
 camui.PHONECAM_DEVICES_FILE = os.path.join(HOME, "devices.json")
-camui.SYNC_PATTERN = camui.SYNC_PATTERN[:8]          # más corta: la prueba dura menos
-P = camui.SYNC_PATTERN
+CODE = camui.SYNC_CODE
+BIT = camui.SYNC_BIT_S
+STOP_AFTER = 12.0                                     # «Terminar» en el PC a los 12 s
 
 NODE_JS = r"""
 const { chromium } = require('playwright');
@@ -98,12 +100,15 @@ try:
     marks = {}
     t_end = time.time() + 140
     while th.is_alive() and time.time() < t_end:
-        for kind, run, t in b.take():
-            marks.setdefault(kind, (run, t))
+        for kind, run, t, extra in b.take():
+            marks.setdefault(kind, (run, t, extra))
             if kind == "go":
                 b.set("grabando", new_run=True)          # el PC ya graba la prueba
             elif kind == "done":
                 b.set("hecho", "Prueba hecha: todo bien.")
+        if "started" in marks and "done" not in marks and b.state == "grabando" and \
+                time.time() > marks["started"][1] + STOP_AFTER:
+            b.set("terminando")                          # «Terminar» en el PC
         time.sleep(0.05)
     th.join(5)
     line = [l for l in (out.get("stdout") or "").splitlines() if l.startswith("RESULT ")]
@@ -111,24 +116,26 @@ try:
     res = json.loads(line[0][len("RESULT "):])
     assert "go" in marks and "started" in marks and "done" in marks, marks
     assert marks["started"][0] == marks["done"][0] == b.run, (marks, b.run)
+    bits = marks["done"][2]
+    assert bits is not None and abs(bits * BIT - (STOP_AFTER + 0.4)) < 1.5, (bits, marks)
     assert res["title"].startswith("Claqueta de cam-ui"), res["title"]
-    print("1) la página abre, «Empezar» llega al PC (go), y al grabar el PC, la claqueta empieza "
-          "y termina avisando (started / done, prueba n.º {0}) OK".format(b.run))
+    print("1) la página abre, «Empezar» llega al PC (go), al grabar el PC empieza (started), y al "
+          "pedirle el PC que termine, para y dice hasta dónde llegó (done: {0} trozos, {1:.1f} s) "
+          "OK".format(bits, bits * BIT))
 
     fl = res["flashes"]
-    ons = [t for t, on in fl if on]
-    offs = [t for t, on in fl if not on and t > (ons[0] if ons else 0)]
-    assert len(ons) == len(P), (len(ons), len(P), fl)
-    durs = [(off - on) / 1000.0 for on, off in zip(ons, offs)]
-    gaps = [(b_ - a_) / 1000.0 for a_, b_ in zip(ons, ons[1:])]
-    want_g = [b_[0] - a_[0] for a_, b_ in zip(P, P[1:])]
-    frame = 0.034
-    for d, (_t, dk) in zip(durs, P):
-        assert abs(d - dk) <= frame, (durs, [q[1] for q in P])
-    for g, wg in zip(gaps, want_g):
-        assert abs(g - wg) <= frame, (gaps, want_g)
-    print("2) en la pantalla: {0} destellos, duraciones {1} s y separaciones como las de la "
-          "claqueta (± un refresco) OK".format(len(ons), "/".join("%.2f" % d for d in durs)))
+    ch = [(t / 1000.0, on) for t, on in fl]
+    ch = ch[next(i for i, (_t, on) in enumerate(ch) if on):]            # desde el primer blanco
+    t0 = ch[0][0]
+    # los cambios del código (en s desde su principio), hasta los trozos que dio
+    want = [(k * BIT, CODE[k] == 1) for k in range(1, bits) if CODE[k] != CODE[k - 1]]
+    got = [(t - t0, on) for t, on in ch[1:] if t - t0 < (bits - 0.5) * BIT]
+    assert len(got) == len(want), (len(got), len(want))
+    err = [g - w for (g, _o1), (w, _o2) in zip(got, want)]
+    assert all(o1 == o2 for (_g, o1), (_w, o2) in zip(got, want))
+    assert max(abs(e) for e in err) <= 0.034, max(abs(e) for e in err)
+    print("2) en la pantalla: {0} cambios blanco/negro, todos donde los del código (el peor, a "
+          "{1:.0f} ms: un refresco de pantalla) OK".format(len(got), 1000 * max(abs(e) for e in err)))
 
     assert "Prueba hecha" in res["msg"] and res["button"] == "Otra vez", res
     print("3) al acabar, la página enseña lo que dice el PC y ofrece «Otra vez» OK")
