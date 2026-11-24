@@ -16,8 +16,10 @@ igual que el resto de archivos. Lo que hace:
       silent_watch  "vigilar sola, sin avisos": mirar cada rato mientras esta abierto, aplicar y
                     reiniciar sin decir nada (casilla oculta: se revela con un atajo secreto)
 
-El motor no depende de ninguna interfaz. Para programas de tkinter hay una ventana y un
-"cableado" ya hechos (tk_install), con todo lo anterior y el atajo Ctrl+Shift+Alt+F12.
+El motor no depende de ninguna interfaz. Encima hay una sola ventana de Actualizaciones y un solo
+comportamiento para todos los programas, en dos versiones: tkinter (tk_install) y Qt (qt_install).
+El atajo secreto Ctrl+Shift+Alt+F12 lo recibe siempre el actualizador, venga de la ventana que venga.
+El actualizador tiene su propia version (PYI_VERSION), aparte de la del programa.
 
 Uso minimo:
     import pyi_update
@@ -35,11 +37,18 @@ import subprocess
 import sys
 import time
 
-PYI_UPDATE_VERSION = 2
+# version de py-installer (instalador + este actualizador). Va aparte de la del programa: sale en la
+# ventana de Actualizaciones y en update.json ("updater"), para saber que actualizador tiene cada uno.
+PYI_VERSION = '1.3.0'
+PYI_UPDATE_VERSION = 3                      # (antiguo: numero entero del actualizador)
 MAX_FILE = 64 * 1048576
 MAX_JSON = 262144
 KEEP_BACKUPS = 5
-SECRET_SHORTCUT = '<Control-Shift-Alt-F12>'
+# el atajo secreto lo recibe SIEMPRE el actualizador (no cada programa): desde cualquier ventana del
+# programa abre Actualizaciones con la casilla oculta "Vigilar sola, sin avisos" a la vista.
+# Con o sin la tecla Win (Cmd en Mac), da igual.
+SECRET_KEYS = 'Ctrl+Shift+Alt+F12'
+SECRET_SHORTCUT = '<Control-Shift-Alt-F12>'        # el mismo, escrito para tkinter
 
 
 def _sha256_file(p):
@@ -128,7 +137,12 @@ class Updater:
                     d = json.load(f)
             except (OSError, ValueError):
                 d = {}
-            self._st = d if isinstance(d, dict) else {}
+            d = d if isinstance(d, dict) else {}
+            # nombres antiguos (widget-arena): watch -> silent_watch, auto_install -> auto_apply
+            for old, new in (('watch', 'silent_watch'), ('auto_install', 'auto_apply')):
+                if old in d and new not in d:
+                    d[new] = bool(d[old])
+            self._st = d
         return self._st
 
     def save_state(self):
@@ -157,8 +171,41 @@ class Updater:
 
     def set_silent_watch(self, on):
         """Vigilar sola, sin avisos: mirar cada rato, aplicar y reiniciar sin decir nada."""
-        self.state()['silent_watch'] = bool(on)
+        st = self.state()
+        st['silent_watch'] = bool(on)
+        st.pop('auto_try', None)
         self.save_state()
+
+    def label(self, info=None):
+        """Nombre corto de una version: 'pack 54', '0.1.9'... (la instalada si no se da info)."""
+        if info is None:
+            return ('pack %s' % self.pack) if self.pack is not None else (self.version or '?')
+        if self.pack is not None and info.get('pack') is not None:
+            return 'pack %s' % info['pack']
+        return str(info.get('version') or '?')
+
+    def auto_try_ok(self, info):
+        """Instalar sin preguntar se intenta una sola vez por version publicada: si falla, o si tras
+        reiniciar sigue pareciendo nueva, no se repite (evita bucles de reinicios)."""
+        key = self.label(info)
+        st = self.state()
+        if st.get('auto_try') == key:
+            return False
+        st['auto_try'] = key
+        self.save_state()
+        return True
+
+    def mark_auto_notice(self, info):
+        """Tras instalar sola, al volver a abrir se avisa de a que version se ha actualizado."""
+        self.state()['auto_notice'] = self.label(info)
+        self.save_state()
+
+    def pop_auto_notice(self):
+        st = self.state()
+        n = st.pop('auto_notice', None)
+        if n is not None:
+            self.save_state()
+        return n if n == self.label() else None
 
     def startup_check_due(self, min_interval=3600):
         """¿Toca mirar al abrir? (no si se pidio no avisar, ni si ya se miro hace poco)."""
@@ -416,8 +463,247 @@ def run(fn, *a):
 
 
 # =============================================================================================
-# Interfaz lista para programas de tkinter
+# Lo que ve el usuario: la misma ventana y el mismo comportamiento en todos los programas.
+#   * _Controller: la logica (al abrir, vigilar, instalar sola, reiniciar cuando se pueda, atajo
+#     secreto). No depende de ninguna libreria de ventanas.
+#   * _Window: la ventana de Actualizaciones (logica), con dos caras: tkinter y Qt.
+#   * tk_install(...) / qt_install(...): lo montan en un programa con una sola llamada.
 # =============================================================================================
+TXT = {
+    'title': 'Actualizaciones',
+    'yours': 'Tu versión:  %s',
+    'published': 'Publicada:  %s',
+    'notes': 'Novedades',
+    'auto': 'Avisarme al abrir el programa si hay una versión nueva',
+    'auto_apply': 'Actualizar automáticamente al abrir, sin preguntar (se guarda una copia por si quieres volver)',
+    'watch': 'Vigilar sola, sin avisos: actualizar en cuanto se publique una versión nueva',
+    'watch_help': 'Mientras el programa está abierto mira cada rato; si hay versión nueva la instala y se '
+                  'reinicia sola cuando no estés haciendo nada. Esta casilla se ve con ' + SECRET_KEYS + '.',
+    'check': 'Buscar de nuevo',
+    'back': 'Volver a la versión anterior',
+    'go': 'Actualizar y reiniciar',
+    'go_diverged': 'Sustituir por la publicada',
+    'close': 'Cerrar',
+    'footer': 'Actualizador py-installer %s' % PYI_VERSION,
+}
+
+
+def _state_text(r, u):
+    v = u.label(r.get('info') or {})
+    return {'newer': 'Hay una versión nueva: %s.' % v,
+            'same': 'Tienes la última versión.',
+            'older': 'Tu versión es más nueva que la publicada.',
+            'diverged': 'Tu copia no coincide con la publicada (puedes sustituirla por la publicada).'}[r['state']]
+
+
+class _Controller:
+    """ui: adaptador de la libreria de ventanas con after(ms, fn), bg(fn, done), ask(info, name) ->
+    (ir, no_preguntar_mas), window() -> _Window, warn(texto), ui_busy() -> bool."""
+
+    def __init__(self, ui, u, name, on_close, busy, notify, startup_delay_ms, watch_every_ms, min_interval):
+        self.ui, self.u, self.name = ui, u, name
+        self.on_close, self.busy, self.notify = on_close, busy or (lambda: False), notify or (lambda t: None)
+        self.watch_every_ms, self.min_interval = watch_every_ms, min_interval
+        self.win = None
+        self._probing = False
+        self._restarting = False
+        if u.enabled:
+            ui.after(startup_delay_ms, self._startup)
+            ui.after(startup_delay_ms + 3000, self._watch_tick)
+
+    # ---- abrir la ventana -------------------------------------------------------------------
+    def show(self, check=True):
+        if self.win is not None and self.win.alive():
+            self.win.lift()
+        else:
+            self.win = self.ui.window()
+        if check:
+            self.win.start_check()
+        return self.win
+
+    def secret(self, *_):
+        """El atajo secreto: abre Actualizaciones con la casilla oculta a la vista."""
+        self.show(check=False).reveal()
+        return 'break'
+
+    # ---- al abrir ---------------------------------------------------------------------------
+    def _startup(self):
+        n = self.u.pop_auto_notice()
+        if n:
+            self.notify('%s se ha actualizado solo a %s' % (self.name, n))
+        st = self.u.state()
+        if (self.u.startup_check_due(self.min_interval) or st.get('silent_watch')) and not self.busy():
+            self._probe(startup=True)
+
+    def _watch_tick(self):
+        try:
+            if self.u.state().get('silent_watch') and not self.busy():
+                self._probe(startup=False)
+        finally:
+            self.ui.after(self.watch_every_ms, self._watch_tick)
+
+    def _probe(self, startup):
+        if self._probing or self._restarting:
+            return
+        self._probing = True
+        self.ui.bg(self.u.check, lambda r: self._probed(r, startup))
+
+    def _probed(self, r, startup):
+        self._probing = False
+        if not r.get('ok') or r.get('state') != 'newer' or self._restarting:
+            return
+        st = self.u.state()
+        if st.get('silent_watch') or (startup and st.get('auto_apply')):
+            self.auto_install(r['info'])
+        elif startup and st.get('auto', True) is not False:
+            go, dont = self.ui.ask(r['info'], self.name)
+            if dont:
+                self.u.set_auto(False)
+            if go == 'go':
+                self.show(check=False).apply_result(r)
+            elif go == 'notes':
+                self.show(check=False).apply_result(r, ask=True)
+
+    # ---- instalar sola ----------------------------------------------------------------------
+    def auto_install(self, info):
+        if not self.u.auto_try_ok(info):
+            return
+        self.notify('Instalando la versión nueva de %s (%s)…' % (self.name, self.u.label(info)))
+        self.ui.bg(lambda: run(self.u.apply, info), lambda res: self._auto_done(res, info))
+
+    def _auto_done(self, res, info):
+        if not res.get('ok'):
+            self.u._say('actualizar: la actualizacion automatica fallo: %s' % res.get('error'))
+            self.notify('No se pudo actualizar solo: %s' % res.get('error'))
+            return
+        self.u.mark_auto_notice(info)
+        self.restart_when_idle()
+
+    # ---- reiniciar --------------------------------------------------------------------------
+    def restart_when_idle(self, tries=0):
+        """No reinicia mientras el programa este ocupado (busy, p.ej. grabando: espera lo que haga falta)
+        ni en mitad de un arrastre, con un menu o un dialogo abierto (espera hasta 2 minutos)."""
+        self._restarting = True
+        if self.busy():
+            self.ui.after(10000, lambda: self.restart_when_idle(tries))
+            return
+        if self.ui.ui_busy() and tries < 24:
+            self.ui.after(5000, lambda: self.restart_when_idle(tries + 1))
+            return
+        self.restart()
+
+    def restart(self):
+        try:
+            self.u.spawn_restart()
+        except Exception as e:
+            self._restarting = False
+            self.ui.warn('La actualización está instalada, pero no se pudo reiniciar sola.\n'
+                         'Cierra y abre de nuevo %s.\n\n(%s)' % (self.name, e))
+            return
+        self.on_close()
+
+
+class _Window:
+    """La ventana de Actualizaciones, sin la libreria de ventanas (la ponen _TkWindow / _QtWindow con
+    _w_status, _w_remote, _w_notes, _w_enable, _w_go_text, _w_show_watch, _w_confirm, alive, lift, later)."""
+
+    def _init_logic(self, ctl):
+        self.ctl, self.u = ctl, ctl.u
+        self.info = None
+        self.state = None
+
+    def local_text(self):
+        loc = self.u.local_info()
+        t = self.u.label()
+        if self.u.pack is not None and loc.get('version'):
+            t += '  ·  ' + loc['version']
+        return TXT['yours'] % t
+
+    # casillas
+    def toggled_auto(self, on):
+        self.u.set_auto(on)
+
+    def toggled_apply(self, on):
+        self.u.set_auto_apply(on)
+        if on:
+            self._w_set_check('auto', True)
+
+    def toggled_watch(self, on):
+        self.u.set_silent_watch(on)
+        if not on:
+            self._w_show_watch(False)
+
+    def reveal(self):
+        self._w_show_watch(True)
+        self.lift()
+
+    # buscar / aplicar / volver
+    def start_check(self):
+        if not self.u.enabled:
+            return
+        self._w_status('Buscando la versión publicada…')
+        self._w_enable('check', False)
+        self.ctl.ui.bg(self.u.check, lambda r: self.apply_result(r, ask=True))   # buscar a mano = revisar antes
+
+    def apply_result(self, r, ask=False):
+        """Muestra el resultado de check(). Si hay version nueva y no se pide revisar (ask), la instala."""
+        if not self.alive():
+            return
+        self._w_enable('check', True)
+        if not r.get('ok'):
+            self._w_status('No se pudo comprobar: %s\nRevisa la conexión e inténtalo de nuevo.' % r.get('error'))
+            return
+        self.info, self.state = r['info'], r['state']
+        self._w_remote(TXT['published'] % self.u.label(self.info))
+        self._w_status(_state_text(r, self.u))
+        self._w_notes(self.info.get('notes') or '')
+        self._w_go_text(TXT['go_diverged'] if self.state == 'diverged' else TXT['go'])
+        self._w_enable('go', self.state in ('newer', 'diverged'))
+        if self.state == 'newer' and not ask:
+            self.apply()
+
+    def apply(self):
+        if not self.info:
+            return
+        self._w_status('Descargando y comprobando…')
+        self._w_enable('go', False)
+        self._w_enable('check', False)
+        self.ctl.ui.bg(lambda: run(self.u.apply, self.info), self._applied)
+
+    def _applied(self, res):
+        if not self.alive():
+            if res.get('ok'):
+                self.ctl.restart_when_idle()
+            return
+        self._w_enable('check', True)
+        if not res.get('ok'):
+            self._w_status('No se pudo completar: %s\nNo se ha cambiado nada.' % res.get('error'))
+            self._w_enable('go', True)
+            return
+        self._w_enable('back', True)
+        if self.ctl.busy():
+            self._w_status('Instalado. %s se reiniciará en cuanto termine lo que está haciendo.' % self.ctl.name)
+        else:
+            self._w_status('Listo. El programa se reinicia en unos segundos…')
+        self.later(800, self.ctl.restart_when_idle)
+
+    def rollback(self):
+        if not self._w_confirm('¿Volver a la versión anterior y reiniciar %s?' % self.ctl.name):
+            return
+        self._w_status('Restaurando…')
+        self.ctl.ui.bg(lambda: run(self.u.rollback), self._rolled)
+
+    def _rolled(self, res):
+        if not res.get('ok'):
+            if self.alive():
+                self._w_status('No se pudo volver atrás: %s' % res.get('error'))
+            return
+        if self.alive():
+            self._w_status('Hecho. El programa se reinicia en unos segundos…')
+        self.later(800, self.ctl.restart_when_idle)
+
+
+# ---- tkinter -------------------------------------------------------------------------------
 def _tk_colors(widget):
     """Colores del tema ttk del programa (para que las ventanas del actualizador vayan a juego)."""
     from tkinter import ttk
@@ -429,36 +715,35 @@ def _tk_colors(widget):
 
 
 def tk_install(root, updater, app_name, on_close=None, busy=None, startup_delay_ms=12000,
-               watch_every_ms=10 * 60 * 1000, min_interval=3600):
-    """Deja montado todo el sistema en un programa de tkinter:
-      * al abrir (pasados unos segundos): mira si hay version nueva; pregunta, o aplica sola si se
-        marco "actualizar sin preguntar";
-      * mientras esta abierto: si esta activo "vigilar sola, sin avisos", mira cada rato, aplica y
-        reinicia sin decir nada;
-      * devuelve un objeto con .show() para abrir la ventana de actualizaciones (ponlo en un menu).
-    on_close: funcion que cierra el programa guardando lo suyo (por defecto root.destroy).
-    busy: funcion que devuelve True si ahora no conviene reiniciar (p.ej. grabando)."""
-    return _TkUpdates(root, updater, app_name, on_close or root.destroy, busy or (lambda: False),
+               watch_every_ms=10 * 60 * 1000, min_interval=3600, notify=None):
+    """Deja montado todo en un programa de tkinter y devuelve el controlador (.show() abre la
+    ventana: ponlo en un menu). Hace, igual que en todos los programas:
+      * al abrir (pasados unos segundos): mira si hay version nueva; pregunta, o la instala sola si
+        se marco "actualizar sin preguntar";
+      * con "vigilar sola, sin avisos": mira cada rato, instala y reinicia sin decir nada;
+      * el atajo secreto Ctrl+Shift+Alt+F12 (con o sin Win), desde cualquier ventana del programa.
+    on_close: cierra el programa guardando lo suyo (por defecto root.destroy).
+    busy: devuelve True si ahora no conviene reiniciar (p.ej. grabando).
+    notify: muestra un aviso breve (p.ej. en la barra de estado); opcional."""
+    ui = _TkUI(root, app_name)
+    ctl = _Controller(ui, updater, app_name, on_close or root.destroy, busy, notify,
                       startup_delay_ms, watch_every_ms, min_interval)
+    ui.ctl = ctl
+    try:
+        root.bind_all(SECRET_SHORTCUT, ctl.secret, add='+')
+    except Exception:
+        pass
+    return ctl
 
 
-class _TkUpdates:
-    def __init__(self, root, u, name, on_close, busy, startup_delay_ms, watch_every_ms, min_interval):
-        self.root, self.u, self.name, self.on_close, self.busy = root, u, name, on_close, busy
-        self.watch_every_ms, self.min_interval = watch_every_ms, min_interval
-        self.win = None
-        # el atajo secreto funciona desde cualquier ventana del programa (no solo con la de
-        # actualizaciones delante): la abre y muestra la casilla oculta. Win pulsada o no, da igual.
-        try:
-            root.bind_all(SECRET_SHORTCUT, self._secret, add='+')
-        except Exception:
-            pass
-        if u.enabled:
-            root.after(startup_delay_ms, self._startup)
-            root.after(startup_delay_ms + 3000, self._watch_tick)
+class _TkUI:
+    def __init__(self, root, name):
+        self.root, self.name, self.ctl = root, name, None
 
-    # hilos: la red nunca bloquea la ventana
-    def _bg(self, fn, done):
+    def after(self, ms, fn):
+        self.root.after(ms, fn)
+
+    def bg(self, fn, done):
         import threading
         box = {}
 
@@ -474,49 +759,25 @@ class _TkUpdates:
                 done(box.get('r') or {'ok': False, 'error': 'sin respuesta'})
         self.root.after(150, poll)
 
-    def restart(self):
+    def ui_busy(self):
         try:
-            self.u.spawn_restart()
-        except Exception as e:
-            from tkinter import messagebox
-            messagebox.showwarning(self.name, 'La actualización está instalada, pero no se pudo reiniciar sola.\n'
-                                   'Cierra y abre de nuevo %s.\n\n(%s)' % (self.name, e))
-            return
-        self.on_close()
+            return bool(self.root.grab_current())
+        except Exception:
+            return False
 
-    def _startup(self):
-        if self.u.startup_check_due(self.min_interval) and not self.busy():
-            self._bg(self.u.check, self._startup_checked)
+    def warn(self, text):
+        from tkinter import messagebox
+        messagebox.showwarning(self.name, text)
 
-    def _startup_checked(self, r):
-        act = self.u.startup_action(r)
-        if act == 'apply':
-            self.show(check=False).apply_result(r)
-        elif act == 'ask':
-            go, dont_ask = self._ask(r['info'])
-            if dont_ask:
-                self.u.set_auto(False)
-            if go:
-                self.show(check=False).apply_result(r)
+    def window(self):
+        return _TkWindow(self.ctl)
 
-    def _watch_tick(self):
-        try:
-            if self.u.state().get('silent_watch') and not self.busy():
-                self._bg(self.u.check, self._watch_checked)
-        finally:
-            self.root.after(self.watch_every_ms, self._watch_tick)
-
-    def _watch_checked(self, r):
-        if not r.get('ok') or r.get('state') != 'newer' or not self.u.state().get('silent_watch') or self.busy():
-            return
-        self._bg(lambda: run(self.u.apply, r['info']), lambda res: res.get('ok') and self.restart())
-
-    def _ask(self, info):
+    def ask(self, info, name):
         import tkinter as tk
         from tkinter import ttk
-        res = {'go': False, 'dont': False}
+        res = {'go': None}
         top = tk.Toplevel(self.root)
-        top.title(self.name)
+        top.title(name)
         bg, fg, field = _tk_colors(top)
         if bg:
             top.configure(bg=bg)
@@ -524,92 +785,92 @@ class _TkUpdates:
         top.resizable(False, False)
         f = ttk.Frame(top, padding=14)
         f.pack(fill='both', expand=True)
-        v = info.get('version') or ''
-        ttk.Label(f, text='Hay una versión nueva de %s%s.' % (self.name, (' (' + v + ')') if v else ''),
+        ttk.Label(f, text='Hay una versión nueva de %s (%s).' % (name, self.ctl.u.label(info)),
                   font=('', 10, 'bold')).pack(anchor='w')
-        ttk.Label(f, text='Se guarda una copia de la actual por si quieres volver atrás.', wraplength=360).pack(anchor='w', pady=(4, 8))
+        ttk.Label(f, text='¿Descargarla e instalarla ahora? Se guarda una copia de la versión actual y el '
+                          'programa se reinicia; tus datos no se tocan.', wraplength=380).pack(anchor='w', pady=(4, 8))
         dont = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text='No preguntar más al abrir', variable=dont).pack(anchor='w')
+        ttk.Checkbutton(f, text='No preguntar más al abrir (prefiero actualizar a mano)', variable=dont).pack(anchor='w')
         b = ttk.Frame(f)
         b.pack(fill='x', pady=(10, 0))
 
         def close(go):
-            res.update(go=go, dont=bool(dont.get()))
+            res['go'] = go
             top.destroy()
-        ttk.Button(b, text='Ver novedades', command=lambda: (close(False), self.show(check=False).apply_result({'ok': True, 'state': 'newer', 'info': info, 'local': self.u.local_info()}, ask=True))).pack(side='left')
-        ttk.Button(b, text='Ahora no', command=lambda: close(False)).pack(side='right')
-        ttk.Button(b, text='Actualizar', command=lambda: close(True)).pack(side='right', padx=(0, 6))
-        top.protocol('WM_DELETE_WINDOW', lambda: close(False))
+        ttk.Button(b, text='Ver novedades', command=lambda: close('notes')).pack(side='left')
+        ttk.Button(b, text='Ahora no', command=lambda: close(None)).pack(side='right')
+        ttk.Button(b, text='Actualizar', command=lambda: close('go')).pack(side='right', padx=(0, 6))
+        top.protocol('WM_DELETE_WINDOW', lambda: close(None))
         top.grab_set()
         self.root.wait_window(top)
-        return res['go'], res['dont']
-
-    def _secret(self, _e=None):
-        w = self.show(check=False)
-        w._reveal()
-        return 'break'
-
-    def show(self, check=True):
-        if self.win is not None and self.win.alive():
-            self.win.lift()
-        else:
-            self.win = _TkUpdateWindow(self)
-        if check:
-            self.win.start_check()
-        return self.win
+        return res['go'], bool(dont.get())
 
 
-class _TkUpdateWindow:
+class _TkWindow(_Window):
     def __init__(self, ctl):
         import tkinter as tk
         from tkinter import ttk
-        self.ctl, self.u = ctl, ctl.u
-        self.info = None
-        top = self.top = tk.Toplevel(ctl.root)
-        top.title('Actualizaciones - ' + ctl.name)
+        self._init_logic(ctl)
+        u = self.u
+        top = self.top = tk.Toplevel(ctl.ui.root)
+        top.title('%s - %s' % (TXT['title'], ctl.name))
         bg, fg, field = _tk_colors(top)
         if bg:
             top.configure(bg=bg)
-        top.minsize(460, 380)
+        top.minsize(520, 440)
         f = ttk.Frame(top, padding=14)
         f.pack(fill='both', expand=True)
-        loc = self.u.local_info()
-        cur = loc['version'] + ((' (pack %s)' % loc['pack']) if loc['pack'] is not None else '')
-        ttk.Label(f, text='Versión instalada: ' + (cur or '?'), font=('', 10, 'bold')).pack(anchor='w')
-        self.status = ttk.Label(f, text='', wraplength=420)
-        self.status.pack(anchor='w', pady=(4, 6))
-        self.notes = tk.Text(f, height=10, wrap='word', relief='flat', borderwidth=0, padx=8, pady=6)
+        # botones abajo (se colocan antes para que nunca se queden fuera al encoger)
+        foot = ttk.Label(f, text=TXT['footer'], font=('', 8))
+        foot.pack(side='bottom', anchor='e', pady=(6, 0))
+        if fg:
+            foot.configure(foreground='#888888')
+        b = self.buttons = ttk.Frame(f)
+        b.pack(side='bottom', fill='x', pady=(10, 0))
+        self.b_check = ttk.Button(b, text=TXT['check'], command=self.start_check)
+        self.b_check.pack(side='left')
+        self.b_back = ttk.Button(b, text=TXT['back'], command=self.rollback)
+        self.b_back.pack(side='left', padx=6)
+        ttk.Button(b, text=TXT['close'], command=top.destroy).pack(side='right')
+        self.b_go = ttk.Button(b, text=TXT['go'], command=self.apply)
+        self.b_go.pack(side='right', padx=6)
+        ttk.Label(f, text=TXT['title'], font=('', 13, 'bold')).pack(anchor='w')
+        ttk.Label(f, text=self.local_text()).pack(anchor='w', pady=(4, 0))
+        self.l_remote = ttk.Label(f, text=TXT['published'] % '—')
+        self.l_remote.pack(anchor='w')
+        self.status = ttk.Label(f, text='', wraplength=480, justify='left')
+        self.status.pack(anchor='w', pady=(6, 6))
+        ttk.Label(f, text=TXT['notes']).pack(anchor='w')
+        nf = ttk.Frame(f)
+        nf.pack(fill='both', expand=True, pady=(2, 6))
+        self.notes = tk.Text(nf, height=8, wrap='word', relief='flat', borderwidth=0, padx=8, pady=6)
         if field and fg:
             self.notes.configure(bg=field, fg=fg, insertbackground=fg)
-        self.notes.pack(fill='both', expand=True)
+        sb = ttk.Scrollbar(nf, orient='vertical', command=self.notes.yview)
+        self.notes.configure(yscrollcommand=sb.set)
+        sb.pack(side='right', fill='y')
+        self.notes.pack(side='left', fill='both', expand=True)
         self.notes.configure(state='disabled')
-        st = self.u.state()
-        self.v_auto = tk.BooleanVar(value=st.get('auto', True) is not False)
-        self.v_apply = tk.BooleanVar(value=bool(st.get('auto_apply')))
-        self.v_watch = tk.BooleanVar(value=bool(st.get('silent_watch')))
-        ttk.Checkbutton(f, text='Avisarme al abrir si hay una versión nueva', variable=self.v_auto,
-                        command=lambda: self.u.set_auto(self.v_auto.get())).pack(anchor='w', pady=(8, 0))
-        ttk.Checkbutton(f, text='Actualizar automáticamente al abrir, sin preguntar', variable=self.v_apply,
-                        command=self._apply_toggled).pack(anchor='w')
-        self.chk_watch = ttk.Checkbutton(f, text='Vigilar sola, sin avisos (instala y reinicia sola)', variable=self.v_watch,
-                                         command=self._watch_toggled)
-        if self.v_watch.get():
-            self.chk_watch.pack(anchor='w')
-        b = self.buttons = ttk.Frame(f)
-        b.pack(fill='x', pady=(10, 0))
-        self.b_check = ttk.Button(b, text='Buscar', command=self.start_check)
-        self.b_check.pack(side='left')
-        self.b_back = ttk.Button(b, text='Volver a la anterior', command=self.rollback)
-        self.b_back.pack(side='left', padx=6)
-        if not self.u.backup_available():
-            self.b_back.state(['disabled'])
-        ttk.Button(b, text='Cerrar', command=top.destroy).pack(side='right')
-        self.b_go = ttk.Button(b, text='Actualizar', command=self.apply)
-        self.b_go.pack(side='right', padx=6)
-        self.b_go.state(['disabled'])
-        if not self.u.enabled:
-            self._set('Este programa no está instalado con su instalador: no puede actualizarse solo.')
-            self.b_check.state(['disabled'])
+        st = u.state()
+        self.v = {'auto': tk.BooleanVar(value=st.get('auto', True) is not False),
+                  'apply': tk.BooleanVar(value=bool(st.get('auto_apply'))),
+                  'watch': tk.BooleanVar(value=bool(st.get('silent_watch')))}
+        ttk.Checkbutton(f, text=TXT['auto'], variable=self.v['auto'],
+                        command=lambda: self.toggled_auto(self.v['auto'].get())).pack(anchor='w')
+        ttk.Checkbutton(f, text=TXT['auto_apply'], variable=self.v['apply'],
+                        command=lambda: self.toggled_apply(self.v['apply'].get())).pack(anchor='w')
+        self.watch_box = ttk.Frame(f)
+        ttk.Checkbutton(self.watch_box, text=TXT['watch'], variable=self.v['watch'],
+                        command=lambda: self.toggled_watch(self.v['watch'].get())).pack(anchor='w')
+        ttk.Label(self.watch_box, text=TXT['watch_help'], wraplength=480, justify='left',
+                  font=('', 8)).pack(anchor='w', padx=(22, 0))
+        self._w_show_watch(self.v['watch'].get())
+        self._w_enable('go', False)
+        self._w_enable('back', u.backup_available())
+        top.bind('<Escape>', lambda e: top.destroy())
+        if not u.enabled:
+            self._w_status('Este programa no está instalado con su instalador: no puede actualizarse solo.')
+            self._w_enable('check', False)
 
     def alive(self):
         try:
@@ -620,86 +881,268 @@ class _TkUpdateWindow:
     def lift(self):
         self.top.deiconify()
         self.top.lift()
-
-    def _set(self, text, notes=None):
-        self.status.configure(text=text)
-        if notes is not None:
-            self.notes.configure(state='normal')
-            self.notes.delete('1.0', 'end')
-            self.notes.insert('1.0', notes)
-            self.notes.configure(state='disabled')
-
-    def _apply_toggled(self):
-        self.u.set_auto_apply(self.v_apply.get())
-        if self.v_apply.get():
-            self.v_auto.set(True)
-
-    def _reveal(self, _e=None):
-        if not self.chk_watch.winfo_ismapped():
-            self.chk_watch.pack(anchor='w', before=self.buttons)
-        self.lift()
         try:
-            self.chk_watch.focus_set()
+            self.top.focus_force()
         except Exception:
             pass
 
-    def _watch_toggled(self):
-        on = bool(self.v_watch.get())
-        self.u.set_silent_watch(on)
-        if not on:
-            self.chk_watch.pack_forget()
+    def later(self, ms, fn):
+        self.ctl.ui.root.after(ms, fn)
 
-    def start_check(self):
-        self._set('Buscando…')
-        self.b_check.state(['disabled'])
-        self.ctl._bg(self.u.check, lambda r: self.apply_result(r, ask=True))   # buscar a mano = revisar antes
+    def watch_visible(self):
+        return bool(self.watch_box.winfo_ismapped())
 
-    def apply_result(self, r, ask=False):
-        """Muestra el resultado de check(). Si es una version nueva y no se pide revisar (ask), aplica."""
-        if not self.alive():
-            return
-        self.b_check.state(['!disabled'])
-        if not r.get('ok'):
-            self._set('No se pudo comprobar: %s' % r.get('error'))
-            return
-        self.info = r['info']
-        v = self.info.get('version') or ''
-        txt = {'newer': 'Hay una versión nueva: %s.' % v, 'same': 'Tienes la última versión.',
-               'older': 'Tu versión es más nueva que la publicada.',
-               'diverged': 'Tu copia no coincide con la publicada (puedes reinstalarla).'}[r['state']]
-        self._set(txt, self.info.get('notes') or '')
-        if r['state'] in ('newer', 'diverged'):
-            self.b_go.state(['!disabled'])
-        if r['state'] == 'newer' and not ask:
-            self.apply()
+    def _w_status(self, text):
+        self.status.configure(text=text)
 
-    def apply(self):
-        if not self.info:
-            return
-        self._set('Descargando y comprobando…')
-        self.b_go.state(['disabled'])
-        self.ctl._bg(lambda: run(self.u.apply, self.info), self._applied)
+    def _w_remote(self, text):
+        self.l_remote.configure(text=text)
 
-    def _applied(self, res):
-        if not self.alive():
-            return
-        if not res.get('ok'):
-            self._set('No se pudo actualizar: %s' % res.get('error'))
-            self.b_go.state(['!disabled'])
-            return
-        self._set('Actualizado. Reiniciando…')
-        self.top.after(800, self.ctl.restart)
+    def _w_notes(self, text):
+        self.notes.configure(state='normal')
+        self.notes.delete('1.0', 'end')
+        self.notes.insert('1.0', text)
+        self.notes.configure(state='disabled')
 
-    def rollback(self):
+    def _w_enable(self, which, on):
+        {'check': self.b_check, 'go': self.b_go, 'back': self.b_back}[which].state(['!disabled' if on else 'disabled'])
+
+    def _w_go_text(self, text):
+        self.b_go.configure(text=text)
+
+    def _w_set_check(self, which, on):
+        self.v[which].set(on)
+
+    def _w_show_watch(self, on):
+        if on and not self.watch_box.winfo_ismapped():
+            self.watch_box.pack(anchor='w', fill='x', pady=(2, 0))
+        elif not on:
+            self.watch_box.pack_forget()
+
+    def _w_confirm(self, text):
         from tkinter import messagebox
-        if not messagebox.askyesno(self.ctl.name, '¿Volver a la versión anterior y reiniciar?', parent=self.top):
-            return
-        res = run(self.u.rollback)
-        if not res.get('ok'):
-            self._set('No se pudo volver atrás: %s' % res.get('error'))
-            return
-        self._set('Hecho. Reiniciando…')
-        self.top.after(800, self.ctl.restart)
+        return messagebox.askyesno(self.ctl.name, text, parent=self.top)
+
+
+# ---- Qt (PySide6, o PyQt6/PyQt5) ------------------------------------------------------------
+def _qt():
+    for mod in ('PySide6', 'PyQt6', 'PyQt5'):
+        if mod in sys.modules:
+            break
+    else:
+        mod = 'PySide6'
+    import importlib
+    return (importlib.import_module(mod + '.QtCore'), importlib.import_module(mod + '.QtWidgets'))
+
+
+def qt_install(app_name, updater, on_close, parent=None, busy=None, notify=None, startup_delay_ms=12000,
+               watch_every_ms=10 * 60 * 1000, min_interval=3600):
+    """Lo mismo que tk_install, para programas de Qt. Llamalo con la QApplication ya creada.
+    on_close: cierra el programa guardando lo suyo. parent: ventana de la que cuelgan los dialogos."""
+    QtCore, QtWidgets = _qt()
+    ui = _QtUI(app_name, parent)
+    ctl = _Controller(ui, updater, app_name, on_close, busy, notify, startup_delay_ms, watch_every_ms, min_interval)
+    ui.ctl = ctl
+    ui.install_secret(ctl.secret)
+    return ctl
+
+
+class _QtUI:
+    def __init__(self, name, parent):
+        self.QtCore, self.QtWidgets = _qt()
+        self.name, self.parent, self.ctl = name, parent, None
+        self._keep = []
+
+    def after(self, ms, fn):
+        self.QtCore.QTimer.singleShot(int(ms), fn)
+
+    def bg(self, fn, done):
+        import threading
+        box = {}
+
+        def work():
+            box['r'] = fn()
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+
+        def poll():
+            if t.is_alive():
+                self.after(150, poll)
+            else:
+                done(box.get('r') or {'ok': False, 'error': 'sin respuesta'})
+        self.after(150, poll)
+
+    def ui_busy(self):
+        W, C = self.QtWidgets, self.QtCore
+        app = W.QApplication
+        return (app.mouseButtons() != C.Qt.MouseButton.NoButton or app.activeModalWidget() is not None
+                or app.activePopupWidget() is not None)
+
+    def warn(self, text):
+        self.QtWidgets.QMessageBox.warning(self.parent, self.name, text)
+
+    def window(self):
+        return _QtWindow(self.ctl)
+
+    def install_secret(self, fn):
+        """Filtro de teclas de toda la aplicacion: el atajo llega venga de la ventana que venga."""
+        C = self.QtCore
+        K, M = C.Qt.Key, C.Qt.KeyboardModifier
+        need = M.ControlModifier | M.ShiftModifier | M.AltModifier
+
+        class _Secret(C.QObject):
+            def eventFilter(self, obj, ev):
+                try:
+                    if ev.type() == C.QEvent.Type.KeyPress and ev.key() == K.Key_F12 and \
+                            (ev.modifiers() & need) == need and not ev.isAutoRepeat():
+                        C.QTimer.singleShot(0, fn)
+                        return True
+                except Exception:
+                    pass
+                return False
+        f = _Secret()
+        self._keep.append(f)
+        self.QtWidgets.QApplication.instance().installEventFilter(f)
+
+    def ask(self, info, name):
+        W = self.QtWidgets
+        box = W.QMessageBox(W.QMessageBox.Icon.Question, name,
+                            'Hay una versión nueva de %s (%s).\n\n¿Descargarla e instalarla ahora? Se guarda una '
+                            'copia de la versión actual y el programa se reinicia; tus datos no se tocan.'
+                            % (name, self.ctl.u.label(info)), parent=self.parent)
+        chk = W.QCheckBox('No preguntar más al abrir (prefiero actualizar a mano)')
+        box.setCheckBox(chk)
+        go = box.addButton('Actualizar', W.QMessageBox.ButtonRole.AcceptRole)
+        notes = box.addButton('Ver novedades', W.QMessageBox.ButtonRole.HelpRole)
+        box.addButton('Ahora no', W.QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(go)
+        box.exec()
+        c = box.clickedButton()
+        return ('go' if c is go else 'notes' if c is notes else None), chk.isChecked()
+
+
+class _QtWindow(_Window):
+    def __init__(self, ctl):
+        W, C = ctl.ui.QtWidgets, ctl.ui.QtCore
+        self._init_logic(ctl)
+        u = self.u
+        d = self.top = W.QDialog(ctl.ui.parent)
+        d.setWindowTitle('%s - %s' % (TXT['title'], ctl.name))
+        d.setAttribute(C.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        d.setAttribute(C.Qt.WidgetAttribute.WA_QuitOnClose, False)
+        d.setMinimumSize(560, 460)
+        self._closed = False
+        d.destroyed.connect(lambda *a: setattr(self, '_closed', True))
+        d.finished.connect(lambda *a: setattr(self, '_closed', True))
+        lay = W.QVBoxLayout(d)
+        t = W.QLabel(TXT['title'])
+        fnt = t.font()
+        fnt.setPointSizeF(fnt.pointSizeF() * 1.35)
+        fnt.setBold(True)
+        t.setFont(fnt)
+        lay.addWidget(t)
+        lay.addWidget(W.QLabel(self.local_text()))
+        self.l_remote = W.QLabel(TXT['published'] % '—')
+        lay.addWidget(self.l_remote)
+        self.status = W.QLabel('')
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        lay.addWidget(W.QLabel(TXT['notes']))
+        self.notes = W.QPlainTextEdit()
+        self.notes.setReadOnly(True)
+        lay.addWidget(self.notes, 1)
+        st = u.state()
+        self.c = {}
+        for key, text, val, fn in (('auto', TXT['auto'], st.get('auto', True) is not False, self.toggled_auto),
+                                   ('apply', TXT['auto_apply'], bool(st.get('auto_apply')), self.toggled_apply)):
+            cb = self.c[key] = W.QCheckBox(text)
+            cb.setChecked(val)
+            cb.toggled.connect(fn)
+            lay.addWidget(cb)
+        self.watch_box = W.QWidget()
+        wl = W.QVBoxLayout(self.watch_box)
+        wl.setContentsMargins(0, 0, 0, 0)
+        cb = self.c['watch'] = W.QCheckBox(TXT['watch'])
+        cb.setChecked(bool(st.get('silent_watch')))
+        cb.toggled.connect(self.toggled_watch)
+        wl.addWidget(cb)
+        h = W.QLabel(TXT['watch_help'])
+        h.setWordWrap(True)
+        h.setContentsMargins(22, 0, 0, 0)
+        h.setEnabled(False)
+        wl.addWidget(h)
+        lay.addWidget(self.watch_box)
+        bar = W.QHBoxLayout()
+        self.b_check = W.QPushButton(TXT['check'])
+        self.b_check.clicked.connect(self.start_check)
+        self.b_back = W.QPushButton(TXT['back'])
+        self.b_back.clicked.connect(self.rollback)
+        self.b_go = W.QPushButton(TXT['go'])
+        self.b_go.clicked.connect(self.apply)
+        close = W.QPushButton(TXT['close'])
+        close.clicked.connect(d.close)
+        bar.addWidget(self.b_check)
+        bar.addWidget(self.b_back)
+        bar.addStretch(1)
+        bar.addWidget(self.b_go)
+        bar.addWidget(close)
+        lay.addLayout(bar)
+        foot = W.QLabel(TXT['footer'])
+        foot.setEnabled(False)
+        foot.setAlignment(C.Qt.AlignmentFlag.AlignRight)
+        lay.addWidget(foot)
+        self._w_show_watch(cb.isChecked())
+        self._w_enable('go', False)
+        self._w_enable('back', u.backup_available())
+        if not u.enabled:
+            self._w_status('Este programa no está instalado con su instalador: no puede actualizarse solo.')
+            self._w_enable('check', False)
+        d.show()
+        self.lift()
+
+    def alive(self):
+        if self._closed:
+            return False
+        try:
+            return self.top.isVisible()
+        except Exception:
+            return False
+
+    def lift(self):
+        self.top.show()
+        self.top.raise_()
+        self.top.activateWindow()
+
+    def later(self, ms, fn):
+        self.ctl.ui.after(ms, fn)
+
+    def watch_visible(self):
+        return not self.watch_box.isHidden()
+
+    def _w_status(self, text):
+        self.status.setText(text)
+
+    def _w_remote(self, text):
+        self.l_remote.setText(text)
+
+    def _w_notes(self, text):
+        self.notes.setPlainText(text)
+
+    def _w_enable(self, which, on):
+        {'check': self.b_check, 'go': self.b_go, 'back': self.b_back}[which].setEnabled(bool(on))
+
+    def _w_go_text(self, text):
+        self.b_go.setText(text)
+
+    def _w_set_check(self, which, on):
+        self.c[which].setChecked(on)
+
+    def _w_show_watch(self, on):
+        self.watch_box.setVisible(bool(on))
+
+    def _w_confirm(self, text):
+        W = self.ctl.ui.QtWidgets
+        return W.QMessageBox.question(self.top, self.ctl.name, text) == W.QMessageBox.StandardButton.Yes
 
 
 if __name__ == '__main__':

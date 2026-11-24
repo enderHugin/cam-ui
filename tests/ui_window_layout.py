@@ -36,115 +36,85 @@ root = tk.Tk()
 root.geometry("1x1+0+0")
 
 # ---------------------------------------------------------------------------------------------
-# 1) Ventana "Actualizaciones": con las novedades largas (NOVEDADES.md real, que ya pasa de las
-#    12 líneas que cabían antes), los botones de abajo (Buscar de nuevo / Volver a la versión
-#    anterior / Actualizar y reiniciar / Cerrar) deben seguir viéndose enteros -- antes
-#    quedaban completamente recortados fuera de la ventana (0 píxeles de alto), ver captura del
-#    usuario. Y el cuadro de Novedades debe poder recorrerse entero con su propia barra.
+# 1) Ventana "Actualizaciones" (la común de py-installer, pyi_update): con las novedades largas
+#    (NOVEDADES.md real), los botones de abajo siguen viéndose enteros y las novedades tienen su
+#    barra; el atajo secreto Ctrl+Shift+Alt+F12 se recibe desde la ventana principal de cam-ui
+#    (abre Actualizaciones con «vigilar sola» a la vista) y NO dispara el reinicio de emergencia
+#    de F12.
 # ---------------------------------------------------------------------------------------------
-fake_app = types.SimpleNamespace(root=root, recording=False, _bg=lambda fn, cb: None)
-dlg = camui.UpdateDialog(fake_app)
+import pyi_update  # noqa: E402
+APPDIR = os.path.join(HOME, "app")
+os.makedirs(APPDIR, exist_ok=True)
+fake_file = os.path.join(APPDIR, "camui.py")
+open(fake_file, "w").write("x = 1\n")
+camui._UPDATE_ST = {}
+camui.APP_FILE = fake_file
+camui.UPDATE_BACKUPS = os.path.join(HOME, "backups")
+panic = []
+fake_app = types.SimpleNamespace(root=root, recording=False, busy=False, on_close=lambda: None,
+                                 _set_status=lambda t: None, panic_reset=lambda: panic.append(1),
+                                 _bg=lambda fn, cb: cb(fn()))
+fake_app._updates_ctl = lambda: camui.CamApp._updates_ctl(fake_app)
+fake_app.show_updates = lambda *a, check=True: camui.CamApp.show_updates(fake_app, check=check)
+root.bind("<F12>", lambda e: None if e.state & 0x5 else fake_app.panic_reset())   # como en CamApp
+ctl = fake_app._updates_ctl()
+dlg = fake_app.show_updates(check=False)
 notas = open(os.path.join(os.path.dirname(HERE), "NOVEDADES.md"), encoding="utf-8").read()
 assert notas.count("\n") > 12, "NOVEDADES.md ya no sirve para probar el recorte (muy corto)"
-dlg.res = {"ok": True, "state": "same", "local": {"pack": 1},
-          "info": {"pack": 1, "version": "0", "notes": notas}}
-dlg._fill_local()
-dlg.notes.config(state="normal")
-dlg.notes.delete("1.0", "end")
-dlg.notes.insert("1.0", notas)
-dlg.notes.config(state="disabled")
-dlg._buttons()
+dlg._w_notes(notas)
 top = dlg.top
-top.deiconify()
-for _ in range(20):
+for _ in range(30):
     top.update_idletasks()
     top.update()
     if top.winfo_width() > 1:
         break
     time.sleep(0.1)
 assert top.winfo_width() > 1, "la ventana de Actualizaciones no llegó a mostrarse"
-top.focus_force()
-top.update()
-
 for name, btn in [("Buscar de nuevo", dlg.b_check), ("Volver a la versión anterior", dlg.b_back),
                   ("Actualizar y reiniciar", dlg.b_go)]:
     assert btn.winfo_height() >= 15 and btn.winfo_width() >= 15, \
-        "el botón «{0}» no se ve (tamaño {1}x{2})".format(
-            name, btn.winfo_width(), btn.winfo_height())
-    # dentro de los límites visibles de la ventana, no por debajo de su borde inferior
+        "el botón «{0}» no se ve (tamaño {1}x{2})".format(name, btn.winfo_width(), btn.winfo_height())
     assert btn.winfo_rooty() + btn.winfo_height() <= top.winfo_rooty() + top.winfo_height(), \
         "el botón «{0}» queda fuera del borde inferior de la ventana".format(name)
-print("1) ventana «Actualizaciones»: con novedades largas, los 3 botones siguen viéndose "
-      "enteros dentro de la ventana -- OK")
-
+print("1) ventana «Actualizaciones» (común): con novedades largas, los botones se ven enteros -- OK")
 tv0 = dlg.notes.yview()
 dlg.notes.yview_moveto(1.0)
 top.update()
 tv1 = dlg.notes.yview()
 assert tv1[1] >= 0.999 and tv1[0] > tv0[0], "la barra de Novedades no llega hasta el final"
-print("2) la barra de desplazamiento de «Novedades» funciona y llega hasta el final -- OK")
-
-# ---------------------------------------------------------------------------------------------
-# 1c) La misma ventana trae una casilla oculta («vigilar sola, sin avisos») que solo debería
-#     verse tras un atajo secreto (Ctrl+Shift+Alt+F12, con o sin la tecla Win) -- y que, una vez activada, se queda visible (para poder apagarla
-#     sin tener que volver a buscarla), y al apagarla se esconde de nuevo, al instante.
-# ---------------------------------------------------------------------------------------------
-assert not dlg.chk_silent_watch.winfo_ismapped(), \
-    "la casilla de «vigilar sola» no debería verse de entrada, sin el atajo secreto"
-print("3) la casilla oculta de «vigilar sola, sin avisos» empieza invisible, como debe ser OK")
-
-top.event_generate("<KeyPress-Super_L>")
-top.event_generate("<Control-Shift-Alt-F12>")
-top.update()
-assert dlg.chk_silent_watch.winfo_ismapped(), \
-    "Ctrl+Shift+Alt+F12 con Win pulsada debería revelar la casilla oculta"
-top.event_generate("<KeyRelease-Super_L>")
-dlg.chk_silent_watch.pack_forget()
-dlg.lbl_silent_watch.pack_forget()
-top.event_generate("<Control-Shift-Alt-F12>")
-top.update()
-assert dlg.chk_silent_watch.winfo_ismapped(), \
-    "Ctrl+Shift+Alt+F12 sin Win también debería revelarla"
-print("4) el atajo secreto (Ctrl+Shift+Alt+F12, con o sin Win) revela la casilla oculta OK")
-
-dlg.var_silent_watch.set(True)
-dlg._silent_watch_toggled()
-assert camui.update_state().get("silent_watch") is True, \
-    "activar la casilla debería guardarse de verdad (persistente)"
-assert dlg.chk_silent_watch.winfo_ismapped(), \
-    "activada, la casilla debería quedarse visible (no esconderse sola)"
-print("5) activar la casilla la guarda de verdad (persistente) y se queda visible OK")
-
-dlg.var_silent_watch.set(False)
-dlg._silent_watch_toggled()
-top.update()
-assert camui.update_state().get("silent_watch") is False
-assert not dlg.chk_silent_watch.winfo_ismapped(), \
-    "al desactivarla debería esconderse de nuevo, sin esperar a cerrar la ventana"
-print("6) desactivar la casilla la guarda como apagada y la esconde de nuevo, al instante OK")
+print("2) las novedades se recorren enteras con su barra -- OK")
+assert not dlg.watch_visible(), "«vigilar sola» debería empezar escondida"
 top.destroy()
-
-# si ya estaba activada de antes (de una sesión anterior), una ventana nueva debe mostrarla sin
-# necesitar el atajo secreto -- si no, quien la activó no podría volver a encontrarla para
-# apagarla
+root.update()
+root.focus_force()
+root.update()
+root.event_generate("<Control-Shift-Alt-F12>")
+root.update()
+dlg = ctl.win
+assert dlg.alive() and dlg.watch_visible(), "el atajo desde la ventana principal no abre Actualizaciones con la casilla"
+assert not panic, "el atajo secreto no debe disparar el reinicio de emergencia (F12)"
+print("3) el atajo secreto desde la ventana principal abre Actualizaciones con «vigilar sola», "
+      "sin disparar F12 -- OK")
+dlg.v["watch"].set(True)
+dlg.toggled_watch(True)
+assert camui.update_state().get("silent_watch") is True
+dlg.v["watch"].set(False)
+dlg.toggled_watch(False)
+assert camui.update_state().get("silent_watch") is False and not dlg.watch_visible()
+print("4) activar/desactivar «vigilar sola» se guarda en el actualizacion.json de cam-ui -- OK")
+assert ctl.watch_every_ms == camui.SILENT_WATCH_INTERVAL_MS
+fake_app.recording = True
+assert ctl.busy() is True, "grabando, el actualizador no debe reiniciar"
+fake_app.recording = False
+print("5) cam-ui le pasa al actualizador su intervalo y «ocupado = grabando» -- OK")
+dlg.top.destroy()
 camui._UPDATE_ST = {"silent_watch": True}
-dlg3 = camui.UpdateDialog(fake_app)
-top3 = dlg3.top
-top3.deiconify()
-for _ in range(20):
-    top3.update_idletasks()
-    top3.update()
-    if top3.winfo_width() > 1:
-        break
-    time.sleep(0.1)
-assert top3.winfo_width() > 1, "la ventana de Actualizaciones no llegó a mostrarse"
-assert dlg3.chk_silent_watch.winfo_ismapped(), \
-    "si ya estaba activada de antes, una ventana nueva debería mostrarla sin el atajo secreto"
-assert dlg3.var_silent_watch.get() is True
-top3.destroy()
-camui._UPDATE_ST = {}
-print("7) si ya estaba activada de antes, una ventana «Actualizaciones» nueva la muestra sin "
-      "necesitar el atajo secreto de nuevo OK")
+ctl.u._st = camui.update_state()
+dlg3 = fake_app.show_updates(check=False)
+root.update()
+assert dlg3.watch_visible(), "si ya estaba activada, la ventana nueva debe mostrarla"
+print("6) si ya estaba activada de antes, se ve sin el atajo -- OK")
+dlg3.top.destroy()
 
 # ---------------------------------------------------------------------------------------------
 # 2) Lista de cámaras: hacer scroll (rueda del ratón) sobre ella debe mover SOLO la lista, no

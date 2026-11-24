@@ -1,5 +1,14 @@
 # Novedades de cam-ui
 
+## pack 56 — 2026.11.24
+- **Actualizaciones con el actualizador común** (py-installer 1.3.0), el mismo que md-reader y
+  widget-arena: misma ventana, mismo «avisar al abrir», «actualizar sin preguntar» y «vigilar
+  sola», y el mismo atajo secreto **Ctrl+Shift+Alt+F12** (con o sin Win), desde cualquier ventana.
+  Abajo en la ventana se ve la versión del actualizador.
+- Con «vigilar sola» sigue mirando cada minuto, y nunca reinicia mientras se graba: espera a que
+  acabe.
+- El atajo secreto ya no dispara también el reinicio de emergencia de F12.
+
 ## pack 55 — 2026.11.24
 - **«Sincronizar», mucho más preciso y con 8 cámaras sin problema.** La claqueta ya no son 24
   destellos sueltos en 30 segundos (con 8 cámaras, a cada una le tocaban tres o cuatro y la

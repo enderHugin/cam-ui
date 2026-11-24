@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: enderHugin/py-installer@a411cb4fdb7a987c525777271b5700823a40733f
+      - uses: enderHugin/py-installer@1bc06cd8d4e19af1747eb08e122b3902f0ad8d13
         with:
           base-url: https://enderhugin.github.io/cam-ui
       - name: Comprobaciones
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: enderHugin/py-installer
-          ref: a411cb4fdb7a987c525777271b5700823a40733f
+          ref: 1bc06cd8d4e19af1747eb08e122b3902f0ad8d13
           path: _pyi
       - name: Montar y servir el sitio en local
         shell: bash

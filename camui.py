@@ -85,14 +85,12 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.24"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 55                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 56                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
 APP_FILE = os.path.abspath(__file__)
-# «vigilar sola, sin avisos» (casilla oculta, ver UpdateDialog): comprobación aparte de la
-# normal (update_auto_check, una vez al abrir, con su propia hora de descanso), para quien
-# quiera ver aplicarse una publicación nueva sin tener que cerrar y abrir cam-ui a mano
+# «vigilar sola, sin avisos» (casilla oculta del actualizador común): cada cuánto mira
 SILENT_WATCH_INTERVAL_MS = 60000
 
 
@@ -8086,18 +8084,6 @@ def update_state_save():
         log.warning("actualizar: no se pudo guardar el estado: %s", e)
 
 
-def update_set_auto_apply(on):
-    """«Actualizar automáticamente al abrir el programa, sin preguntar» (casilla de
-    UpdateDialog). Si se activa y el aviso normal («avisarme al abrir») estaba apagado (se
-    marcó antes «no preguntar más»), se reactiva también: si no, nunca llegaría a mirar si
-    hay nada que aplicar solo. Apagarla, en cambio, no toca el aviso normal."""
-    st = update_state()
-    st["auto_apply"] = bool(on)
-    if on and st.get("auto", True) is False:
-        st["auto"] = True
-    update_state_save()
-
-
 def _pyi_update_module():
     """El motor de actualizaciones es el común de py-installer (pyi_update.py, que el instalador
     deja junto a camui.py y que se actualiza solo con el resto). Una instalación de antes de
@@ -8212,292 +8198,6 @@ def update_spawn_restart(delay=3):
     subprocess.Popen([sys.executable, "-c", code] + cmd, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, **kw)
     return cmd
-
-
-def _ask_update_now(parent, pack_remote):
-    """Diálogo «¿actualizar ahora?» con una casilla «no preguntar más». Devuelve
-    (quiere_actualizar, no_preguntar_mas)."""
-    res = {"go": False, "dont_ask": False}
-    top = tk.Toplevel(parent)
-    top.title("cam-ui")
-    top.configure(bg=BG)
-    top.transient(parent)
-    top.resizable(False, False)
-    frm = ttk.Frame(top)
-    frm.pack(fill="both", expand=True, padx=16, pady=14)
-    ttk.Label(frm, text="Hay una versión nueva de cam-ui (pack {0}).".format(pack_remote),
-             font=("Segoe UI", 10, "bold")).pack(anchor="w")
-    ttk.Label(frm, style="Muted.TLabel", wraplength=360, justify="left",
-             text="¿Descargarla e instalarla ahora? Se guarda una copia de la versión actual y "
-                  "el programa se reinicia; tu configuración no se toca."
-             ).pack(anchor="w", pady=(6, 10))
-    dont = tk.BooleanVar(value=False)
-    ttk.Checkbutton(frm, text="No preguntar más, prefiero actualizar a mano",
-                    variable=dont).pack(anchor="w")
-    bar = ttk.Frame(frm)
-    bar.pack(fill="x", pady=(12, 0))
-
-    def go():
-        res["go"], res["dont_ask"] = True, bool(dont.get())
-        top.destroy()
-
-    def cancel():
-        res["dont_ask"] = bool(dont.get())
-        top.destroy()
-    ttk.Button(bar, text="Cancelar", command=cancel).pack(side="right")
-    ttk.Button(bar, text="Aceptar", command=go).pack(side="right", padx=(0, 6))
-    top.bind("<Escape>", lambda e: cancel())
-    top.protocol("WM_DELETE_WINDOW", cancel)
-    try:
-        top.update_idletasks()
-        px, py = parent.winfo_rootx(), parent.winfo_rooty()
-        pw, ph = parent.winfo_width(), parent.winfo_height()
-        tw, th = top.winfo_width(), top.winfo_height()
-        top.geometry("+{0}+{1}".format(px + max(0, (pw - tw) // 2), py + max(0, (ph - th) // 2)))
-    except Exception:
-        pass
-    top.grab_set()
-    top.wait_window()
-    return res["go"], res["dont_ask"]
-
-
-class UpdateDialog:
-    """Versión instalada y publicada, novedades, instalar, volver a la anterior y el aviso
-    al abrir el programa. Misma idea que widget-arena, en Tkinter."""
-
-    def __init__(self, app):
-        self.app = app
-        self.res = None
-        self.busy = False
-        top = self.top = tk.Toplevel(app.root)
-        self.alive = True
-        top.bind("<Destroy>", lambda e: setattr(self, "alive", False) if e.widget is top else None)
-        top.title("Actualizaciones")
-        top.configure(bg=BG)
-        top.transient(app.root)
-        top.geometry("640x520")
-        top.minsize(560, 360)
-        top.protocol("WM_DELETE_WINDOW", self.close)
-        frm = ttk.Frame(top)
-        frm.pack(fill="both", expand=True, padx=12, pady=10)
-        # los botones se empaquetan los PRIMEROS, pegados abajo (side="bottom"): así tienen
-        # siempre su espacio reservado y nunca desaparecen aunque el resto del contenido (p. ej.
-        # las novedades, que crecen en cada versión) no quepa entero -- lo que no cabe se queda
-        # dentro de su propio scroll (ver self.notes más abajo), no empuja los botones fuera.
-        bar = ttk.Frame(frm)
-        bar.pack(side="bottom", fill="x", pady=(10, 0))
-        self.b_check = ttk.Button(bar, text="Buscar de nuevo", command=self.start_check)
-        self.b_check.pack(side="left")
-        self.b_back = ttk.Button(bar, text="Volver a la versión anterior", command=self._rollback)
-        self.b_back.pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
-        self.b_go = ttk.Button(bar, text="Actualizar y reiniciar", command=self._apply)
-        self.b_go.pack(side="right", padx=(0, 6))
-        ttk.Label(frm, text="Actualizaciones", font=("Segoe UI", 13, "bold")).pack(anchor="w")
-        self.lbl_local = ttk.Label(frm, text="")
-        self.lbl_local.pack(anchor="w", pady=(6, 0))
-        self.lbl_remote = ttk.Label(frm, text="")
-        self.lbl_remote.pack(anchor="w")
-        self.lbl_status = ttk.Label(frm, style="Muted.TLabel", wraplength=590, justify="left")
-        self.lbl_status.pack(anchor="w", fill="x", pady=(8, 6))
-        ttk.Label(frm, text="Novedades").pack(anchor="w")
-        notes_box = ttk.Frame(frm)
-        notes_box.pack(fill="both", expand=True, pady=(2, 8))
-        self.notes = tk.Text(notes_box, wrap="word", height=8, bg=PANEL, fg=FG,
-                             insertbackground=FG, relief="flat", padx=8, pady=6)
-        notes_sb = ttk.Scrollbar(notes_box, orient="vertical", command=self.notes.yview)
-        self.notes.configure(yscrollcommand=notes_sb.set)
-        notes_sb.pack(side="right", fill="y")
-        self.notes.pack(side="left", fill="both", expand=True)
-        self.notes.config(state="disabled")
-        self.var_auto = tk.BooleanVar(value=update_state().get("auto", True) is not False)
-        ttk.Checkbutton(frm, text="Avisarme al abrir el programa si hay una versión nueva",
-                        variable=self.var_auto, command=self._auto_toggled).pack(anchor="w")
-        self.var_autoapply = tk.BooleanVar(value=bool(update_state().get("auto_apply")))
-        ttk.Checkbutton(frm, text="Actualizar automáticamente al abrir el programa, sin preguntar",
-                        variable=self.var_autoapply, command=self._autoapply_toggled).pack(anchor="w")
-        ttk.Label(frm, style="Muted.TLabel", wraplength=590, justify="left",
-                 text="Con esto marcado, si al abrir el programa hay una versión nueva se instala "
-                      "sola (con su copia de seguridad de siempre) y el programa se reinicia solo, "
-                      "sin ningún aviso que haya que confirmar."
-                 ).pack(anchor="w", pady=(2, 0))
-        # --- casilla oculta: vigilar y actualizar sola mientras esté abierto, sin ningún aviso
-        # -- ni siquiera esta ventana -- en cuanto se publique algo nuevo. Pensada para probar
-        # publicaciones seguidas, no para el uso normal: empieza invisible y solo aparece con un
-        # atajo secreto (Ctrl+Shift+Alt+F12, con o sin Win) desde cualquier ventana; una vez activada se queda visible (para poder apagarla sin tener que buscarla de
-        # nuevo), y al apagarla vuelve a esconderse.
-        self.var_silent_watch = tk.BooleanVar(value=bool(update_state().get("silent_watch")))
-        self.chk_silent_watch = ttk.Checkbutton(
-            frm, text="Vigilar sola, sin avisos: actualizar en cuanto se publique una versión nueva",
-            variable=self.var_silent_watch, command=self._silent_watch_toggled)
-        self.lbl_silent_watch = ttk.Label(
-            frm, style="Muted.TLabel", wraplength=590, justify="left",
-            text="Comprueba cada minuto mientras cam-ui esté abierto (no solo al arrancar). Si "
-                 "hay una versión nueva, la instala y reinicia sola -- sin preguntar nada, sin "
-                 "avisar de que se va a guardar una copia antes, sin abrir siquiera esta "
-                 "ventana. Sigue guardando esa copia igual que siempre, solo que sin decirlo.")
-        if self.var_silent_watch.get():
-            self.chk_silent_watch.pack(anchor="w")
-            self.lbl_silent_watch.pack(anchor="w", pady=(2, 0))
-        self._win_held = False
-        for ks in ("Super_L", "Super_R", "Win_L", "Win_R"):
-            # No todas las plataformas conocen todos estos keysyms (p.ej. X11 no tiene
-            # "Win_L"/"Win_R", solo "Super_L"/"Super_R"); sin el try/except, un bind() con un
-            # keysym que Tcl/Tk no reconoce lanza TclError y se cae toda la ventana.
-            try:
-                top.bind("<KeyPress-{0}>".format(ks), self._win_key_set(True))
-                top.bind("<KeyRelease-{0}>".format(ks), self._win_key_set(False))
-            except tk.TclError:
-                pass
-        top.bind("<Control-Shift-Alt-F12>", self._reveal_silent_watch)
-        self._fill_local()
-        self._buttons()
-
-    def _win_key_set(self, held):
-        return lambda _e=None: setattr(self, "_win_held", held)
-
-    def _reveal_silent_watch(self, _e=None):
-        self.top.lift()
-        if self.chk_silent_watch.winfo_ismapped():
-            return
-        self.chk_silent_watch.pack(anchor="w")
-        self.lbl_silent_watch.pack(anchor="w", pady=(2, 0))
-
-    def _silent_watch_toggled(self):
-        on = bool(self.var_silent_watch.get())
-        update_state()["silent_watch"] = on
-        update_state_save()
-        if not on:
-            self.chk_silent_watch.pack_forget()
-            self.lbl_silent_watch.pack_forget()
-
-    def _fill_local(self):
-        loc = update_local_info()
-        self.lbl_local.config(text="Tu versión:  pack {0}{1}  ·  huella {2}".format(
-            loc["pack"], ("  ·  " + loc["label"]) if loc["label"] else "", (loc["sha256"][:8] or "?")))
-        self.lbl_remote.config(text="Publicada:  —")
-
-    def _buttons(self):
-        r = self.res or {}
-        can = bool(r.get("ok")) and r.get("state") in ("newer", "diverged") and not self.busy \
-            and not self.app.recording
-        self.b_go.config(state="normal" if can else "disabled",
-                         text="Sustituir por la publicada" if r.get("state") == "diverged"
-                         else "Actualizar y reiniciar")
-        self.b_back.config(state="normal" if (update_backup_available() and not self.busy
-                                              and not self.app.recording) else "disabled")
-        self.b_check.config(state="disabled" if self.busy else "normal")
-
-    def start_check(self):
-        self.busy = True
-        self.lbl_status.config(text="Buscando la versión publicada…")
-        self._buttons()
-        self.app._bg(update_check, self._on_checked)
-
-    def _auto_toggled(self):
-        update_state()["auto"] = bool(self.var_auto.get())
-        update_state_save()
-
-    def _autoapply_toggled(self):
-        update_set_auto_apply(self.var_autoapply.get())
-        self.var_auto.set(update_state().get("auto", True) is not False)
-
-    def _on_checked(self, r):
-        self.busy = False
-        self.res = r
-        self._fill_local()
-        if not r.get("ok"):
-            self.lbl_status.config(text="No se pudo comprobar: {0}\nRevisa tu conexión e "
-                                   "inténtalo de nuevo.".format(r.get("error", "")))
-            self._buttons()
-            return
-        info, st = r["info"], r["state"]
-        self.lbl_remote.config(text="Publicada:  pack {0}{1}".format(
-            info.get("pack"), ("  ·  " + str(info.get("version"))) if info.get("version") else ""))
-        self.notes.config(state="normal")
-        self.notes.delete("1.0", "end")
-        self.notes.insert("1.0", str(info.get("notes") or "(sin novedades indicadas)"))
-        self.notes.config(state="disabled")
-        self.lbl_status.config(text={
-            "newer": "Hay una versión nueva (pack {0}). Se guardará una copia de la actual y el "
-                    "programa se reiniciará; tu configuración no se toca.".format(info.get("pack")),
-            "same": "Ya tienes la última versión.",
-            "older": "Tu copia (pack {0}) es más nueva que la publicada (pack {1}): no hay nada "
-                    "que actualizar.".format(r["local"]["pack"], info.get("pack")),
-            "diverged": "Tienes el mismo pack que la web, pero tu archivo es distinto (cambios "
-                        "propios sin publicar). Puedes sustituirlo por el publicado: se guarda una copia.",
-        }[st])
-        self._buttons()
-
-    def apply_result(self, r):
-        """Desde el aviso del arranque: ya se sabe que hay una versión nueva y se dijo que sí."""
-        self._on_checked(r)
-        self._apply(confirm=False)
-
-    def _apply(self, confirm=True):
-        r = self.res or {}
-        if not r.get("ok") or r.get("state") not in ("newer", "diverged"):
-            return
-        if self.app.recording:
-            messagebox.showinfo("Actualizar", "No se puede actualizar mientras se está "
-                                "grabando. Para la grabación primero.")
-            return
-        if confirm:
-            warn = ("\n\nTu archivo tiene cambios sin publicar; se guardará una copia por si "
-                    "quieres volver.") if r["state"] == "diverged" else ""
-            if not messagebox.askyesno(
-                    "Actualizar", "Se descargará la versión publicada (pack {0}), se guardará "
-                    "una copia de la actual y el programa se reiniciará.{1}\n\n¿Continuar?".format(
-                        r["info"].get("pack"), warn)):
-                return
-        self.busy = True
-        self.lbl_status.config(text="Descargando e instalando…")
-        self._buttons()
-        info = r["info"]
-        self.app._bg(lambda: _update_run(update_apply, info), self._on_applied)
-
-    def _rollback(self):
-        if self.app.recording:
-            messagebox.showinfo("Actualizar", "No se puede volver a la versión anterior "
-                                "mientras se está grabando. Para la grabación primero.")
-            return
-        if not messagebox.askyesno(
-                "Volver a la versión anterior", "Se restaurará la copia guardada en la última "
-                "actualización y el programa se reiniciará. La versión actual queda guardada.\n\n"
-                "¿Continuar?"):
-            return
-        self.busy = True
-        self.lbl_status.config(text="Restaurando…")
-        self._buttons()
-        self.app._bg(lambda: _update_run(update_rollback), self._on_applied)
-
-    def _on_applied(self, r):
-        self.busy = False
-        if not r.get("ok"):
-            self.lbl_status.config(text="No se pudo completar: {0}\nNo se ha cambiado "
-                                   "nada.".format(r.get("error", "")))
-            self._buttons()
-            messagebox.showwarning("Actualizar", "No se pudo completar:\n{0}\n\nNo se ha "
-                                   "cambiado nada.".format(r.get("error", "")))
-            return
-        self.lbl_status.config(text="Listo. El programa se reinicia en unos segundos…")
-        self.b_go.config(state="disabled")
-        self.app.root.after(900, self.app.update_restart_app)
-
-    def close(self):
-        self.top.destroy()
-
-
-def _update_run(fn, *a):
-    """Envoltorio para self._bg: fn puede lanzar una excepción; aquí se convierte en
-    {ok: False, error} igual que si la hubiera devuelto update_check()."""
-    try:
-        r = fn(*a)
-        r = dict(r or {})
-        r["ok"] = True
-        return r
-    except Exception as e:
-        return {"ok": False, "error": str(e) or e.__class__.__name__}
 
 
 class PhoneCamQrDialog:
@@ -9153,17 +8853,12 @@ class CamApp:
         root.bind("<F5>", lambda e: self.toggle_preview())
         root.bind("<F8>", lambda e: self.take_photo())
         root.bind("<F9>", lambda e: self.toggle_rec())
-        root.bind("<F12>", lambda e: self.panic_reset())
+        root.bind("<F12>", lambda e: None if e.state & 0x5 else self.panic_reset())   # no con Ctrl/Mayús (atajo secreto)
         root.bind("<F11>", lambda e: self.set_mode("normal" if self.mode != "normal" else "compact"))
         root.after(33, self._tick)
         root.bind("<Map>", self._on_map, add="+")
         root.after(900, self._tray_boot)
-        root.after(12000, self.update_auto_check)
-        # atajo secreto (Ctrl+Shift+Alt+F12, con o sin Win) desde cualquier ventana: abre
-        # «Actualizaciones» con la casilla oculta de «vigilar sola» ya visible
-        root.bind_all("<Control-Shift-Alt-F12>",
-                      lambda e: (self.show_updates(check=False)._reveal_silent_watch(), "break")[1], add="+")
-        root.after(15000, self._silent_watch_tick)
+        root.after(600, self._updates_boot)                 # actualizaciones (pyi_update)
         if self._vcam_cfg.get("on"):
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar
         if self._ip_cfg.get("on"):
@@ -9772,72 +9467,46 @@ class CamApp:
             return
         self._about = AboutDialog(self.root)
 
-    # ---- actualizaciones ----------------------------------------------------------
+    # ---- actualizaciones: las lleva entero el actualizador común de py-installer ----
+    # (la misma ventana, el mismo «al abrir», «vigilar sola» y el atajo secreto
+    # Ctrl+Shift+Alt+F12 que en los demás programas; ver pyi_update.tk_install)
+    def _updates_boot(self):
+        """Al arrancar: prepara el actualizador (en segundo plano por si una instalación muy
+        antigua tuviera que bajarse pyi_update.py) y lo deja montado."""
+        def work():
+            try:
+                _pyi_update_module()
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        def done(r):
+            if r.get("ok"):
+                self._updates_ctl()
+            else:
+                log.warning("actualizador: no disponible: %s", r.get("error"))
+        self._bg(work, done)
+
+    def _updates_ctl(self):
+        ctl = getattr(self, "_upd_ctl", None)
+        if ctl is None:
+            mod = _pyi_update_module()
+            kw = dict(on_close=self.on_close, busy=lambda: bool(self.recording or self.busy),
+                      startup_delay_ms=10 ** 9 if os.environ.get("CAMUI_OFFLINE") else 12000,
+                      watch_every_ms=SILENT_WATCH_INTERVAL_MS)
+            try:
+                ctl = mod.tk_install(self.root, _upd(), "cam-ui", notify=self._set_status, **kw)
+            except TypeError:                               # actualizador anterior a py-installer 1.3
+                ctl = mod.tk_install(self.root, _upd(), "cam-ui", **kw)
+            self._upd_ctl = ctl
+        return ctl
+
     def show_updates(self, *_a, check=True):
-        dlg = getattr(self, "_updates", None)
-        if dlg is not None and dlg.alive:
-            dlg.top.lift()
-            return dlg
-        dlg = self._updates = UpdateDialog(self)
-        if check:
-            dlg.start_check()
-        return dlg
-
-    def update_auto_check(self):
-        """Al abrir el programa: si hay una versión nueva, pregunta (salvo que se haya
-        pedido no avisar, o que ya se haya mirado hace menos de una hora)."""
-        st = update_state()
-        if st.get("auto", True) is False or os.environ.get("CAMUI_OFFLINE") or self.recording:
-            return
-        if time.time() - float(st.get("last_check", 0) or 0) < 3600:
-            return
-        self._bg(update_check, self._update_probe_done)
-
-    def _update_probe_done(self, r):
-        if not r.get("ok") or r.get("state") != "newer" or self.recording:
-            return
-        if update_state().get("auto_apply"):
-            # el mismo camino probado que si se hubiera preguntado y dicho que sí, sin
-            # preguntar: se ve la ventana de «Actualizaciones» con el progreso y al acabar
-            # se reinicia solo (ver UpdateDialog.apply_result / _on_applied).
-            self.show_updates(check=False).apply_result(r)
-            return
-        go, dont_ask = _ask_update_now(self.root, r["info"].get("pack"))
-        if dont_ask:
-            update_state()["auto"] = False
-            update_state_save()
-        if go:
-            self.show_updates(check=False).apply_result(r)
-
-    def _silent_watch_tick(self):
-        """«Vigilar sola, sin avisos» (casilla oculta de UpdateDialog, tras su atajo
-        secreto): comprobación aparte de update_auto_check, repetida mientras el programa
-        esté abierto -- no una sola vez al arrancar. Con esa casilla apagada (el caso de
-        siempre) esto solo se reprograma solo, sin tocar la red para nada."""
         try:
-            if (update_state().get("silent_watch") and not self.recording and not self.busy
-                    and not os.environ.get("CAMUI_OFFLINE")):
-                self._bg(update_check, self._silent_watch_checked)
-        except Exception:
-            log.error("vigilancia silenciosa de actualizaciones:\n%s", traceback.format_exc())
-        finally:
-            self.root.after(SILENT_WATCH_INTERVAL_MS, self._silent_watch_tick)
-
-    def _silent_watch_checked(self, r):
-        if not r.get("ok") or r.get("state") != "newer" or self.recording:
-            return
-        if not update_state().get("silent_watch"):
-            return                        # se apagó mientras se comprobaba
-        if self.busy:
-            return                        # se reintenta solo en la siguiente vuelta
-        log.info("vigilancia silenciosa: aplicando pack %s sin avisos", r["info"].get("pack"))
-        self._bg(lambda: _update_run(update_apply, r["info"]), self._silent_watch_applied)
-
-    def _silent_watch_applied(self, res):
-        if not res.get("ok"):
-            log.error("vigilancia silenciosa: no se pudo aplicar: %s", res.get("error"))
-            return                        # se reintenta solo en la siguiente vuelta
-        self.update_restart_app()
+            return self._updates_ctl().show(check=check)
+        except Exception as e:
+            log.error("actualizaciones:\n%s", traceback.format_exc())
+            messagebox.showwarning("Actualizaciones", "No se pudo abrir el actualizador:\n\n{0}".format(e))
 
     def update_restart_app(self):
         """Reinicia cam-ui (pasados unos segundos) y cierra este con el guardado de siempre."""
