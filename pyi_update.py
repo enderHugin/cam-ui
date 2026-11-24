@@ -35,7 +35,7 @@ import subprocess
 import sys
 import time
 
-PYI_UPDATE_VERSION = 1
+PYI_UPDATE_VERSION = 2
 MAX_FILE = 64 * 1048576
 MAX_JSON = 262144
 KEEP_BACKUPS = 5
@@ -418,6 +418,16 @@ def run(fn, *a):
 # =============================================================================================
 # Interfaz lista para programas de tkinter
 # =============================================================================================
+def _tk_colors(widget):
+    """Colores del tema ttk del programa (para que las ventanas del actualizador vayan a juego)."""
+    from tkinter import ttk
+    st = ttk.Style(widget)
+    bg = st.lookup('TFrame', 'background') or None
+    fg = st.lookup('TLabel', 'foreground') or None
+    field = st.lookup('TEntry', 'fieldbackground') or bg
+    return bg, fg, field
+
+
 def tk_install(root, updater, app_name, on_close=None, busy=None, startup_delay_ms=12000,
                watch_every_ms=10 * 60 * 1000, min_interval=3600):
     """Deja montado todo el sistema en un programa de tkinter:
@@ -437,6 +447,12 @@ class _TkUpdates:
         self.root, self.u, self.name, self.on_close, self.busy = root, u, name, on_close, busy
         self.watch_every_ms, self.min_interval = watch_every_ms, min_interval
         self.win = None
+        # el atajo secreto funciona desde cualquier ventana del programa (no solo con la de
+        # actualizaciones delante): la abre y muestra la casilla oculta. Win pulsada o no, da igual.
+        try:
+            root.bind_all(SECRET_SHORTCUT, self._secret, add='+')
+        except Exception:
+            pass
         if u.enabled:
             root.after(startup_delay_ms, self._startup)
             root.after(startup_delay_ms + 3000, self._watch_tick)
@@ -463,7 +479,7 @@ class _TkUpdates:
             self.u.spawn_restart()
         except Exception as e:
             from tkinter import messagebox
-            messagebox.showwarning(self.name, 'La actualizacion esta instalada, pero no se pudo reiniciar solo.\n'
+            messagebox.showwarning(self.name, 'La actualización está instalada, pero no se pudo reiniciar sola.\n'
                                    'Cierra y abre de nuevo %s.\n\n(%s)' % (self.name, e))
             return
         self.on_close()
@@ -501,16 +517,19 @@ class _TkUpdates:
         res = {'go': False, 'dont': False}
         top = tk.Toplevel(self.root)
         top.title(self.name)
+        bg, fg, field = _tk_colors(top)
+        if bg:
+            top.configure(bg=bg)
         top.transient(self.root)
         top.resizable(False, False)
         f = ttk.Frame(top, padding=14)
         f.pack(fill='both', expand=True)
         v = info.get('version') or ''
-        ttk.Label(f, text='Hay una version nueva de %s%s.' % (self.name, (' (' + v + ')') if v else ''),
+        ttk.Label(f, text='Hay una versión nueva de %s%s.' % (self.name, (' (' + v + ')') if v else ''),
                   font=('', 10, 'bold')).pack(anchor='w')
-        ttk.Label(f, text='Se guarda una copia de la actual por si quieres volver atras.', wraplength=360).pack(anchor='w', pady=(4, 8))
+        ttk.Label(f, text='Se guarda una copia de la actual por si quieres volver atrás.', wraplength=360).pack(anchor='w', pady=(4, 8))
         dont = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text='No preguntar mas al abrir', variable=dont).pack(anchor='w')
+        ttk.Checkbutton(f, text='No preguntar más al abrir', variable=dont).pack(anchor='w')
         b = ttk.Frame(f)
         b.pack(fill='x', pady=(10, 0))
 
@@ -524,6 +543,11 @@ class _TkUpdates:
         top.grab_set()
         self.root.wait_window(top)
         return res['go'], res['dont']
+
+    def _secret(self, _e=None):
+        w = self.show(check=False)
+        w._reveal()
+        return 'break'
 
     def show(self, check=True):
         if self.win is not None and self.win.alive():
@@ -543,30 +567,35 @@ class _TkUpdateWindow:
         self.info = None
         top = self.top = tk.Toplevel(ctl.root)
         top.title('Actualizaciones - ' + ctl.name)
+        bg, fg, field = _tk_colors(top)
+        if bg:
+            top.configure(bg=bg)
         top.minsize(460, 380)
         f = ttk.Frame(top, padding=14)
         f.pack(fill='both', expand=True)
         loc = self.u.local_info()
         cur = loc['version'] + ((' (pack %s)' % loc['pack']) if loc['pack'] is not None else '')
-        ttk.Label(f, text='Version instalada: ' + (cur or '?'), font=('', 10, 'bold')).pack(anchor='w')
+        ttk.Label(f, text='Versión instalada: ' + (cur or '?'), font=('', 10, 'bold')).pack(anchor='w')
         self.status = ttk.Label(f, text='', wraplength=420)
         self.status.pack(anchor='w', pady=(4, 6))
-        self.notes = tk.Text(f, height=10, wrap='word', relief='flat', borderwidth=0)
+        self.notes = tk.Text(f, height=10, wrap='word', relief='flat', borderwidth=0, padx=8, pady=6)
+        if field and fg:
+            self.notes.configure(bg=field, fg=fg, insertbackground=fg)
         self.notes.pack(fill='both', expand=True)
         self.notes.configure(state='disabled')
         st = self.u.state()
         self.v_auto = tk.BooleanVar(value=st.get('auto', True) is not False)
         self.v_apply = tk.BooleanVar(value=bool(st.get('auto_apply')))
         self.v_watch = tk.BooleanVar(value=bool(st.get('silent_watch')))
-        ttk.Checkbutton(f, text='Avisarme al abrir si hay una version nueva', variable=self.v_auto,
+        ttk.Checkbutton(f, text='Avisarme al abrir si hay una versión nueva', variable=self.v_auto,
                         command=lambda: self.u.set_auto(self.v_auto.get())).pack(anchor='w', pady=(8, 0))
-        ttk.Checkbutton(f, text='Actualizar automaticamente al abrir, sin preguntar', variable=self.v_apply,
+        ttk.Checkbutton(f, text='Actualizar automáticamente al abrir, sin preguntar', variable=self.v_apply,
                         command=self._apply_toggled).pack(anchor='w')
         self.chk_watch = ttk.Checkbutton(f, text='Vigilar sola, sin avisos (instala y reinicia sola)', variable=self.v_watch,
                                          command=self._watch_toggled)
         if self.v_watch.get():
             self.chk_watch.pack(anchor='w')
-        b = ttk.Frame(f)
+        b = self.buttons = ttk.Frame(f)
         b.pack(fill='x', pady=(10, 0))
         self.b_check = ttk.Button(b, text='Buscar', command=self.start_check)
         self.b_check.pack(side='left')
@@ -575,12 +604,11 @@ class _TkUpdateWindow:
         if not self.u.backup_available():
             self.b_back.state(['disabled'])
         ttk.Button(b, text='Cerrar', command=top.destroy).pack(side='right')
-        self.b_go = ttk.Button(b, text='Actualizar y reiniciar', command=self.apply)
+        self.b_go = ttk.Button(b, text='Actualizar', command=self.apply)
         self.b_go.pack(side='right', padx=6)
         self.b_go.state(['disabled'])
-        top.bind(SECRET_SHORTCUT, self._reveal)
         if not self.u.enabled:
-            self._set('Este programa no esta instalado con su instalador: no puede actualizarse solo.')
+            self._set('Este programa no está instalado con su instalador: no puede actualizarse solo.')
             self.b_check.state(['disabled'])
 
     def alive(self):
@@ -608,7 +636,12 @@ class _TkUpdateWindow:
 
     def _reveal(self, _e=None):
         if not self.chk_watch.winfo_ismapped():
-            self.chk_watch.pack(anchor='w')
+            self.chk_watch.pack(anchor='w', before=self.buttons)
+        self.lift()
+        try:
+            self.chk_watch.focus_set()
+        except Exception:
+            pass
 
     def _watch_toggled(self):
         on = bool(self.v_watch.get())
@@ -617,7 +650,7 @@ class _TkUpdateWindow:
             self.chk_watch.pack_forget()
 
     def start_check(self):
-        self._set('Buscando...')
+        self._set('Buscando…')
         self.b_check.state(['disabled'])
         self.ctl._bg(self.u.check, lambda r: self.apply_result(r, ask=True))   # buscar a mano = revisar antes
 
@@ -631,8 +664,8 @@ class _TkUpdateWindow:
             return
         self.info = r['info']
         v = self.info.get('version') or ''
-        txt = {'newer': 'Hay una version nueva: %s.' % v, 'same': 'Tienes la ultima version.',
-               'older': 'Tu version es mas nueva que la publicada.',
+        txt = {'newer': 'Hay una versión nueva: %s.' % v, 'same': 'Tienes la última versión.',
+               'older': 'Tu versión es más nueva que la publicada.',
                'diverged': 'Tu copia no coincide con la publicada (puedes reinstalarla).'}[r['state']]
         self._set(txt, self.info.get('notes') or '')
         if r['state'] in ('newer', 'diverged'):
@@ -643,7 +676,7 @@ class _TkUpdateWindow:
     def apply(self):
         if not self.info:
             return
-        self._set('Descargando y comprobando...')
+        self._set('Descargando y comprobando…')
         self.b_go.state(['disabled'])
         self.ctl._bg(lambda: run(self.u.apply, self.info), self._applied)
 
@@ -654,18 +687,18 @@ class _TkUpdateWindow:
             self._set('No se pudo actualizar: %s' % res.get('error'))
             self.b_go.state(['!disabled'])
             return
-        self._set('Actualizado. Reiniciando...')
+        self._set('Actualizado. Reiniciando…')
         self.top.after(800, self.ctl.restart)
 
     def rollback(self):
         from tkinter import messagebox
-        if not messagebox.askyesno(self.ctl.name, 'Volver a la version anterior y reiniciar?', parent=self.top):
+        if not messagebox.askyesno(self.ctl.name, '¿Volver a la versión anterior y reiniciar?', parent=self.top):
             return
         res = run(self.u.rollback)
         if not res.get('ok'):
-            self._set('No se pudo volver atras: %s' % res.get('error'))
+            self._set('No se pudo volver atrás: %s' % res.get('error'))
             return
-        self._set('Hecho. Reiniciando...')
+        self._set('Hecho. Reiniciando…')
         self.top.after(800, self.ctl.restart)
 
 

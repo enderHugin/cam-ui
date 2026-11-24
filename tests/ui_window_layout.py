@@ -86,18 +86,12 @@ print("2) la barra de desplazamiento de «Novedades» funciona y llega hasta el 
 
 # ---------------------------------------------------------------------------------------------
 # 1c) La misma ventana trae una casilla oculta («vigilar sola, sin avisos») que solo debería
-#     verse tras un atajo secreto (Ctrl+Shift+Alt+F12, con la tecla Win pulsada) mientras esta
-#     ventana tenga el foco -- y que, una vez activada, se queda visible (para poder apagarla
+#     verse tras un atajo secreto (Ctrl+Shift+Alt+F12, con o sin la tecla Win) -- y que, una vez activada, se queda visible (para poder apagarla
 #     sin tener que volver a buscarla), y al apagarla se esconde de nuevo, al instante.
 # ---------------------------------------------------------------------------------------------
 assert not dlg.chk_silent_watch.winfo_ismapped(), \
     "la casilla de «vigilar sola» no debería verse de entrada, sin el atajo secreto"
 print("3) la casilla oculta de «vigilar sola, sin avisos» empieza invisible, como debe ser OK")
-
-top.event_generate("<Control-Shift-Alt-F12>")
-top.update()
-assert not dlg.chk_silent_watch.winfo_ismapped(), \
-    "el atajo no debería revelar nada sin la tecla Win pulsada también"
 
 top.event_generate("<KeyPress-Super_L>")
 top.event_generate("<Control-Shift-Alt-F12>")
@@ -105,8 +99,13 @@ top.update()
 assert dlg.chk_silent_watch.winfo_ismapped(), \
     "Ctrl+Shift+Alt+F12 con Win pulsada debería revelar la casilla oculta"
 top.event_generate("<KeyRelease-Super_L>")
-print("4) el atajo secreto (Win + Ctrl+Shift+Alt+F12) revela la casilla oculta -- y sin la "
-      "tecla Win pulsada, no hace nada por sí solo OK")
+dlg.chk_silent_watch.pack_forget()
+dlg.lbl_silent_watch.pack_forget()
+top.event_generate("<Control-Shift-Alt-F12>")
+top.update()
+assert dlg.chk_silent_watch.winfo_ismapped(), \
+    "Ctrl+Shift+Alt+F12 sin Win también debería revelarla"
+print("4) el atajo secreto (Ctrl+Shift+Alt+F12, con o sin Win) revela la casilla oculta OK")
 
 dlg.var_silent_watch.set(True)
 dlg._silent_watch_toggled()

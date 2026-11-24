@@ -84,8 +84,8 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
-APP_VERSION = "2026.11.08"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 53                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_VERSION = "2026.11.24"            # ha de coincidir con el archivo VERSION del repositorio
+APP_PACK = 54                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -8249,8 +8249,7 @@ class UpdateDialog:
         # --- casilla oculta: vigilar y actualizar sola mientras esté abierto, sin ningún aviso
         # -- ni siquiera esta ventana -- en cuanto se publique algo nuevo. Pensada para probar
         # publicaciones seguidas, no para el uso normal: empieza invisible y solo aparece con un
-        # atajo secreto (Ctrl+Shift+Alt+F12, con Win pulsada) mientras esta ventana tenga el
-        # foco; una vez activada se queda visible (para poder apagarla sin tener que buscarla de
+        # atajo secreto (Ctrl+Shift+Alt+F12, con o sin Win) desde cualquier ventana; una vez activada se queda visible (para poder apagarla sin tener que buscarla de
         # nuevo), y al apagarla vuelve a esconderse.
         self.var_silent_watch = tk.BooleanVar(value=bool(update_state().get("silent_watch")))
         self.chk_silent_watch = ttk.Checkbutton(
@@ -8283,7 +8282,8 @@ class UpdateDialog:
         return lambda _e=None: setattr(self, "_win_held", held)
 
     def _reveal_silent_watch(self, _e=None):
-        if not self._win_held or self.chk_silent_watch.winfo_ismapped():
+        self.top.lift()
+        if self.chk_silent_watch.winfo_ismapped():
             return
         self.chk_silent_watch.pack(anchor="w")
         self.lbl_silent_watch.pack(anchor="w", pady=(2, 0))
@@ -9078,6 +9078,10 @@ class CamApp:
         root.bind("<Map>", self._on_map, add="+")
         root.after(900, self._tray_boot)
         root.after(12000, self.update_auto_check)
+        # atajo secreto (Ctrl+Shift+Alt+F12, con o sin Win) desde cualquier ventana: abre
+        # «Actualizaciones» con la casilla oculta de «vigilar sola» ya visible
+        root.bind_all("<Control-Shift-Alt-F12>",
+                      lambda e: (self.show_updates(check=False)._reveal_silent_watch(), "break")[1], add="+")
         root.after(15000, self._silent_watch_tick)
         if self._vcam_cfg.get("on"):
             self._vcam_enable(quiet=True)                    # se retoma si estaba activa al cerrar

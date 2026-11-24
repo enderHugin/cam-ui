@@ -1,5 +1,10 @@
 # Novedades de cam-ui
 
+## pack 54 — 2026.11.24
+- El atajo secreto de «vigilar sola, sin avisos» (**Ctrl+Shift+Alt+F12**) ya no exige además la
+  tecla Win, y funciona desde cualquier ventana de cam-ui: abre «Actualizaciones» con la casilla
+  ya visible.
+
 ## pack 53 — 2026.11.21
 - **Instalador y actualizaciones con py-installer.** El instalador de Windows y el sistema de
   actualizaciones son ahora los comunes de [py-installer](https://github.com/enderHugin/py-installer),
