@@ -192,6 +192,50 @@ try:
     assert mb and float(mb.group(1)) == camui.SYNC_BIT_S, mb
     assert b"__SYNC_" not in page
     print("4) la página de la claqueta lleva el mismo código ({0} trozos) OK".format(len(m.group(1))))
+
+    # 5) en directo (SyncLive): las imágenes de la vista previa, una a una, y cada segundo qué
+    # cámaras ya han visto bastante claqueta -- ✓ en orden, según se les enseña el móvil
+    PW, PH = 864, 486                                  # la vista previa (3×3 casillas de 288×162)
+    ptiles = [((i % 3) * 426, (i // 3) * 240, 426, 240) for i in range(9)]
+    live = camui.SyncLive(LABELS, ptiles, 1278, PW, PH)
+    T0 = 1000.0                                        # hora del PC a la que empieza la claqueta
+    live.t0 = T0
+    LLAT = [0.4 + 0.1 * c for c in range(8)]           # en directo, lo que tarda cada casilla
+    rng2 = np.random.default_rng(5)
+    base = rng2.integers(40, 140, (PH, PW)).astype(np.float32)
+    marks = {}
+    t = T0 - 1.0
+    k = 0
+    while t < T0 + 36.0:
+        img = base + rng2.normal(0, 2, (PH, PW))
+        for c in range(8):
+            x0, y0 = (c % 3) * 288, (c // 3) * 162
+            s_ = t - T0 - LLAT[c]                      # hora del código que ve esa casilla
+            a, b = SEE[c]
+            if a - 0.3 <= s_ <= b + 0.3:
+                f = lit_fraction(s_ - 1 / 30.0, s_) if a <= s_ <= b else 0.0
+                px = x0 + 100 + int(6 * (s_ - a))
+                img[y0 + 40:y0 + 52, px:px + 6] = 15 + 225 * f
+        bx = int((k * 5) % 800)                        # algo que se mueve por todo
+        img[300:330, bx:bx + 40] = 220
+        g8 = np.clip(img, 0, 255).astype(np.uint8)
+        live.tap(np.dstack([g8, g8, g8]), t)
+        k += 1
+        if k % 30 == 0:                                # cada segundo
+            live.check()
+            for lab in live.ok:
+                marks.setdefault(lab, t - T0)
+        t += 1 / 30.0
+    order = [LABELS[c] for c in range(8)]
+    assert list(marks) == order, (marks, live.missing())
+    for c in range(8):
+        lab = LABELS[c]
+        start = SEE[c][0] + LLAT[c]
+        assert start + 1.0 <= marks[lab] <= start + 4.5, (lab, marks[lab], start)
+    assert "Lejos" not in live.ok and live.missing() == ["Lejos"]
+    print("5) en directo: las ocho, ✓ una tras otra según se les enseña el móvil (a los " +
+          ", ".join("{0:.0f}".format(marks[LABELS[c]] - SEE[c][0] - LLAT[c]) for c in range(8)) +
+          " s de empezar a verlo); «Lejos», sin ✓ OK")
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 print("TODO OK unit_sync")

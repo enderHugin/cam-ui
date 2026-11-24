@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.24"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 56                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 57                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -1341,6 +1341,8 @@ def build_command(plan, outfile=None, warmup=0.0, t0=None, preview=True,
         side = [int(o.get("fps") or 0) for o in (vc, ip) if o]
         if side:
             pv_fps = max(pv_fps, min(fps, max(side)))
+        if plan.get("pv_fps"):                    # «Sincronizar»: la vista previa a todos los fps
+            pv_fps = max(pv_fps, min(fps, int(plan["pv_fps"])))
         fc.append("{0}fps={1},scale={2}:{3}:flags=fast_bilinear[pv]".format(
             src["pv"], pv_fps, pw, ph))
     if vc:
@@ -4371,7 +4373,8 @@ h1{font-size:19px;font-weight:600;margin:0 0 18px;color:#ccc}
 #msg{font-size:17px;line-height:1.45;color:#bbb;max-width:420px;white-space:pre-line;margin:14px 0}
 #big{font-size:76px;font-weight:700;color:#555;min-height:90px}
 #big.quiet{color:#262626}
-#ui.quiet h1,#ui.quiet #msg{color:#333}
+#ui.quiet h1{color:#333}
+#ui.quiet #msg{color:#555}
 button{background:#2b2f36;color:#eee;border:1px solid #4a4f58;border-radius:10px;padding:16px 34px;
   font-size:21px;margin-top:10px}
 button:active{background:#3a3f48}
@@ -4473,8 +4476,9 @@ function play(run) {
   playing = {run: run, t0: t0, end: end, osc: o, gain: g, n: n};
   post("started", run);
   big.className = "quiet"; ui.className = "quiet";
-  say("Enseña esta pantalla a cada cámara, 3 o 4 segundos a cada una.\\nQue el micrófono del PC " +
-      "lo oiga un rato. Al acabar, toca \\u00abTerminar\\u00bb.");
+  say("Enseña esta pantalla a cada cámara, 3 o 4 segundos a cada una (en el PC sale \\u2713 " +
+      "en las que ya est\\u00e1n).\\nQue el micr\\u00f3fono del PC lo oiga un rato. Con todas, " +
+      "termina sola.");
   stop.style.display = "";
   var frameMs = 16.7, last = 0;
   function frame(now) {
@@ -4518,6 +4522,7 @@ function poll() {
       if (!st) { return; }
       if (emitting) {
         if (st.state === "terminando" && playing) { finish(true); }
+        else if (playing && st.msg) { msg.textContent = st.msg; }   // «Listas 5 de 8. Faltan: ...»
         return;
       }
       if (st.state === "grabando" && st.run !== runSeen) {
@@ -5770,13 +5775,16 @@ def sync_read_video(path, tiles, W, H, ffmpeg=None, max_w=1920, across=80):
              for r, (_x0, _y0, cw, ch, _c) in zip(rows, boxes)])
 
 
-def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ):
+def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ, info=None):
     """Dónde empieza el código de la claqueta en el sonido: (hora del primer trozo, segundos oídos,
     desacuerdo en s entre trozos), o None si no se oye bien. Vale que el micrófono solo oiga
     parte (el móvil se aleja). Primero el código entero, encajado al milisegundo; luego, afinado
-    con el principio de cada pitido (el final se alarga con el eco de la sala)."""
+    con el principio de cada pitido (el final se alarga con el eco de la sala). En info["why"],
+    por qué no, si no."""
+    info = {} if info is None else info
     code = list(SYNC_CODE[:SYNC_MAX_BITS] if code is None else code)
     if x is None or t0 is None or len(x) < 2 * sr or not code:
+        info["why"] = "sin sonido"
         return None
     X = np.fft.rfft(x.astype(np.float64))
     f = np.fft.rfftfreq(len(x), 1.0 / sr)
@@ -5788,6 +5796,7 @@ def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ):
                               np.ones(3) / 3.0, "same"))
     lo_, hi_ = float(np.percentile(env, 20)), float(np.percentile(env, 99.5))
     if not hi_ > 1.5 * lo_ + 1e-12:
+        info["why"] = "no se oye el pitido (el sonido apenas sube a 2,5 kHz)"
         return None
     v = np.clip((env - lo_) / (hi_ - lo_), 0, 1.2)
     v = v - _moving_mean(v[:, None], 2000)[:, 0]
@@ -5796,12 +5805,14 @@ def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ):
     tmpl = 2.0 * np.asarray(code, dtype=np.float64)[
         np.minimum((np.arange(nt) / B).astype(np.int64), len(code) - 1)] - 1.0
     if n <= len(tmpl) // 8:
+        info["why"] = "la grabación es más corta que lo que se busca"
         return None
     C = _sync_corr(v[:, None], tmpl)[:, 0]
     k0 = int(np.argmax(C))
     far = np.ones(len(C), bool)
     far[max(0, k0 - 300):k0 + 300] = False
     if not C[k0] > 0 or (far.any() and C[k0] < 2.5 * max(0.0, float(C[far].max()))):
+        info["why"] = "no se oye la claqueta (o dos momentos encajan casi igual)"
         return None
     # afinar con el principio de cada pitido
     rises = np.array([i * B for i in range(len(code))
@@ -5825,7 +5836,9 @@ def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ):
             continue
         if np.corrcoef(seg, tmpl[w0:w0 + 1000])[0, 1] > 0.6:
             heard.append(w0)
+    info["oidos"] = len(heard)
     if len(heard) < SYNC_MIN_SEEN_S:
+        info["why"] = "oída muy poco rato"
         return None
     parts = []
     hs = set(heard)
@@ -5835,7 +5848,9 @@ def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ):
             if sel.sum() >= 3:
                 parts.append(fine(lf, sel)[0])
     spread = float(np.median(np.abs(np.asarray(parts) - lf))) / 1000.0 if parts else 0.0
+    info["desacuerdo_ms"] = round(spread * 1000, 1)
     if spread > SYNC_MAX_SPREAD:
+        info["why"] = "sus trozos no coinciden entre sí"
         return None
     return t0 + lf / 1000.0, float(len(heard)), spread
 
@@ -5864,117 +5879,154 @@ def _sync_source_frames(flat, times, dt):
     return times[owner], wmap[owner]
 
 
-def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S):
+def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, quick=False):
     """Dónde empieza el código de la claqueta en una casilla del vídeo (entre lo y hi): (hora del
-    primer trozo, segundos vistos, desacuerdo en s entre trozos), o None si no se ve bien. El móvil
-    puede estar en cualquier sitio de la imagen y moverse, y verse solo un rato. Cada fotograma
-    recoge la luz de su intervalo (y una cámara lenta se repite en el mosaico): se compara con lo
-    que vería, trozo a trozo, al milisegundo."""
+    primer trozo, segundos vistos, desacuerdo en s entre trozos), o None si no se ve bien (y en
+    info["why"], por qué). El móvil puede estar en cualquier sitio de la imagen y moverse, y verse
+    solo un rato; y lo visto puede ser cualquier tramo del código (la claqueta puede haber
+    empezado antes que estas imágenes: así se mira también en directo, ver SyncLive). Cada
+    fotograma recoge la luz de su intervalo (y una cámara lenta se repite en el mosaico): se
+    compara con lo que vería, trozo a trozo, al milisegundo. quick: afinando menos (en directo
+    solo hace falta saber si se ve; ver SyncLive)."""
+    info = {} if info is None else info
     code = list(SYNC_CODE[:SYNC_MAX_BITS] if code is None else code)
     if cells is None or len(times) < 20 or cells.shape[0] != len(times) or hi <= lo or not code:
+        info["why"] = "pocas imágenes"
         return None
     N = len(times)
     flat = cells.reshape(N, -1).astype(np.float32)
-    # el mosaico va a fps fijos; las horas de la grabación vienen redondeadas al milisegundo
-    # (MKV): el paso, con todas (la mediana de 33 y 34 ms da 33, y en 12 s ya son 0,12 s de error)
+    # a fps fijos; las horas de la grabación vienen redondeadas al milisegundo (MKV): el paso,
+    # con todas (la mediana de 33 y 34 ms da 33, y en 12 s ya son 0,12 s de error)
     dt = float(times[-1] - times[0]) / (N - 1)
     if not dt > 0:
+        info["why"] = "horas raras"
         return None
     F = _sync_on_time(code, bit)
     T = len(code) * bit
     t_end, win = _sync_source_frames(flat, times, dt)
+    info["fps"] = round(1.0 / dt, 1)
+    info["fps_camara"] = round(1.0 / max(dt, float(np.median(win))), 1)
     hw = max(3, int(round(1.0 / dt)) | 1)
     hp = flat - _moving_mean(flat, hw).astype(np.float32)
     # el móvil, esté donde esté: cuando se enciende es lo que más sube de la imagen, y cuando se
     # apaga, lo que más baja (sigue al código aunque se mueva de un cuadradito a otro)
     g = (hp.max(axis=1) + hp.min(axis=1)).astype(np.float64)
     g -= _moving_mean(g[:, None], hw)[:, 0]
-    # 1) a lo grande: en qué fotograma empieza
-    w0 = float(np.median(win))
-    j = np.arange(int(math.ceil((T + w0) / dt)) + 1) * dt
-    q = 2.0 * (F(j) - F(j - w0)) / w0 - 1.0
-    q -= _moving_mean(q[:, None], hw)[:, 0]
-    k_lo = max(0, int(math.floor((lo - times[0]) / dt)))
-    k_hi = min(N - 1, int(math.ceil((hi - times[0]) / dt)))
-    if k_hi <= k_lo:
-        return None
-    score = _sync_corr(g[:, None], q)[k_lo:k_hi + 1, 0]
-    # los picos más altos (separados): cada uno se comprueba entero, y gana el que mejor se ve
-    cands = []
-    for kk in np.argsort(-score):
-        if score[kk] <= 0 or len(cands) >= 5:
-            break
-        if all(abs(kk - c) > 3 for c in cands):
-            cands.append(int(kk))
-    if not cands:
-        return None
+
+    def preds(Ls):
+        """lo que vería cada fotograma si la claqueta empezara a cada hora de Ls (fotogramas ×
+        horas): cuánto de su intervalo de luz cae en trozos encendidos (0 a 1), sin lo lento."""
+        Lr = np.asarray(Ls, dtype=np.float64)[None, :]
+        te, w = t_end[:, None], win[:, None]
+        p = (F(te - Lr) - F(te - w - Lr)) / w
+        p = np.where((te - Lr > -w) & (te - Lr < T + w), p, 0.0)
+        return p - _moving_mean(p, hw)
 
     def pred(L):
-        """lo que vería cada fotograma si la claqueta empezara a la hora L: cuánto de su intervalo
-        de luz cae en trozos encendidos (0 a 1), sin lo lento."""
-        p = (F(t_end - L) - F(t_end - win - L)) / win
-        inside = (t_end - L > -win) & (t_end - L < T + win)
-        p = np.where(inside, p, 0.0)
-        return p - _moving_mean(p[:, None], hw)[:, 0]
+        return preds([L])[:, 0]
+
+    def corrs(gg, Ls):
+        """correlación normalizada con cada hora (sin normalizar ganarían las horas en que los
+        cambios caen justo entre fotogramas)"""
+        out = []
+        for c0 in range(0, len(Ls), 128):
+            P = preds(Ls[c0:c0 + 128])
+            out.append((gg @ P) / (np.sqrt((P * P).sum(axis=0)) + 1e-9))
+        return np.concatenate(out) if out else np.zeros(0)
+
+    # 1) a lo grande: cada medio fotograma entre lo y hi
+    Ls = np.arange(lo, hi, dt / 2.0)
+    score = corrs(g, Ls)
+    cands = []                                     # los picos más altos, separados
+    for kk in np.argsort(-score):
+        if score[kk] <= 0 or len(cands) >= 3:
+            break
+        if all(abs(Ls[kk] - Ls[c]) > 2.5 * dt for c in cands):
+            cands.append(int(kk))
+    if not cands:
+        info["why"] = "nada parecido a la claqueta"
+        return None
 
     def fine(gl, L0_, mask=None):
-        """la hora (al milisegundo, cerca de L0_) a la que mejor encaja: correlación normalizada
-        (sin normalizar, ganarían las horas en que los cambios caen justo entre fotogramas)"""
-        grid = L0_ + np.arange(-1.5 * dt, 1.5 * dt + 1e-9, 0.001)
+        """la hora, al milisegundo, cerca de L0_, a la que mejor encaja"""
+        step = 0.004 if quick else 0.001
+        grid = L0_ + np.arange(-1.5 * dt, 1.5 * dt + 1e-9, step)
         gg = gl if mask is None else np.where(mask, gl, 0.0)
-        sc = []
-        for L in grid:
-            pL = pred(L)
-            if mask is not None:
-                pL = np.where(mask, pL, 0.0)
-            sc.append(float(gg @ pL) / (math.sqrt(float(pL @ pL)) + 1e-9))
-        sc = np.array(sc)
+        sc = corrs(gg, grid)
         jj = int(np.argmax(sc))
-        return float(grid[0] + 0.001 * _parabolic(sc, jj))
+        return float(grid[0] + step * _parabolic(sc, jj))
 
     def per_second(gl, L):
         """lo bien que va con la claqueta (correlación), segundo a segundo de la claqueta"""
         p_f = pred(L)
         rel = t_end - L
         out = {}
-        for s0 in range(int(math.ceil(T))):
+        for s0 in range(max(0, int(rel.min())), int(math.ceil(min(T, rel.max())))):
             m = (rel >= s0) & (rel < s0 + 1)
             if m.sum() < 4 or p_f[m].std() <= 0 or gl[m].std() <= 0:
                 continue
             out[s0] = float(np.corrcoef(gl[m], p_f[m])[0, 1])
         return out, rel
 
-    def seen_secs(gl, L):
-        """los segundos en que se ve de verdad (va bien con ella), contando solo los que van
-        seguidos de dos en dos o más: a una cámara se le enseña el móvil un rato seguido, y un
-        segundo suelto que «va con ella» puede ser casualidad"""
+    def run_quality(gl, L):
+        """el mejor tramo seguido de segundos en que va con ella (cada uno, correlación > 0,6), y
+        la correlación de todo ese tramo junto: (correlación, segundos, tramo). Junto dice mucho
+        más que segundo a segundo: 30 trozos seguidos no encajan por casualidad."""
         r, rel = per_second(gl, L)
-        ok = set(s0 for s0, v in r.items() if v > 0.75)
-        return sorted(s0 for s0 in ok if s0 - 1 in ok or s0 + 1 in ok), rel
+        best = (0.0, 0, [])
+        run = []
+        for s0 in sorted(r) + [None]:
+            if s0 is not None and r[s0] > 0.6 and (not run or s0 == run[-1] + 1):
+                run.append(s0)
+                continue
+            if len(run) >= 2:
+                m = (rel >= run[0]) & (rel < run[-1] + 1)
+                p_f = pred(L)
+                if gl[m].std() > 0 and p_f[m].std() > 0:
+                    rho = float(np.corrcoef(gl[m], p_f[m])[0, 1])
+                    if rho * math.sqrt(len(run)) > best[0] * math.sqrt(max(1, best[1])):
+                        best = (rho, len(run), list(run))
+            run = [s0] if (s0 is not None and r[s0] > 0.6) else []
+        return best
 
     # de los picos más altos, el que mejor va con la claqueta allí donde se ve (afinado al
-    # milisegundo cada uno); si dos van casi igual de bien, mejor no decir nada que equivocarse
+    # milisegundo cada uno; dos que acaban en el mismo sitio son el mismo); si dos van casi igual
+    # de bien, mejor no decir nada que equivocarse
     ev = []
-    for kc in cands[:3]:
-        L_ = fine(g, float(times[k_lo + kc]))
-        r, _rel = per_second(g, L_)
-        ev.append((sum(max(0.0, v - 0.7) for v in r.values()), L_))
-    ev.sort(reverse=True)
-    if not ev[0][0] > 0 or (len(ev) > 1 and ev[1][0] * 2 > ev[0][0]):
+    for kc in cands:
+        L_ = fine(g, float(Ls[kc]))
+        if any(abs(L_ - e[3]) < 2.5 * dt for e in ev):
+            continue
+        rho, n, run = run_quality(g, L_)
+        ev.append((rho * math.sqrt(n) if rho > 0 else 0.0, rho, n, L_, run))
+    ev.sort(key=lambda e: -e[0])
+    info["candidatos"] = [(round(e[3], 3), round(e[1], 2), e[2]) for e in ev]
+    if not ev or not ev[0][0] > 0:
+        info["why"] = "no se ve la claqueta"
         return None
-    Lf = ev[0][1]                                      # ya al milisegundo
-    gl = g
-    seen, rel = seen_secs(g, Lf)
-    if len(seen) < SYNC_MIN_SEEN_S:
+    _q, rho, n, Lf, run = ev[0]
+    info["vistos"] = run
+    if n < SYNC_MIN_SEEN_S or rho < 0.75:
+        info["why"] = ("vista muy poco rato ({0} s seguidos)".format(n) if n < SYNC_MIN_SEEN_S else
+                       "se parece poco ({0:.2f})".format(rho))
         return None
+    if len(ev) > 1 and ev[1][0] > 0.75 * ev[0][0]:
+        info["why"] = "dudoso: dos momentos del código encajan casi igual"
+        return None
+    seen = run
+    rel = t_end - Lf
+    if quick:
+        return Lf, float(len(seen)), 0.0
     # lo que discrepan entre sí trozos de 2 s de lo visto
     parts = []
     ss = set(seen)
     for s0 in seen:
         if s0 + 1 in ss:
-            parts.append(fine(gl, Lf, (rel >= s0) & (rel < s0 + 2)))
+            parts.append(fine(g, Lf, (rel >= s0) & (rel < s0 + 2)))
     spread = float(np.median(np.abs(np.asarray(parts) - Lf))) if parts else 0.0
+    info["desacuerdo_ms"] = round(spread * 1000, 1)
     if spread > SYNC_MAX_SPREAD:
+        info["why"] = "sus trozos no coinciden entre sí ({0:.0f} ms)".format(spread * 1000)
         return None
     return Lf, float(len(seen)), spread
 
@@ -5984,19 +6036,36 @@ def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=N
     o None, "cams": {etiqueta: (hora, segundos vistos, desacuerdo) o None}}. nbits: los trozos
     del código que llegó a dar el móvil (si terminó antes)."""
     code = SYNC_CODE[:max(10, min(SYNC_MAX_BITS, int(nbits or SYNC_MAX_BITS)))]
-    res = {"audio": None, "cams": {}}
+    res = {"audio": None, "cams": {}, "info": {}}
+    t_a = time.time()
     if has_audio:
         t0, x = sync_read_audio(path, ffmpeg)
-        res["audio"] = sync_audio_lag(t0, x, 16000, code)
+        ia = res["info"]["sonido"] = {}
+        res["audio"] = sync_audio_lag(t0, x, 16000, code, info=ia)
+        log.info("sincronizar: sonido %s (%.0f s grabados): %s", "oído" if res["audio"] else "NO",
+                 0 if x is None else len(x) / 16000.0,
+                 "empieza a {0:.4f} s, {1:.0f} s oídos, ±{2:.1f} ms".format(
+                     res["audio"][0], res["audio"][1], res["audio"][2] * 1000)
+                 if res["audio"] else ia.get("why"))
     times, series = sync_read_video(path, tiles, W, H, ffmpeg)
+    log.info("sincronizar: vídeo %d imágenes (%.1f s), %d casillas, código de %d trozos; leído en "
+             "%.1f s", len(times), float(times[-1] - times[0]) if len(times) > 1 else 0.0,
+             len(series), len(code), time.time() - t_a)
     a = res["audio"][0] if res["audio"] else None
 
     def measure(i, lab, lo, hi):
+        inf = res["info"][lab] = {}
         try:
-            return sync_video_lag(times, series[i], lo, hi, code)
+            r = sync_video_lag(times, series[i], lo, hi, code, info=inf)
         except Exception as e:
             log.error("sincronizar: falló la medida de «%s»: %r", lab, e)
             return None
+        log.info("sincronizar: «%s» %s; %s", lab,
+                 "empieza a {0:.4f} s ({1:+.0f} ms respecto al sonido), {2:.0f} s vistos, "
+                 "±{3:.1f} ms".format(r[0], (r[0] - a) * 1000 if a is not None else 0, r[1],
+                                     r[2] * 1000) if r else "NO: " + str(inf.get("why")),
+                 dict((k, v) for k, v in inf.items() if k != "why"))
+        return r
     for i, lab in enumerate(labels):
         res["cams"][lab] = None
         if i >= len(series) or not len(times):
@@ -6013,8 +6082,104 @@ def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=N
         for i, lab in enumerate(labels):
             if res["cams"][lab] is None and i < len(series):
                 res["cams"][lab] = measure(i, lab, lo, hi)
-    log.info("sincronizar: sonido %s; cámaras %s", res["audio"], res["cams"])
+    log.info("sincronizar: medido en %.1f s", time.time() - t_a)
     return res
+
+
+SYNC_LIVE_WINDOW_S = 8.0     # en directo se mira lo de los últimos 8 s de cada casilla
+SYNC_LIVE_SEEN_S = 2         # ✓ en cuanto una cámara ha visto 2 s seguidos de claqueta
+SYNC_LIVE_ALL_DONE_S = 1.5   # todas con ✓: se termina sola al poco
+
+
+class SyncLive:
+    """«Sincronizar», en directo (pack 56): mientras se graba la prueba mira todas las imágenes de
+    la vista previa (en el hilo que las lee: ver FFmpegEngine.frame_tap) y, cada segundo (en su
+    propio hilo), qué cámaras han visto ya bastante claqueta. Así sale ✓ sobre cada casilla que ya
+    está, y se sabe a cuál falta enseñarle el móvil sin repetir; con todas, se termina sola. Es
+    solo para eso: la medida buena es la de después, con la grabación entera (analyze_sync)."""
+
+    def __init__(self, labels, tiles, W, pw, ph, across=60):
+        sc = pw / float(W)
+        self.labels = list(labels)
+        self.boxes = []
+        for (x, y, w, h) in tiles:
+            cell = max(3, int(w * sc) // across)
+            x0, y0 = int(x * sc), int(y * sc)
+            cw = max(1, min(int(w * sc) // cell, (pw - x0) // cell))
+            ch = max(1, min(int(h * sc) // cell, (ph - y0) // cell))
+            self.boxes.append((x0, y0, cw, ch, cell))
+        self.buf = [deque() for _ in self.boxes]
+        self.lock = threading.Lock()
+        self.t0 = None                 # hora (del PC) a la que el móvil empezó la claqueta
+        self.ok = {}                   # etiqueta -> (hora, segundos vistos) en que quedó lista
+        self._last = {}                # etiqueta -> hora de la claqueta que vio en la mirada anterior
+        self.version = 0               # cambia con cada una que queda lista
+        self.frames = 0
+        self._stop = threading.Event()
+        self._th = None
+
+    def tap(self, arr, ts):
+        """Una imagen de la vista previa (RGB) a la hora ts: el brillo de cada cuadradito."""
+        g = arr[:, :, 1]                               # el verde: casi el brillo, y sin cuentas
+        rows = []
+        for (x0, y0, cw, ch, cell) in self.boxes:
+            r = g[y0:y0 + ch * cell, x0:x0 + cw * cell].reshape(ch, cell, cw, cell)
+            rows.append(r.mean(axis=(1, 3), dtype=np.float32).astype(np.float16))
+        with self.lock:
+            self.frames += 1
+            for i, r in enumerate(rows):
+                d = self.buf[i]
+                d.append((ts, r))
+                while d and ts - d[0][0] > SYNC_LIVE_WINDOW_S:
+                    d.popleft()
+
+    def check(self):
+        """Mira las que faltan; True si alguna ha quedado lista."""
+        if self.t0 is None:
+            return False
+        new = False
+        for i, lab in enumerate(self.labels):
+            if lab in self.ok or i >= len(self.buf):
+                continue
+            with self.lock:
+                items = list(self.buf[i])
+            if len(items) < 30:
+                continue
+            times = np.array([t for t, _c in items], dtype=np.float64)
+            cells = np.stack([c for _t, c in items])
+            if float(np.abs(np.diff(cells[-60:].reshape(min(60, len(cells)), -1).astype(np.float32),
+                                    axis=0)).max()) < 30:
+                continue                           # nada cambia de golpe: ahí no hay claqueta
+            r = sync_video_lag(times, cells, self.t0 - 0.5, self.t0 + 6.0, quick=True)
+            prev, self._last[lab] = self._last.get(lab), (r[0] if r is not None else None)
+            # lista si la ha visto bastante, y lo mismo que en la mirada anterior (un segundo
+            # antes): una casualidad no se repite en el mismo sitio del código
+            if r is not None and r[1] >= SYNC_LIVE_SEEN_S and prev is not None and \
+                    abs(prev - r[0]) < 0.07:
+                with self.lock:
+                    self.ok[lab] = (time.time(), r[1])
+                    self.version += 1
+                log.info("sincronizar: «%s» lista en directo, %.1f s después de empezar la "
+                         "claqueta (%.0f s vistos)", lab, time.time() - self.t0, r[1])
+                new = True
+        return new
+
+    def missing(self):
+        with self.lock:
+            return [l for l in self.labels if l not in self.ok]
+
+    def start(self):
+        def loop():
+            while not self._stop.wait(1.0):
+                try:
+                    self.check()
+                except Exception as e:
+                    log.error("sincronizar (en directo): %r", e)
+        self._th = threading.Thread(target=loop, daemon=True)
+        self._th.start()
+
+    def close(self):
+        self._stop.set()
 
 
 def sync_corrections(res, delays, av):
@@ -6969,6 +7134,7 @@ class FFmpegEngine:
         # previa. Antes se miraba solo en los fotogramas que la ventana llegaba a dibujar, y la
         # ventana no redibuja a 30 por segundo: una cámara de 30 fps salía a «~19».
         self.tile_chg = []
+        self.frame_tap = None          # «Sincronizar»: ve cada imagen de la vista previa (ver SyncLive)
         self.dead_inputs = set()     # entradas que ffmpeg dio por cortadas (ver _DEAD_IN_RE)
         self.levels = [-90.0, -90.0]
         self.startup_time = 2.5      # s hasta el primer fotograma (se mide)
@@ -7257,6 +7423,13 @@ class FFmpegEngine:
                 buf = bytearray(fb)           # el fotograma entregado ya no se toca
                 mv = memoryview(buf)
                 ch = _tile_changes(arr, tiles, W, sig) if chg and W else ()
+                tap = self.frame_tap
+                if tap is not None:
+                    try:
+                        tap(arr, time.time())
+                    except Exception as e:
+                        log.error("sincronizar: %r", e)
+                        self.frame_tap = None
                 with self.lock:
                     for i in ch:
                         chg[i].append(time.time())
@@ -8305,8 +8478,9 @@ class SyncDialog:
             "3. Cuando empiece a parpadear y pitar (como un código de barras, unas diez veces por "
             "segundo), enséñaselo a cada cámara, 3 o 4 segundos a cada una, y que el micrófono "
             "del PC lo oiga un rato.\n\n"
-            "4. «Terminar» (en el móvil o aquí) cuando todas lo hayan visto. Dura como mucho "
-            "{0} s.\n\n"
+            "4. Sobre cada cámara del mosaico sale «✓ lista» en cuanto ya está, y «falta» en las "
+            "que no: así sabes a cuál enseñárselo. Con todas, termina sola (o «Terminar», en el "
+            "móvil o aquí). Dura como mucho {0} s.\n\n"
             "cam-ui mide cuánto tarda en llegar cada cámara y ajusta solo su «Retardo» y el del "
             "sonido. La prueba no se guarda.".format(int(SYNC_MAX_S)))).grid(
                 row=1, column=1, sticky="nw", padx=(16, 0),
@@ -11146,6 +11320,31 @@ class CamApp:
                 v.create_rectangle(ix + tx * sc + 1, iy + ty * sc + 1, ix + (tx + tw) * sc - 1,
                                    iy + (ty + th) * sc - 1, outline=ACC, width=2, tags="ov")
         self._draw_tile_info(v, ix, iy, nw)
+        self._draw_sync_marks(v, ix, iy, nw)
+
+    def _draw_sync_marks(self, v, ix, iy, nw):
+        """«Sincronizar», grabando la prueba: sobre cada casilla, «✓ lista» o «falta» (ver
+        SyncLive), para saber a qué cámara falta enseñarle el móvil. Solo en la vista previa."""
+        s = getattr(self, "_sync", None)
+        live = (s or {}).get("live")
+        m = self.eng.meta
+        if live is None or not s.get("recording") or not m.get("tiles") or not m.get("W"):
+            return
+        sc = nw / float(m["W"])
+        for i, (tx, ty, tw, th) in enumerate(m["tiles"]):
+            if i >= len(self._run_labels):
+                break
+            ok = self._run_labels[i] in live.ok
+            size = int(max(12, min(40, th * sc * 0.16)))
+            tid = v.create_text(ix + (tx + tw / 2.0) * sc, iy + ty * sc + 8, anchor="n",
+                                text="✓ lista" if ok else "falta", tags=("ov", "syncmark"),
+                                fill="#3ddc84" if ok else WARN,
+                                font=("Segoe UI", -size if ok else -max(11, size * 2 // 3), "bold"))
+            bb = v.bbox(tid)
+            if bb:
+                rid = v.create_rectangle(bb[0] - 8, bb[1] - 3, bb[2] + 8, bb[3] + 3, fill="#000000",
+                                         outline="#3ddc84" if ok else "", width=2, tags="ov")
+                v.tag_lower(rid, tid)
 
     def _draw_tile_info(self, v, ix, iy, nw):
         """Rótulo abajo de cada casilla, SOLO en la vista previa (es dibujo de la ventana: no sale
@@ -13414,9 +13613,18 @@ class CamApp:
             txt = "Preparando la grabación de prueba…"
         elif st == "grabando":
             s = self._sync or {}
-            txt = ("Grabando la prueba (no se guarda): enseña el móvil a cada cámara, 3 o 4 "
-                   "segundos a cada una, y luego «Terminar»…"
-                   if s.get("t_started") else "Grabando la prueba: el móvil cuenta 3, 2, 1…")
+            live = s.get("live")
+            if not s.get("t_started"):
+                txt = "Grabando la prueba: el móvil cuenta 3, 2, 1…"
+            elif live is None:
+                txt = ("Grabando la prueba (no se guarda): enseña el móvil a cada cámara, 3 o 4 "
+                       "segundos a cada una, y luego «Terminar»…")
+            else:
+                miss = live.missing()
+                txt = "Grabando la prueba (no se guarda): listas {0} de {1} (✓ en el mosaico).".format(
+                    len(live.labels) - len(miss), len(live.labels))
+                txt += (" Falta enseñar el móvil a: " + ", ".join("«{0}»".format(l) for l in miss) +
+                        "." if miss else " Todas: termina sola.")
         elif st == "terminando":
             txt = "Terminando…"
         elif st == "analizando":
@@ -13444,6 +13652,7 @@ class CamApp:
         elif s.get("recording"):
             self.phonecam.sync.set("terminando")      # el móvil lo ve y para (y dice hasta dónde)
             s["t_stop"] = time.time()
+            log.info("sincronizar: «Terminar» en el PC")
             self._sync_ui(force=True)
 
     def _sync_tick(self):
@@ -13457,13 +13666,35 @@ class CamApp:
             elif s is not None and run == s["run"]:
                 if kind == "started":
                     s["t_started"] = t
+                    if s.get("live") is not None:
+                        s["live"].t0 = t + 0.3             # el móvil empieza 0,3 s después de avisar
+                    log.info("sincronizar: el móvil empieza la claqueta (prueba %d)", run)
                 elif kind == "done":
                     s["t_done"] = t
                     if extra:
                         s["bits"] = int(extra)
+                    log.info("sincronizar: el móvil termina, tras %s trozos (%.1f s)", extra,
+                             (extra or 0) * SYNC_BIT_S)
         s = self._sync
         if s is not None and s.get("recording"):
             now = time.time()
+            live = s.get("live")
+            if live is not None and live.version != s.get("live_v"):
+                s["live_v"] = live.version
+                self._redraw_overlay()                 # ✓ sobre las que ya están
+                miss = live.missing()
+                if b.state == "grabando":
+                    b.set("grabando", "Listas {0} de {1}.{2}".format(
+                        len(live.labels) - len(miss), len(live.labels),
+                        " Faltan: " + ", ".join(miss) if miss else ""))
+                if not miss and not s.get("all_t"):
+                    s["all_t"] = now
+                    log.info("sincronizar: todas listas en directo")
+            if s.get("all_t") and not s.get("t_stop") and not s.get("t_done") and \
+                    now - s["all_t"] >= SYNC_LIVE_ALL_DONE_S:
+                b.set("terminando")                    # todas vistas: se termina sola
+                s["t_stop"] = now
+                log.info("sincronizar: todas listas: se termina sola")
             if s.get("t_done") and now - s["t_done"] >= SYNC_TAIL_S:
                 self._sync_finish()
             elif s.get("t_started") and not s.get("t_done") and (
@@ -13509,12 +13740,17 @@ class CamApp:
             "av": _geti(self.v_avoff), "has_audio": bool(aud.get("L") or aud.get("R")),
             "recording": False, "t_rec": 0.0, "t_started": 0.0, "t_done": 0.0}
         self._sync_result = ""
+        plan["pv_fps"] = int(plan["fps"])          # en directo hace falta ver cada imagen (SyncLive)
         warm = max(1.0, self.eng.startup_time + 0.3)
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
         self._run_plan, self._tinfo_t = plan, 0.0
         self.previewing = False
         self._set_status("Sincronizar: preparando la grabación de prueba…")
-        log.info("sincronizar: prueba %d con %s (sonido: %s)", run, s["labels"], s["has_audio"])
+        log.info("sincronizar: prueba %d con %d cámaras %s; sonido: %s; %s fps; motor %s; "
+                 "retardos %s; ajuste A/V %s ms; código de %d trozos de %.1f ms", run,
+                 len(s["labels"]), s["labels"], "sí" if s["has_audio"] else "no", plan["fps"],
+                 "nuevo" if plan.get("hub") else "de siempre", s["delays"], s["av"],
+                 SYNC_MAX_BITS, SYNC_BIT_S * 1000)
 
         def work():
             self.eng.stop()
@@ -13536,8 +13772,14 @@ class CamApp:
                 self._lock(True)
                 s.update(recording=True, t_rec=time.time(), tiles=list(m["tiles"]),
                          W=int(m["W"]), H=int(m["H"]))
+                live = s["live"] = SyncLive(s["labels"], m["tiles"], m["W"], m["pw"], m["ph"])
+                self.eng.frame_tap = live.tap
+                live.start()
+                s["live_v"] = -1
                 b.set("grabando")
                 self._set_status("Sincronizar: enseña el móvil a cada cámara…")
+                log.info("sincronizar: grabando la prueba (mosaico %dx%d, vista previa %dx%d)",
+                         m["W"], m["H"], m["pw"], m["ph"])
             else:
                 self._sync = None
                 shutil.rmtree(tmpdir, ignore_errors=True)
@@ -13560,6 +13802,13 @@ class CamApp:
         self.recording = False
         self.previewing = False
         self._rec_parts, self._rec_canvas = [], None
+        self.eng.frame_tap = None
+        live = s.get("live")
+        if live is not None:
+            live.close()
+            log.info("sincronizar: fin de la prueba%s; en directo, listas %d de %d (vistas %d "
+                     "imágenes de la vista previa)", " (" + cancel + ")" if cancel else "",
+                     len(live.ok), len(live.labels), live.frames)
         b = self.phonecam.sync
         b.set("error" if cancel else "analizando", cancel or "")
         self._set_status("Sincronizar: midiendo…" if not cancel else "Sincronizar: cancelado.")

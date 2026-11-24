@@ -25,7 +25,8 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
 - «⏱ Sincronizar»: un móvil cualquiera hace de claqueta (abre el código QR): da un código
   como un código de barras en el tiempo, unos diez trozos por segundo blancos con pitido o
   negros en silencio, que nunca se repite. Se le enseña a cada cámara 3 o 4 segundos, una detrás
-  de otra (8 cámaras, sin problema), y cam-ui mide al milisegundo lo que tarda en llegar cada una
+  de otra (8 cámaras, sin problema); sobre cada una sale «✓ lista» en el mosaico en cuanto ya
+  está, y con todas termina sola. cam-ui mide al milisegundo lo que tarda en llegar cada una
   respecto al sonido y pone solo el «Retardo» de cada cámara y el «Ajuste A/V». Con «Deshacer».
 - En la vista previa (solo ahí), un rótulo sobre cada cámara: nombre, cómo llega (local, red,
   otro cam-ui, móvil), fps reales y resolución.

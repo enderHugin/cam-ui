@@ -1,5 +1,17 @@
 # Novedades de cam-ui
 
+## pack 57 — 2026.11.24
+- **«Sincronizar»: ✓ sobre cada cámara en cuanto ya está.** Mientras dura la claqueta, en el
+  mosaico del PC sale «✓ lista» sobre cada cámara que ya ha visto bastante (unos 2 segundos
+  seguidos) y «falta» sobre las demás: así se sabe a cuál falta enseñarle el móvil, sin repetir
+  ni dejarse ninguna. La ventana dice «Listas 5 de 8» y cuáles faltan, y el móvil también.
+- **Con todas listas, termina sola** (sin tener que volver al PC ni tocar «Terminar»). Si alguna
+  no se puede enseñar, «Terminar» como siempre: esa se queda como estaba.
+- **Registro detallado** en `camui.log` de cada sincronización: con qué cámaras, sonido y ajustes
+  empieza, cuándo empieza y termina el móvil, cuándo queda lista cada cámara, y la medida de cada
+  una (o por qué no salió: no se vio, se vio poco rato, dos momentos del código encajaban casi
+  igual...), y lo que se cambió.
+
 ## pack 56 — 2026.11.24
 - **Actualizaciones con el actualizador común** (py-installer 1.3.0), el mismo que md-reader y
   widget-arena: misma ventana, mismo «avisar al abrir», «actualizar sin preguntar» y «vigilar

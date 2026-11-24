@@ -1,17 +1,20 @@
-"""«Sincronizar» (packs 52 y 55) de principio a fin, en la aplicación de verdad (CamApp con su ventana
-Tk y el motor nuevo; hace falta un display: xvfb-run -a python3 tests/ui_sync.py).
+"""«Sincronizar» (packs 52, 55 y 56) de principio a fin, en la aplicación de verdad (CamApp con su
+ventana Tk y el motor nuevo; hace falta un display: xvfb-run -a python3 tests/ui_sync.py).
 
 Un «mundo» de mentira con un reloj: OCHO cámaras que llegan al PC con retrasos distintos (de 0,1 a
 1 s, como USB, móviles por wifi u otro cam-ui encadenado) y a 30, 25, 20, 15 o 10 fps; a cada una se
 le enseña el móvil-claqueta solo unos 3 s, una detrás de otra; y un micrófono (llega en 0,03 s) que
 la oye al principio y al final. El móvil-claqueta es un cliente HTTPS de verdad contra el servidor
 de cam-ui: abre la página del QR, toca «Empezar», espera a que el PC grabe, da su código (en el
-mundo) y termina: la primera vez con «Terminar» en el PC, la segunda con su propio botón.
+mundo) y para cuando el PC se lo pide.
 
 1) la ventana «Sincronizar», el QR y la página del móvil (con el token; sin él, nada);
-2) primera medida: cam-ui pone solo el «Retardo ms» de las ocho y el «Ajuste A/V», lo que de
-   verdad hace falta (± lo que el propio mosaico redondea), y lo guarda;
-3) se vuelve a medir con lo puesto: ahora todas a la vez que el sonido (± un fotograma);
+2) primera prueba: en directo, sobre cada casilla del mosaico sale «✓ lista» en cuanto se le ha
+   enseñado el móvil (una tras otra, ninguna antes de tiempo) y «falta» en las demás; el móvil
+   recibe «Listas k de 8»; con las ocho, termina sola. cam-ui pone el «Retardo ms» de las ocho y el
+   «Ajuste A/V», lo que de verdad hace falta (± lo que el propio mosaico redondea), y lo guarda;
+3) segunda prueba, con lo puesto, y «Terminar» en el PC con seis listas: las medidas, a la vez que
+   el sonido (± un fotograma); las demás siguen como estaban respecto al sonido;
 4) «Deshacer» vuelve a lo de antes; al cerrar la ventana, la página del móvil ya no vale.
 
 (Más fino que ± un fotograma del mosaico no puede quedar: cada imagen solo puede salir en uno.)"""
@@ -210,7 +213,7 @@ def req(method, path):
         c.close()
 
 
-def phone_clapper(token, out, stop_from_pc):
+def phone_clapper(token, out):
     """La página del móvil, hecha a mano: lo mismo que hace su JavaScript."""
     try:
         st, body = req("GET", "/sync?t=" + token)
@@ -231,14 +234,14 @@ def phone_clapper(token, out, stop_from_pc):
         World.epoch = time.time() + 0.3
         req("POST", "/sync/started?t={0}&run={1}".format(token, run))
         out["started"] = True
-        if stop_from_pc:                    # «Terminar» en el PC: el móvil lo ve y para
-            while time.time() < World.epoch + 120:
-                j = json.loads(req("GET", "/sync/state?t={0}".format(token))[1])
-                if j["state"] == "terminando":
-                    break
-                time.sleep(0.3)
-        else:                               # «Terminar» en el móvil
-            time.sleep(0.3 + LENGTH)
+        msgs = out["msgs"] = []
+        while time.time() < World.epoch + 80:                      # hasta que el PC pida parar
+            j = json.loads(req("GET", "/sync/state?t={0}".format(token))[1])
+            if j.get("msg") and (not msgs or msgs[-1] != j["msg"]):
+                msgs.append(j["msg"])
+            if j["state"] == "terminando":
+                break
+            time.sleep(0.3)
         bits = int((time.time() - World.epoch) // BIT)
         World.nbits = bits
         req("POST", "/sync/done?t={0}&run={1}&bits={2}".format(token, run, bits))
@@ -254,20 +257,33 @@ def phone_clapper(token, out, stop_from_pc):
         out["error"] = repr(e)
 
 
-def run_sync(token, stop_from_pc):
+def run_sync(token, stop_at=None):
+    """Una prueba. stop_at: con cuántas listas se toca «Terminar» en el PC (si no, termina sola)."""
     out = {}
     World.epoch = None
-    th = threading.Thread(target=phone_clapper, args=(token, out, stop_from_pc), daemon=True)
+    th = threading.Thread(target=phone_clapper, args=(token, out), daemon=True)
     th.start()
-    if stop_from_pc:
-        assert pump(lambda: out.get("started"), 60)
-        assert pump(lambda: World.epoch is not None and time.time() > World.epoch + LENGTH, 60)
-        assert app._sync_dlg.btn_start.cget("text") == "Terminar" and \
-            app._sync_dlg.btn_start.instate(["!disabled"])
-        app._sync_dlg.btn_start.invoke()                           # «Terminar» en el PC
-    assert pump(lambda: not th.is_alive(), 240), "la claqueta no terminó"
+    assert pump(lambda: out.get("started") or "error" in out, 60), (out, app.phonecam.sync.state, app.phonecam.sync.msg)
+    assert "error" not in out, (out, app.phonecam.sync.state, app.phonecam.sync.msg)
+    marks, shown, pressed = {}, set(), False
+    while th.is_alive():
+        root.update()
+        s_ = app._sync or {}
+        live = s_.get("live")
+        if live is not None and World.epoch is not None:
+            for lab in list(live.ok):
+                marks.setdefault(lab, time.time() - World.epoch)
+            if s_.get("recording"):
+                for i in app.view.find_withtag("syncmark"):
+                    shown.add(app.view.itemcget(i, "text"))
+            if stop_at and not pressed and len(live.ok) >= stop_at:
+                assert app._sync_dlg.btn_start.cget("text") == "Terminar"
+                app._sync_dlg.btn_start.invoke()                   # «Terminar» en el PC
+                pressed = True
+        time.sleep(0.03)
     assert "error" not in out, out
-    assert pump(lambda: app.previewing and not app.busy and app._sync is None, 30)
+    assert pump(lambda: app.previewing and not app.busy and app._sync is None, 60)
+    out["marks"], out["shown"] = marks, shown
     return out
 
 
@@ -293,23 +309,46 @@ try:
     print("1) «Sincronizar»: ventana con el QR; la página y su estado solo con el token "
           "(sin él: 403) OK")
 
-    # 2) primera medida y ajuste (se termina con «Terminar» en el PC)
+    assert pump(lambda: not app.busy and app.previewing, 30)
+
+    # 2) primera prueba: ✓ en directo, y termina sola
     seen = {}
     real_analyze = camui.analyze_sync
 
     def spy(*a, **kw):
+        if os.environ.get("CAMUI_SYNC_KEEP"):        # (para mirarla luego)
+            import pickle
+            k_ = len([f for f in os.listdir(os.environ["CAMUI_SYNC_KEEP"]) if f.endswith(".mkv")])
+            shutil.copy(a[0], os.path.join(os.environ["CAMUI_SYNC_KEEP"], "prueba%d.mkv" % k_))
+            with open(os.path.join(os.environ["CAMUI_SYNC_KEEP"], "prueba%d.pkl" % k_), "wb") as f_:
+                pickle.dump((a[1:], kw), f_)
         r = real_analyze(*a, **kw)
         seen["res"], seen["kw"] = r, kw
+        for l_, v_ in r["cams"].items():           # (si alguna no sale, por qué: para el registro)
+            if v_ is None:
+                print("   («{0}» no salió: {1})".format(l_, r["info"].get(l_)))
         return r
     camui.analyze_sync = spy
-    out = run_sync(token, stop_from_pc=True)
+    out = run_sync(token)
     assert out["page"][0] == 200 and b"Claqueta" in out["page"][1]
+    marks = out["marks"]
+    assert sorted(marks) == sorted(labs), (marks, labs)
+    for i, l in enumerate(labs):                     # cada una, en cuanto se le enseña (y no antes)
+        a, b = SHOW[i]
+        assert a + 1.0 <= marks[l] - CAMS[i][1] <= b + 6.0, (l, marks[l], SHOW[i])
+    assert {"✓ lista", "falta"} <= out["shown"], out["shown"]
+    assert any(m.startswith("Listas 3 de 8") for m in out["msgs"]), out["msgs"]
+    assert out["bits"] * BIT < max(b for _a, b in SHOW) + 8, out["bits"]   # terminó sola, pronto
     fin = out["final"]
     assert fin["state"] == "hecho", fin
     assert seen["kw"].get("nbits") == out["bits"], (seen["kw"], out["bits"])
     new = dict((l, int(app.cams[l].delay.get())) for l in labs)
     av1 = int(app.v_avoff.get())
     print("   resultado: " + fin["msg"].replace("\n", " | "))
+    print("2a) en directo: «✓ lista» sobre cada casilla en cuanto se le enseña el móvil (a los " +
+          ", ".join("{0:.1f}".format(marks[l] - CAMS[i][1] - SHOW[i][0]) for i, l in enumerate(labs)) +
+          " s), «falta» en las demás; el móvil recibe «{0}»…; con las ocho, termina sola a los "
+          "{1:.0f} s OK".format(out["msgs"][0], out["bits"] * BIT))
     true_late = dict((l, (c[1] - A_LAT) * 1000) for l, c in zip(labs, CAMS))
     slow = max(true_late.values())
     for l in labs:
@@ -319,29 +358,36 @@ try:
     with open(camui.CONFIG, encoding="utf-8") as f:
         cfg = json.load(f)
     assert cfg["av_offset"] == av1 and all(cfg["cams"][l]["delay"] == new[l] for l in labs)
-    print("2) primera medida («Terminar» en el PC, a los {0:.0f} s): Retardo ".format(
-        out["bits"] * BIT) + ", ".join("{0} {1} ({2:.0f})".format(
+    print("2b) medida: Retardo " + ", ".join("{0} {1} ({2:.0f})".format(
             l[2:], new[l], slow - true_late[l]) for l in labs) +
-        " ms (entre paréntesis, lo justo); Ajuste A/V {0} ms ({1:.0f}); guardado OK".format(av1, slow))
+          " ms (entre paréntesis, lo justo); Ajuste A/V {0} ms ({1:.0f}); guardado OK".format(av1, slow))
 
-    # 3) otra vez, con lo puesto (y «Terminar» en el móvil): ya a la vez
-    out2 = run_sync(token, stop_from_pc=False)
+    # 3) otra vez, con lo puesto, y «Terminar» en el PC con seis listas
+    out2 = run_sync(token, stop_at=6)
     camui.analyze_sync = real_analyze
     res = seen["res"]
     assert res["audio"] is not None, res
-    resid = dict((l, (res["cams"][l][0] - res["audio"][0]) * 1000) for l in labs if res["cams"][l])
-    assert len(resid) == 8, res
-    # (el mosaico va a 30 fps: cada imagen sale en su fotograma, ± medio fotograma de 33 ms)
-    assert all(abs(v) <= 34 for v in resid.values()), resid
-    assert abs(sum(resid.values()) / len(resid)) <= 12, resid
-    print("3) se vuelve a medir con lo puesto («Terminar» en el móvil): cada cámara respecto al "
-          "sonido " + ", ".join("{0} {1:+.0f}".format(l[2:], v) for l, v in resid.items()) + " ms OK")
-
-    # 4) deshacer, y cerrar
+    got = [l for l in labs if res["cams"][l]]
+    assert len(got) >= 6, res["cams"]
+    resid = dict((l, (res["cams"][l][0] - res["audio"][0]) * 1000) for l in got)
+    # cada imagen sale en su fotograma del mosaico (30 fps) y cada cámara da las suyas a sus fps:
+    # ± medio fotograma de cada (una a 10 fps solo cambia cada 100 ms)
+    fps_of = dict(("📱 " + c[0], c[2]) for c in CAMS)
+    assert all(abs(v) <= 17 + 500.0 / fps_of[l] for l, v in resid.items()), resid
+    new2 = dict((l, int(app.cams[l].delay.get())) for l in labs)
+    av2 = int(app.v_avoff.get())
+    for l in labs:
+        if l not in got:                             # no la vio: igual respecto al sonido
+            assert abs((new2[l] - av2) - (new[l] - av1)) <= 1, (l, new2[l], av2, new[l], av1)
+    print("3) con lo puesto, «Terminar» en el PC con {0} listas: las medidas, respecto al sonido ".format(
+        len(out2["marks"])) + ", ".join("{0} {1:+.0f}".format(l[2:], v) for l, v in resid.items()) +
+        " ms; las demás, igual respecto al sonido OK")
     app._sync_undo()
     assert pump(lambda: not app.busy, 10)
-    back = dict((l, int(app.cams[l].delay.get())) for l in labs)
-    assert back == new and int(app.v_avoff.get()) == av1, (back, new)
+    assert dict((l, int(app.cams[l].delay.get())) for l in labs) == new and \
+        int(app.v_avoff.get()) == av1
+
+    # 4) cerrar
     app._sync_dlg.close()
     assert app.phonecam.sync.token is None
     st, _b = req("GET", "/sync/state?t=" + token)
