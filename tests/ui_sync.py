@@ -362,8 +362,11 @@ try:
     fd = fin.get("devs") or {}
     assert fd.get("phase") == "medido" and fd.get("sound") == 0, fd
     for r in fd["rows"]:                             # (con retardos 0 y ajuste 0 al medir:
-        if r["st"] == "ok":                          # llegaba tarde = ajuste A/V - Retardo nuevos)
+        if r["st"] == "ok":                          # de por sí = ajuste A/V - Retardo nuevos)
             assert abs(r["ms"] - (av1 - new[r["n"]])) <= 1, (r, av1, new[r["n"]])
+            assert abs(r["now"] - av1) <= 1, (r, av1)   # ahora: todas en la raya, con el sonido
+    assert abs(fd["sound_now"] - av1) <= 1, fd
+    nat1 = dict((r["n"], r["ms"]) for r in fd["rows"] if r["st"] == "ok")
     k_ok = sum(1 for r in fd["rows"] if r["st"] == "ok")
     assert app._sync_dlg.devs_head == "Medidas {0} de 8".format(k_ok) + \
         ("" if k_ok == 8 else " · sin medir: {0}".format(8 - k_ok)), app._sync_dlg.devs_head
@@ -403,12 +406,19 @@ try:
     assert all(abs(v) <= 17 + 500.0 / fps_of[l] for l, v in resid.items()), resid
     new2 = dict((l, int(app.cams[l].delay.get())) for l in labs)
     av2 = int(app.v_avoff.get())
+    # lo que tarda cada una «de por sí» no depende de los ajustes con que se mida: el de esta
+    # segunda (con todo ya puesto) es el de la primera (con todo a 0)
+    fd2 = out2["final"].get("devs") or {}
+    nat2 = dict((r["n"], r["ms"]) for r in fd2.get("rows", []) if r["st"] == "ok")
+    dn = dict((l, nat2[l] - nat1[l]) for l in nat2 if l in nat1)
+    assert len(dn) >= 5 and all(abs(v) <= 17 + 500.0 / fps_of[l] for l, v in dn.items()), dn
     for l in labs:
         if l not in got:                             # no la vio: igual respecto al sonido
             assert abs((new2[l] - av2) - (new[l] - av1)) <= 1, (l, new2[l], av2, new[l], av1)
     print("3) con lo puesto, «Terminar» en el PC con {0} listas: las medidas, respecto al sonido ".format(
         len(out2["marks"])) + ", ".join("{0} {1:+.0f}".format(l[2:], v) for l, v in resid.items()) +
-        " ms; las demás, igual respecto al sonido OK")
+        " ms; las demás, igual respecto al sonido; y lo que tarda cada una de por sí, lo mismo que "
+        "en la primera (" + ", ".join("{0:+d}".format(int(v)) for v in dn.values()) + " ms) OK")
     app._sync_undo()
     assert pump(lambda: not app.busy, 10)
     assert dict((l, int(app.cams[l].delay.get())) for l in labs) == new and \

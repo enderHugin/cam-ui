@@ -119,9 +119,9 @@ try:
                     {"n": "Cam <B>", "st": "falta", "ms": None},
                     {"n": "Otra", "st": "falta", "ms": None}]})
             elif kind == "done":
-                b.set_devs({"phase": "medido", "sound": 0, "rows": [
-                    {"n": "USB2.0 PC CAMERA #3", "st": "ok", "ms": -408},
-                    {"n": "Cam <B>", "st": "ok", "ms": 489},
+                b.set_devs({"phase": "medido", "sound": 0, "sound_now": 489, "rows": [
+                    {"n": "USB2.0 PC CAMERA #3", "st": "ok", "ms": -408, "now": 489},
+                    {"n": "Cam <B>", "st": "ok", "ms": 489, "now": 489},
                     {"n": "Otra", "st": "no", "ms": None}]})
                 b.set("hecho", "Prueba hecha: todo bien.")
         if "started" in marks and "done" not in marks and b.state == "grabando" and \
@@ -164,9 +164,9 @@ try:
     assert res["devsHead"] == "Medidas 2 de 3 \u00b7 sin medir: 1", res["devsHead"]
     rows = res["devsRows"]
     assert len(rows) == 4 and "Cam <B>" in rows[1] and "+489 ms" in rows[1], rows
-    assert "no se vio" in rows[2] and rows[3].startswith("Sonido") and "+0 ms" in rows[3], rows
+    assert "no se vio" in rows[2] and rows[3].startswith("Sonido") and "a la vez" in rows[3], rows
     print("3b) el mapa en el móvil: parpadeando, «Faltan 2 de 3» en apagado; al acabar, «{0}», una "
-          "línea por cámara (✓ / no se vio, cuánto llegaba tarde) y el sonido OK".format(
+          "línea por cámara (✓ / no se vio, lo que tarda de por sí) y el sonido «a la vez» OK".format(
               res["devsHead"]))
 
     b.close()

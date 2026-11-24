@@ -1,5 +1,16 @@
 # Novedades de cam-ui
 
+## pack 59 — 2026.11.24
+- **El mapa de «Sincronizar» enseña lo que tarda cada cámara de por sí.** Antes, al acabar, los
+  puntos eran «antes de ajustar», con los retardos que ya tuviera cada una: tras una
+  sincronización mala salían cuatro a +390 ms y una a -17, y parecía que algo iba muy mal (eran
+  los retardos de antes, no las cámaras). Ahora cada cámara tiene dos puntos: ○ lo que tarda ella
+  sola, sin ningún ajuste, respecto al sonido, y ● dónde queda ahora con su «Retardo»; todas en la
+  raya verde = van a la vez. Si se repite la sincronización, los ○ deben salir en el mismo sitio.
+- **El punto azul (el sonido) se arrastra con el ratón.** Más a la derecha, el sonido más tarde;
+  a la izquierda, antes. Al soltar se cambia el «Ajuste A/V» (de 5 en 5 ms) y dice cuánto va
+  respecto a la imagen, o «a la vez».
+
 ## pack 58 — 2026.11.24
 - **Imagen y sonido, igual de sincronizados en todas las grabaciones.** Con «Sincronía: Marcas del
   dispositivo» (en «Avanzado») y el motor nuevo, el sonido empezaba a contar cuando se abría el

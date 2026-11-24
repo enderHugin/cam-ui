@@ -85,7 +85,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
 APP_VERSION = "2026.11.24"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 58                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_PACK = 59                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -4397,6 +4397,9 @@ button:active{background:#3a3f48}
 #devs .t{flex:1;position:relative;height:1px;background:#3a3f48}
 #devs .d{position:absolute;top:-5px;width:10px;height:10px;border-radius:50%;margin-left:-5px}
 #devs .z{position:absolute;top:-9px;height:18px;border-left:1px dashed #555}
+#devs .o{position:absolute;top:-5px;width:6px;height:6px;border-radius:50%;margin-left:-5px;
+  border:2px solid;background:#000}
+#devs .l{position:absolute;top:-10px;height:20px;border-left:2px solid #2ea043}
 #devs .v{flex:0 0 66px;text-align:right;font-size:12px}
 #ui.quiet #devs{color:#4a4a4a}
 #ui.quiet #devs .h{color:#6b5a26}
@@ -4451,17 +4454,27 @@ function drawDevs(d) {
     cap = "\u2022 = cu\u00e1nto va cada una detr\u00e1s de la primera, ahora";
   } else if (d.phase === "medido") {
     head = "Medidas " + k + " de " + n + (k < n ? " \u00b7 sin medir: " + (n - k) : "");
-    cap = d.sound !== null && d.sound !== undefined ?
-      "\u2022 = cu\u00e1nto llegaba tarde respecto al sonido (ahora van a la vez)" :
-      "\u2022 = cu\u00e1nto llegaba tarde respecto a la primera";
+    cap = "\u25cb = lo que tarda cada una de por s\u00ed \u00b7 \u25cf = ahora, con su retardo " +
+          "(en la raya verde, a la vez)";
   } else {
     head = n + (n === 1 ? " c\u00e1mara" : " c\u00e1maras") + " por sincronizar";
   }
-  if (d.sound !== null && d.sound !== undefined) { rows.push({n: "Sonido", st: "sonido", ms: d.sound}); }
-  for (i = 0; i < rows.length; i++) { if (rows[i].ms !== null && rows[i].ms !== undefined) { vals.push(rows[i].ms); } }
+  if (d.sound !== null && d.sound !== undefined) {
+    rows.push({n: "Sonido", st: "sonido", ms: d.sound, now: d.sound_now});
+  }
+  var nows = [];
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].ms !== null && rows[i].ms !== undefined) { vals.push(rows[i].ms); }
+    if (rows[i].now !== null && rows[i].now !== undefined) {
+      vals.push(rows[i].now);
+      if (rows[i].st === "ok") { nows.push(rows[i].now); }
+    }
+  }
+  nows.sort(function (a, b) { return a - b; });
+  var line = nows.length ? nows[Math.floor(nows.length / 2)] : null;   // la raya de «a la vez»
   var lo = Math.min.apply(null, vals.concat([0])), hi = Math.max.apply(null, vals.concat([0]));
   var span = Math.max(100, hi - lo);
-  lo -= 0.08 * span; hi += 0.08 * span;
+  lo -= 0.15 * span; hi += 0.15 * span;
   function pc(ms) { return (100 * (ms - lo) / (hi - lo)).toFixed(1) + "%"; }
   var col = quiet ? {ok: "#1f6f43", falta: "#6b5a26", no: "#444", sonido: "#24467a"} :
                     {ok: "#3ddc84", falta: "#e3b341", no: "#777", sonido: "#3b82f6"};
@@ -4470,13 +4483,27 @@ function drawDevs(d) {
   if (cap) { h += '<div class="c">' + esc(cap) + '</div>'; }
   for (i = 0; i < rows.length; i++) {
     var r = rows[i], has = r.ms !== null && r.ms !== undefined, c = col[r.st] || "#777";
+    var hasNow = has && r.now !== null && r.now !== undefined, dot = "", val = "";
+    if (hasNow) {
+      dot = '<span class="o" style="left:' + pc(r.ms) + ';border-color:' + c + '"></span>' +
+            '<span class="d" style="left:' + pc(r.now) + ';background:' + c + '"></span>';
+      if (r.st === "sonido") {
+        var df = Math.round(r.now - (line === null ? 0 : line));
+        val = Math.abs(df) < 3 ? "a la vez" : (df > 0 ? "+" : "") + df + " ms";
+      } else {
+        val = (r.ms >= 0 ? "+" : "") + Math.round(r.ms) + " ms";
+      }
+    } else if (has) {
+      dot = '<span class="d" style="left:' + pc(r.ms) + ';background:' + c + '"></span>';
+      val = (r.ms >= 0 ? "+" : "") + Math.round(r.ms) + " ms";
+    }
     h += '<div class="r"><span class="n" style="color:' + (r.st === "sonido" ? c : "") + '">' +
          esc(shortName(r.n)) + '</span><span class="s" style="color:' + c +
          (r.st === "ok" ? ';font-size:17px;font-weight:700' : '') + '">' + esc(mark[r.st] || "") +
          '</span><span class="t">' + (vals.length ? '<span class="z" style="left:' + pc(0) +
-         '"></span>' : '') + (has ? '<span class="d" style="left:' + pc(r.ms) + ';background:' +
-         c + '"></span>' : '') + '</span><span class="v" style="color:' + c + '">' +
-         (has ? (r.ms >= 0 ? "+" : "") + Math.round(r.ms) + " ms" : "") + '</span></div>';
+         '"></span>' : '') + (line !== null ? '<span class="l" style="left:' + pc(line) +
+         '"></span>' : '') + dot + '</span><span class="v" style="color:' + c + '">' + val +
+         '</span></div>';
   }
   devsDiv.innerHTML = h;
 }
@@ -8585,9 +8612,11 @@ def sync_devs_text(d):
         cap = "• = cuánto va cada una detrás de la primera, ahora mismo (el sonido se mide al final)"
     elif ph == "medido":
         head = "Medidas {0} de {1}".format(k, n) + (" · sin medir: {0}".format(n - k) if k < n else "")
-        cap = ("• = cuánto llegaba tarde cada una respecto al sonido, antes de ajustar (ahora van "
-               "a la vez)" if d.get("sound") is not None else
-               "• = cuánto llegaba tarde cada una respecto a la primera, antes de ajustar")
+        cap = ("○ = lo que tarda cada una de por sí, respecto al sonido · ● = ahora, con su "
+               "retardo: en la misma raya, a la vez. El punto azul (el sonido) se puede "
+               "arrastrar." if d.get("sound") is not None else
+               "○ = lo que tarda cada una de por sí, respecto a la primera · ● = ahora, con su "
+               "retardo")
     else:
         head = "{0} cámara{1} por sincronizar".format(n, "" if n == 1 else "s")
         cap = ""
@@ -8599,10 +8628,13 @@ class SyncDialog:
     paso va, el mapa de aparatos (cuántos faltan y cuánto va cada uno respecto a los demás: ver
     set_devices), el resultado, y «Empezar» / «Deshacer» / «Cerrar»."""
 
-    def __init__(self, parent, photo, url, on_start, on_undo, on_close, on_audio=None):
+    def __init__(self, parent, photo, url, on_start, on_undo, on_close, on_audio=None,
+                 on_av=None):
         self.alive = True
         self.photo = photo
         self._on_close = on_close
+        self._on_av = on_av              # el punto azul arrastrado: nuevo «Ajuste A/V» (ms)
+        self._drag = None
         top = self.top = tk.Toplevel(parent)
         top.title("Sincronizar sonido y cámaras")
         top.configure(bg=PANEL)
@@ -8678,7 +8710,7 @@ class SyncDialog:
         if not self.alive:
             return
         key = json.dumps(d, sort_keys=True)
-        if key == self._devs_key:
+        if key == self._devs_key or self._drag is not None:   # (no mientras se arrastra)
             return
         self._devs_key = key
         try:
@@ -8700,26 +8732,36 @@ class SyncDialog:
                                                                else FG))
         y = 30
         if cap:
-            c.create_text(10, y, anchor="nw", text=cap, font=f, fill=MUTED, width=W - 20)
-            y += 18
+            it = c.create_text(10, y, anchor="nw", text=cap, font=f, fill=MUTED, width=W - 20)
+            bb = c.bbox(it)
+            y = (bb[3] + 4) if bb else y + 18
         snd = d.get("sound")
-        lines = [(r.get("n", ""), r.get("st"), r.get("ms")) for r in rows]
+        lines = [(r.get("n", ""), r.get("st"), r.get("ms"), r.get("now")) for r in rows]
         if snd is not None:
-            lines.append(("Sonido", "sonido", snd))
-        vals = [ms for _n, _st, ms in lines if ms is not None]
-        lo, hi = min(vals + [0]), max(vals + [0])
+            lines.append(("Sonido", "sonido", snd, d.get("sound_now")))
+        vals = [v for l in lines for v in l[2:] if v is not None]
+        room = list(vals)
+        if d.get("sound_now") is not None:              # sitio para arrastrar el punto azul
+            room += [d["sound_now"] - 150, d["sound_now"] + 150]
+        lo, hi = min(room + [0]), max(room + [0])
         span = max(100.0, float(hi - lo))
-        lo, hi = lo - 0.08 * span, hi + 0.08 * span
-        X0, X1 = 250, W - 70
+        lo, hi = lo - 0.15 * span, hi + 0.15 * span
+        X0, X1 = 250, W - 74
+        self._xmap = (lo, hi, X0, X1)
 
         def xm(ms):
             return X0 + (X1 - X0) * (ms - lo) / float(hi - lo)
         RH = 20
         top = y + 4
+        nows = sorted(l[3] for l in lines if l[3] is not None and l[1] == "ok")
+        line = nows[len(nows) // 2] if nows else None          # la raya de «a la vez»
         if vals:
             xz = xm(0)
             c.create_line(xz, top - 2, xz, top + RH * len(lines), fill=LINE, dash=(3, 3))
-        for i, (name, st, ms) in enumerate(lines):
+        if line is not None:
+            xl = xm(line)
+            c.create_line(xl, top - 2, xl, top + RH * len(lines), fill=OK_GREEN, width=2)
+        for i, (name, st, ms, now) in enumerate(lines):
             yy = top + i * RH + RH / 2
             short = name if len(name) <= 26 else name[:25] + "…"
             c.create_text(10, yy, anchor="w", text=short, font=f,
@@ -8729,17 +8771,79 @@ class SyncDialog:
             c.create_text(X0 - 12, yy, anchor="e", text=mark, fill=col,
                           font=("Segoe UI", 11, "bold") if st == "ok" else f)
             c.create_line(X0, yy, X1, yy, fill=LINE)
-            if ms is not None:
+            if ms is None:
+                continue
+            if now is None:                                    # (en directo: un punto)
                 x = xm(ms)
                 c.create_oval(x - 5, yy - 5, x + 5, yy + 5, fill=col, outline="")
                 c.create_text(X1 + 8, yy, anchor="w", font=f, fill=col,
                               text="{0:+d} ms".format(int(round(ms))))
+                continue
+            x, xn = xm(ms), xm(now)                            # de por sí → ahora
+            if abs(xn - x) > 6:
+                c.create_line(x, yy, xn, yy, fill=col, width=2, arrow="last", arrowshape=(6, 7, 3))
+            c.create_oval(x - 4, yy - 4, x + 4, yy + 4, outline=col, width=2, fill=PANEL2)
+            if st == "sonido":
+                c.create_oval(xn - 7, yy - 7, xn + 7, yy + 7, fill=col, outline=FG, width=1,
+                              tags=("snd",))
+                diff = now - line if line is not None else 0
+                c.create_text(X1 + 8, yy, anchor="w", font=f, fill=col, tags=("sndtxt",),
+                              text=self._snd_text(diff))
+                self._snd = (yy, now, line)
+            else:
+                c.create_oval(xn - 5, yy - 5, xn + 5, yy + 5, fill=col, outline="")
+                c.create_text(X1 + 8, yy, anchor="w", font=f, fill=col,
+                              text="{0:+d} ms".format(int(round(ms))))
+        if self._on_av is not None and c.find_withtag("snd"):
+            c.tag_bind("snd", "<ButtonPress-1>", self._drag_start)
+            c.tag_bind("snd", "<B1-Motion>", self._drag_move)
+            c.tag_bind("snd", "<ButtonRelease-1>", self._drag_end)
+            c.tag_bind("snd", "<Enter>", lambda e: c.config(cursor="sb_h_double_arrow"))
+            c.tag_bind("snd", "<Leave>", lambda e: c.config(cursor=""))
         y = top + RH * len(lines) + 6
         if not lines:
             c.create_text(10, y, anchor="nw", text="(sin cámaras en el mosaico)", font=f,
                           fill=MUTED)
             y += 18
         c.config(height=int(y + 4))
+
+    @staticmethod
+    def _snd_text(diff):
+        diff = int(round(diff))
+        if abs(diff) < 3:
+            return "a la vez"
+        return "{0:+d} ms ({1})".format(diff, "más tarde" if diff > 0 else "antes")
+
+    # el punto azul: arrastrarlo mueve el sonido respecto a la imagen («Ajuste A/V»); se aplica
+    # al soltar (cada cambio reinicia la vista previa)
+    def _ms_at(self, x):
+        lo, hi, X0, X1 = self._xmap
+        return lo + (hi - lo) * (min(max(x, X0), X1) - X0) / float(X1 - X0)
+
+    def _drag_start(self, e):
+        if getattr(self, "_snd", None) is None:
+            return
+        self._drag = {"x0": e.x, "now0": self._snd[1], "now": self._snd[1]}
+
+    def _drag_move(self, e):
+        dr = self._drag
+        if dr is None:
+            return
+        yy, _now, line = self._snd
+        ms = dr["now0"] + int(round((self._ms_at(e.x) - dr["now0"]) / 5.0)) * 5   # de 5 en 5 ms
+        dr["now"] = ms
+        c = self.cv
+        x = min(max(e.x, self._xmap[2]), self._xmap[3])
+        c.coords("snd", x - 7, yy - 7, x + 7, yy + 7)
+        c.itemconfig("sndtxt", text=self._snd_text(ms - (line if line is not None else 0)))
+
+    def _drag_end(self, e):
+        dr, self._drag = self._drag, None
+        if dr is None:
+            return
+        self._devs_key = None                          # que se vuelva a dibujar
+        if dr["now"] != dr["now0"] and self._on_av is not None:
+            self._on_av(dr["now"] - dr["now0"])
 
     def update(self, state, result=None, can_start=False, can_undo=False, start_text="Empezar"):
         if not self.alive:
@@ -9250,6 +9354,7 @@ class CamApp:
         self._sync_dlg = None
         self._avsync_dlg = None          # ventanita «Sincronía audio ↔ vídeo» (ver avsync_open)
         self._sync_map = None            # el mapa de la última medida (ver _sync_devs)
+        self._sync_map_base = 0.0
         self._sync_prev = None          # (retardos, ajuste A/V) de antes, para «Deshacer»
         self._sync_result = ""
         self._sync_ui_t = 0.0
@@ -13960,7 +14065,8 @@ class CamApp:
                          "/sync?t={0}".format(token))
         photo = self._phonecam_qr_photo(url)
         self._sync_dlg = SyncDialog(self.root, photo, url, self._sync_button, self._sync_undo,
-                                    self._sync_closed, on_audio=self.avsync_open)
+                                    self._sync_closed, on_audio=self.avsync_open,
+                                    on_av=self._sync_drag_av)
         d = self._avsync_dlg
         if d is not None and d.alive:              # abierta desde la ventanita: las dos a la vista
             _place_beside(d.top, self._sync_dlg.top)
@@ -14043,10 +14149,32 @@ class CamApp:
                               "ms": int(round((lags[l] - ref) * 1000)) if l in lags else None}
                              for l in live.labels]}
         if s is None and self._sync_map is not None:
-            return self._sync_map
+            m = self._sync_map
+            base = getattr(self, "_sync_map_base", 0.0)
+            rows = []
+            for r in m["rows"]:
+                r = dict(r)
+                cv = self.cams.get(r["n"])
+                if r.get("ms") is not None and cv is not None:
+                    r["now"] = int(round(r["ms"] + _geti(cv.delay)))   # con su «Retardo» de ahora
+                rows.append(r)
+            out = dict(m, rows=rows)
+            if m.get("sound") is not None:
+                out["sound_now"] = int(round(_geti(self.v_avoff) - base))   # con el «Ajuste A/V»
+            return out
         labels = list(s["labels"]) if s else list(getattr(self, "_run_labels", None) or [])
         return {"phase": "antes", "sound": None,
                 "rows": [{"n": l, "st": "falta", "ms": None} for l in labels]}
+
+    def _sync_drag_av(self, delta):
+        """El punto azul del mapa, arrastrado a mano: el sonido delta ms más tarde (o antes)."""
+        if self._sync is not None or self.recording:
+            return
+        v = max(-SYNC_LIMIT_MS, min(SYNC_LIMIT_MS, _geti(self.v_avoff) + int(delta)))
+        log.info("sincronizar: sonido movido a mano en el mapa (%+d ms): «Ajuste A/V» %d ms",
+                 int(delta), v)
+        self.v_avoff.set(v)
+        self._sync_ui(force=True)
 
     def _sync_button(self):
         """«Empezar» / «Terminar» de la ventana."""
@@ -14261,11 +14389,17 @@ class CamApp:
         self._sync_set(new, av)
         s["applied"] = True
         heard = res.get("audio") is not None
-        base = 0.0 if heard else min(late.values())       # sin sonido: desde la primera
+        # en el mapa, lo que tarda cada una DE POR SÍ (sin «Retardo» ni «Ajuste A/V»): lo que
+        # llegaba tarde, menos el retardo que ya llevaba, más el ajuste que ya llevaba el sonido.
+        # (Con lo de antes -- «antes de ajustar» -- salían cuatro a +390 ms y una a -17: los
+        # retardos que había dejado la sincronización anterior, no las cámaras.)
+        nat = dict((l, late[l] - float(s["delays"].get(l, 0)) + float(s["av"])) for l in late)
+        base = 0.0 if heard else min(nat.values())          # sin sonido: desde la primera
         self._sync_map = {"phase": "medido", "sound": 0 if heard else None,
-                          "rows": [{"n": l, "st": "ok" if l in late else "no",
-                                    "ms": int(round(late[l] - base)) if l in late else None}
+                          "rows": [{"n": l, "st": "ok" if l in nat else "no",
+                                    "ms": int(round(nat[l] - base)) if l in nat else None}
                                    for l in s["labels"]]}
+        self._sync_map_base = base
         if heard:
             self._av_reset = None              # «Ajuste A/V» ya medido con la cuenta nueva
         slow = max(late, key=lambda l: late[l]) if heard else None

@@ -8,7 +8,10 @@ ventana Tk; hace falta un display: xvfb-run -a python3 tests/ui_avsync_window.py
    otra, trae la misma delante;
 3) desde la ventanita, «Sincronizar…» abre la ventana de la claqueta; y desde ésta, «Sonido ↔
    vídeo…» trae la ventanita (o la vuelve a abrir si se cerró); las dos, una al lado de la otra
-   (la ventanita no tapa el QR)."""
+   (la ventanita no tapa el QR);
+4) el mapa de «Sincronizar» tras medir: ○ lo que tarda cada una de por sí, ● ahora (con su
+   «Retardo»), todas en la raya de «a la vez»; el punto azul (el sonido) se arrastra con el ratón y
+   eso cambia el «Ajuste A/V» (al soltar, de 5 en 5 ms)."""
 import os
 import sys
 import json
@@ -160,6 +163,52 @@ try:
           "sin taparle el QR) si se había cerrado OK")
     sd.close()
     d2.close()
+
+    # 4) el mapa tras medir, y el punto azul arrastrado
+    class _O(object):
+        pass
+    fake = _O()
+    fake._sync = None
+    fake._sync_map = {"phase": "medido", "sound": 0, "rows": [
+        {"n": "A", "st": "ok", "ms": -17}, {"n": "B", "st": "ok", "ms": 56},
+        {"n": "C", "st": "no", "ms": None}]}
+    fake._sync_map_base = 0.0
+    fake.cams = {"A": _O(), "B": _O()}
+    fake.cams["A"].delay = tk.IntVar(value=73)
+    fake.cams["B"].delay = tk.IntVar(value=0)
+    fake.v_avoff = tk.IntVar(value=56)
+    devs = camui.CamApp._sync_devs(fake)
+    assert [r.get("now") for r in devs["rows"]] == [56, 56, None], devs
+    assert devs["sound_now"] == 56, devs
+    got = []
+    holder = tk.Toplevel(root)                     # (root está oculta: sus «transient» también)
+    sd2 = camui.SyncDialog(holder, None, "https://x/sync", lambda: 0, lambda: 0, lambda: 0,
+                           on_av=got.append)
+    sd2.set_devices(devs)
+    root.update()
+    c = sd2.cv
+    assert c.itemcget("sndtxt", "text") == "a la vez"
+    x0, y0, x1, y1 = c.coords("snd")
+    cx, cy = int((x0 + x1) / 2), int((y0 + y1) / 2)
+    lo, hi, X0, X1 = sd2._xmap
+    dx = int(round(40 * (X1 - X0) / (hi - lo)))
+    c.event_generate("<Motion>", x=cx, y=cy)
+    c.event_generate("<ButtonPress-1>", x=cx, y=cy, button=1)
+    c.event_generate("<B1-Motion>", x=cx + dx, y=cy, state=0x100)
+    root.update()
+    assert c.itemcget("sndtxt", "text") == "+40 ms (más tarde)", c.itemcget("sndtxt", "text")
+    sd2.set_devices(dict(devs, sound_now=10))      # (mientras se arrastra no se redibuja)
+    assert c.find_withtag("snd") and c.itemcget("sndtxt", "text") == "+40 ms (más tarde)"
+    c.event_generate("<ButtonRelease-1>", x=cx + dx, y=cy, button=1, state=0x100)
+    root.update()
+    assert got == [40], got
+    sd2.close()
+    av0 = int(app.v_avoff.get())
+    app._sync_drag_av(40)
+    assert int(app.v_avoff.get()) == av0 + 40
+    print("4) el mapa tras medir: ○ de por sí y ● ahora (las dos en la raya de «a la vez»); el "
+          "punto azul arrastrado 40 ms a la derecha dice «+40 ms (más tarde)» y al soltar sube el "
+          "«Ajuste A/V» 40 ms OK")
 finally:
     try:
         app._phonecam_disable()
