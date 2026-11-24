@@ -55,7 +55,14 @@ def lit_fraction(a, b):
     return (F(b) - F(a)) / (b - a)
 
 
-def make(path, secs, audio=True, amp=None, noise=3):
+def make(path, secs, audio=True, amp=None, noise=3, quads=1, see=None, phone=(18, 9), drift=25.0):
+    """La grabación de prueba. quads: cuadrantes de la claqueta (1, la de siempre; 4, 2×2 con un
+    código cada uno y cuatro tonos). see: cuándo se le enseña a cada cámara (si no, SEE). phone:
+    (alto, ancho) del móvil en la imagen; drift: lo que se mueve (puntos por segundo)."""
+    see = SEE if see is None else see
+    codes = camui.sync_codes(NBITS, quads)
+    tones = camui.sync_tones(quads)
+    Fq = [camui._sync_on_time(c, BIT) for c in codes]
     rng = np.random.default_rng(11)
     bg = []
     for _ in TILES:
@@ -74,13 +81,14 @@ def make(path, secs, audio=True, amp=None, noise=3):
             x[i0:i1] += 0.25 * np.convolve(rng.standard_normal(i1 - i0), np.ones(12) / 12.0, "same")
         rel = t - A_LAG
         k = np.floor(rel / BIT).astype(int)
-        on = (k >= 0) & (k < NBITS)
-        on[on] = np.asarray(CODE)[k[on]] == 1
         near = np.zeros(len(t), bool)
         for a, b in HEAR:
             near |= (rel >= a) & (rel < b)
-        g = np.convolve((on & near).astype(float), np.ones(144) / 144.0, "same")   # rampas de 3 ms
-        x += 0.06 * g * np.sin(2 * np.pi * camui.SYNC_TONE_HZ * t)
+        for cq, tq in zip(codes, tones):                # un tono por cuadrante
+            on = (k >= 0) & (k < NBITS)
+            on[on] = np.asarray(cq)[k[on]] == 1
+            g = np.convolve((on & near).astype(float), np.ones(144) / 144.0, "same")   # rampas 3 ms
+            x += 0.06 / len(codes) * g * np.sin(2 * np.pi * tq * t)
         pcm = (np.clip(x, -1, 1) * 32000).astype("<i2")
         with wave.open(wav, "wb") as wf:
             wf.setnchannels(1)
@@ -105,12 +113,24 @@ def make(path, secs, audio=True, amp=None, noise=3):
                     img[20:40, 20:40] = 230 if (i // 7) % 2 else 30
                 if c < 8:
                     s = ti - LAT[c] - A_LAG                                     # hora del código que ve
-                    a, b = SEE[c]
+                    a, b = see[c]
                     if a - 0.5 <= s <= b + 0.5:                                 # el móvil, pequeño, se mueve
-                        py = int(60 + 30 * np.sin((s - a) * 0.7))
-                        px = int(150 + 25 * (s - a))
-                        f = lit_fraction(s - per / float(FPS), s) if a <= s <= b else 0.0
-                        img[py:py + 18, px:px + 9] = 15 + f * (225 if amp is None else amp[c])
+                        py = int(60 + 30 * np.sin((s - a) * 0.7 * drift / 25.0))
+                        px = int(150 + drift * (s - a))
+                        A = 225 if amp is None else amp[c]
+                        ph, pw = phone
+                        if quads == 1:
+                            f = lit_fraction(s - per / float(FPS), s) if a <= s <= b else 0.0
+                            img[py:py + ph, px:px + pw] = 15 + f * A
+                        else:                                                   # 2×2, con una cruz negra
+                            img[py:py + ph, px:px + pw] = 15
+                            hh, ww = ph // 2, pw // 2
+                            for q_, (oy, ox) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
+                                Fk = Fq[q_]
+                                f = ((Fk(s) - Fk(s - per / float(FPS))) / (per / float(FPS))
+                                     if a <= s <= b else 0.0)
+                                y0q, x0q = py + oy * hh + (1 if oy else 0), px + ox * ww + (1 if ox else 0)
+                                img[y0q:y0q + hh - 1, x0q:x0q + ww - 1] = 15 + f * A
                 held[c] = np.clip(img, 0, 255).astype(np.uint8)
             fr[y0:y0 + h, x0:x0 + w] = held[c]
         p.stdin.write(fr.tobytes())

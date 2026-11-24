@@ -5753,6 +5753,36 @@ def sync_code(n=SYNC_CODE_BITS):
 SYNC_CODE = sync_code()
 SYNC_MAX_BITS = min(len(SYNC_CODE), int(round(SYNC_MAX_S / SYNC_BIT_S)))
 
+# Claqueta de cuadrantes (rama «claqueta-cuadrantes»): la pantalla del móvil, en 2×2 cuadrantes,
+# cada uno con el mismo código pero empezado en otro sitio (SYNC_QUAD_SHIFTS: esos trozos de
+# 1023 no se parecen entre sí), y el sonido, cuatro tonos a la vez, cada uno con el código de su
+# cuadrante. Cada imagen de una cámara trae así cuatro datos en vez de uno: con un segundo de
+# claqueta basta para saber dónde está (antes, dos o tres), y hay cuatro veces más cambios que
+# afinan la medida. Sin marca de orientación: cada trocito de la imagen busca cuál de los cuatro
+# códigos ve, así que da igual cómo se gire o se mueva el móvil. No se puede parpadear más deprisa:
+# una cámara a 10 fps hace una imagen cada 0,1 s y lo más rápido se le mezclaría en cada una.
+SYNC_QUADS = 1                # (en pruebas: con 4 aún no mide mejor que con 1, ver abajo)
+SYNC_QUAD_SHIFTS = (0, 256, 512, 768)
+SYNC_QUAD_TONES = (1250, 2050, 2950, 3950)     # separados, y sin que unos caigan en las mezclas
+                                               # de otros (diferencias 800, 900, 1000...)
+SYNC_QUAD_MIN_SEEN_S = 1.0   # con cuadrantes, lo que una cámara tiene que ver para fiarse
+
+
+def sync_codes(nbits=None, quads=None):
+    """El código de cada cuadrante (y de su tono): [cuadrante][trozo] -> 0/1. Con un solo
+    cuadrante, el código de siempre."""
+    q = SYNC_QUADS if quads is None else int(quads)
+    n = SYNC_MAX_BITS if nbits is None else int(nbits)
+    if q <= 1:
+        return [list(SYNC_CODE[:n])]
+    m = len(SYNC_CODE)
+    return [[SYNC_CODE[(i + SYNC_QUAD_SHIFTS[k]) % m] for i in range(n)] for k in range(q)]
+
+
+def sync_tones(quads=None):
+    q = SYNC_QUADS if quads is None else int(quads)
+    return [SYNC_TONE_HZ] if q <= 1 else list(SYNC_QUAD_TONES[:q])
+
 
 def _sync_on_time(code, bit):
     """F(t): cuánto tiempo ha estado encendida la claqueta entre su principio y t (s); para muchas
@@ -5892,78 +5922,102 @@ def sync_read_video(path, tiles, W, H, ffmpeg=None, max_w=1920, across=80):
              for r, (_x0, _y0, cw, ch, _c) in zip(rows, boxes)])
 
 
-def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ, info=None):
+def sync_audio_lag(t0, x, sr, code=None, bit=SYNC_BIT_S, tone=SYNC_TONE_HZ, info=None,
+                   codes=None, tones=None):
     """Dónde empieza el código de la claqueta en el sonido: (hora del primer trozo, segundos oídos,
     desacuerdo en s entre trozos), o None si no se oye bien. Vale que el micrófono solo oiga
     parte (el móvil se aleja). Primero el código entero, encajado al milisegundo; luego, afinado
     con el principio de cada pitido (el final se alarga con el eco de la sala). En info["why"],
-    por qué no, si no."""
+    por qué no, si no. codes / tones: claqueta de cuadrantes -- un tono por cuadrante, cada uno
+    con su código, todos empezando a la vez (ver SYNC_QUADS): se suman las cuatro."""
     info = {} if info is None else info
-    code = list(SYNC_CODE[:SYNC_MAX_BITS] if code is None else code)
-    if x is None or t0 is None or len(x) < 2 * sr or not code:
+    if codes is None:
+        codes = [list(SYNC_CODE[:SYNC_MAX_BITS] if code is None else code)]
+        tones = [tone]
+    codes = [list(c) for c in codes]
+    tones = list(tones if tones is not None else sync_tones(len(codes)))
+    if x is None or t0 is None or len(x) < 2 * sr or not codes or not codes[0]:
         info["why"] = "sin sonido"
         return None
-    X = np.fft.rfft(x.astype(np.float64))
+    X0 = np.fft.rfft(x.astype(np.float64))
     f = np.fft.rfftfreq(len(x), 1.0 / sr)
-    X[(f < tone - 250) | (f > tone + 250)] = 0
-    y = np.fft.irfft(X, len(x))
     hop = max(1, sr // 1000)                                   # 1 ms por casilla
-    n = len(y) // hop
-    env = np.sqrt(np.convolve((y[:n * hop] ** 2).reshape(n, hop).mean(axis=1),
-                              np.ones(3) / 3.0, "same"))
-    lo_, hi_ = float(np.percentile(env, 20)), float(np.percentile(env, 99.5))
-    if not hi_ > 1.5 * lo_ + 1e-12:
-        info["why"] = "no se oye el pitido (el sonido apenas sube a 2,5 kHz)"
-        return None
-    v = np.clip((env - lo_) / (hi_ - lo_), 0, 1.2)
-    v = v - _moving_mean(v[:, None], 2000)[:, 0]
     B = bit * 1000.0                                           # ms por trozo (no entero)
-    nt = int(len(code) * B)
-    tmpl = 2.0 * np.asarray(code, dtype=np.float64)[
-        np.minimum((np.arange(nt) / B).astype(np.int64), len(code) - 1)] - 1.0
-    if n <= len(tmpl) // 8:
+    nt = int(len(codes[0]) * B)
+    tr = []                                                    # por tono: (v, d, tmpl, rises)
+    for cd, tn in zip(codes, tones):
+        X = X0.copy()
+        X[(f < tn - 250) | (f > tn + 250)] = 0
+        y = np.fft.irfft(X, len(x))
+        n = len(y) // hop
+        env = np.sqrt(np.convolve((y[:n * hop] ** 2).reshape(n, hop).mean(axis=1),
+                                  np.ones(3) / 3.0, "same"))
+        lo_, hi_ = float(np.percentile(env, 20)), float(np.percentile(env, 99.5))
+        if not hi_ > 1.5 * lo_ + 1e-12:
+            continue                                           # este tono no se oye
+        v = np.clip((env - lo_) / (hi_ - lo_), 0, 1.2)
+        v = v - _moving_mean(v[:, None], 2000)[:, 0]
+        tmpl = 2.0 * np.asarray(cd, dtype=np.float64)[
+            np.minimum((np.arange(nt) / B).astype(np.int64), len(cd) - 1)] - 1.0
+        rises = np.array([i * B for i in range(len(cd))
+                          if cd[i] and (i == 0 or not cd[i - 1])], dtype=np.float64)
+        tr.append((v, np.maximum(np.diff(env, prepend=env[0]), 0), tmpl, rises))
+    if not tr:
+        info["why"] = "no se oye el pitido (el sonido apenas sube a {0})".format(
+            " ni a ".join("{0:.1f} kHz".format(t / 1000.0).replace(".", ",") for t in tones))
+        return None
+    n = len(tr[0][0])
+    if n <= nt // 8:
         info["why"] = "la grabación es más corta que lo que se busca"
         return None
-    C = _sync_corr(v[:, None], tmpl)[:, 0]
+    C = sum(_sync_corr(v[:, None], tm)[:, 0] for v, _d, tm, _r in tr)
     k0 = int(np.argmax(C))
     far = np.ones(len(C), bool)
     far[max(0, k0 - 300):k0 + 300] = False
     if not C[k0] > 0 or (far.any() and C[k0] < 2.5 * max(0.0, float(C[far].max()))):
         info["why"] = "no se oye la claqueta (o dos momentos encajan casi igual)"
         return None
-    # afinar con el principio de cada pitido
-    rises = np.array([i * B for i in range(len(code))
-                      if code[i] and (i == 0 or not code[i - 1])], dtype=np.float64)
-    d = np.maximum(np.diff(env, prepend=env[0]), 0)
-    idx = np.arange(len(d), dtype=np.float64)
+    # afinar con el principio de cada pitido (de todos los tonos)
+    idx = np.arange(n, dtype=np.float64)
 
-    def fine(l0, sel=None):
-        r = rises if sel is None else rises[sel]
+    def fine(l0, lo_ms=None, hi_ms=None):
         grid = l0 + np.arange(-12.0, 12.25, 0.25)
-        sc = np.array([np.interp(g + r, idx, d, left=0, right=0).sum() for g in grid])
+        sc = np.zeros(len(grid))
+        cnt = 0
+        for _v, d, _tm, rises in tr:
+            r = rises if lo_ms is None else rises[(rises >= lo_ms) & (rises < hi_ms)]
+            cnt += len(r)
+            for gi, g in enumerate(grid):
+                sc[gi] += np.interp(g + r, idx, d, left=0, right=0).sum()
         j = int(np.argmax(sc))
-        return float(grid[0] + 0.25 * _parabolic(sc, j)), float(sc[j])
-    lf, _s = fine(float(k0))
-    # lo oído, segundo a segundo; y lo que discrepan trozos de 2 s entre sí
+        return float(grid[0] + 0.25 * _parabolic(sc, j)), cnt
+    lf, _c = fine(float(k0))
+    # lo oído, segundo a segundo (todos los tonos juntos); y lo que discrepan trozos de 2 s
     heard = []
-    for w0 in range(0, len(tmpl) - 999, 1000):
+    for w0 in range(0, nt - 999, 1000):
         a = int(round(lf)) + w0
-        seg = v[a:a + 1000] if 0 <= a and a + 1000 <= n else None
-        if seg is None or seg.std() <= 0 or tmpl[w0:w0 + 1000].std() <= 0:
+        if not (0 <= a and a + 1000 <= n):
             continue
-        if np.corrcoef(seg, tmpl[w0:w0 + 1000])[0, 1] > 0.6:
+        seg = np.concatenate([v[a:a + 1000] for v, _d, _tm, _r in tr])
+        tseg = np.concatenate([tm[w0:w0 + 1000] for _v, _d, tm, _r in tr])
+        if seg.std() <= 0 or tseg.std() <= 0:
+            continue
+        if np.corrcoef(seg, tseg)[0, 1] > 0.6:
             heard.append(w0)
     info["oidos"] = len(heard)
-    if len(heard) < SYNC_MIN_SEEN_S:
+    if len(tr) < len(codes):
+        info["tonos"] = len(tr)
+    min_s = SYNC_MIN_SEEN_S if len(codes) <= 1 else SYNC_QUAD_MIN_SEEN_S
+    if len(heard) < min_s:
         info["why"] = "oída muy poco rato"
         return None
     parts = []
     hs = set(heard)
     for w0 in heard:
         if w0 + 1000 in hs:
-            sel = (rises >= w0) & (rises < w0 + 2000)
-            if sel.sum() >= 3:
-                parts.append(fine(lf, sel)[0])
+            lp, cnt = fine(lf, w0, w0 + 2000)
+            if cnt >= 3:
+                parts.append(lp)
     spread = float(np.median(np.abs(np.asarray(parts) - lf))) / 1000.0 if parts else 0.0
     info["desacuerdo_ms"] = round(spread * 1000, 1)
     if spread > SYNC_MAX_SPREAD:
@@ -5997,7 +6051,7 @@ def _sync_source_frames(flat, times, dt):
 
 
 def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, quick=False,
-                   min_rho=0.75, spread_k=1.0):
+                   min_rho=0.75, spread_k=1.0, codes=None):
     """Dónde empieza el código de la claqueta en una casilla del vídeo (entre lo y hi): (hora del
     primer trozo, segundos vistos, desacuerdo en s entre trozos), o None si no se ve bien (y en
     info["why"], por qué). El móvil puede estar en cualquier sitio de la imagen y moverse, y verse
@@ -6006,9 +6060,16 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
     fotograma recoge la luz de su intervalo (y una cámara lenta se repite en el mosaico): se
     compara con lo que vería, trozo a trozo, al milisegundo. quick: afinando menos (en directo
     solo hace falta saber si se ve; ver SyncLive). min_rho / spread_k: lo exigente (ver
-    analyze_sync: una cámara que ya salió ✓ en directo, buscada solo donde se la vio)."""
+    analyze_sync: una cámara que ya salió ✓ en directo, buscada solo donde se la vio).
+    codes: claqueta de cuadrantes (ver SYNC_QUADS), un código por cuadrante: la mide
+    _sync_video_lag_q."""
     info = {} if info is None else info
+    if codes is not None and len(codes) > 1:
+        return _sync_video_lag_q(times, cells, lo, hi, codes, bit, info, quick, min_rho, spread_k)
+    if codes is not None:
+        code = codes[0]
     code = list(SYNC_CODE[:SYNC_MAX_BITS] if code is None else code)
+    codes = [code]
     if cells is None or len(times) < 20 or cells.shape[0] != len(times) or hi <= lo or not code:
         info["why"] = "pocas imágenes"
         return None
@@ -6020,7 +6081,7 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
     if not dt > 0:
         info["why"] = "horas raras"
         return None
-    F = _sync_on_time(code, bit)
+    Fs = [_sync_on_time(c, bit) for c in codes]
     T = len(code) * bit
     t_end, win = _sync_source_frames(flat, times, dt)
     info["fps"] = round(1.0 / dt, 1)
@@ -6034,9 +6095,11 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
 
     def preds(Ls):
         """lo que vería cada fotograma si la claqueta empezara a cada hora de Ls (fotogramas ×
-        horas): cuánto de su intervalo de luz cae en trozos encendidos (0 a 1), sin lo lento."""
+        horas): cuánto de su intervalo de luz cae en trozos encendidos (0 a 1), sin lo lento.
+        """
         Lr = np.asarray(Ls, dtype=np.float64)[None, :]
         te, w = t_end[:, None], win[:, None]
+        F = Fs[0]
         p = (F(te - Lr) - F(te - w - Lr)) / w
         p = np.where((te - Lr > -w) & (te - Lr < T + w), p, 0.0)
         return p - _moving_mean(p, hw)
@@ -6087,6 +6150,9 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
             out[s0] = float(np.corrcoef(gl[m], p_f[m])[0, 1])
         return out, rel
 
+    min_run = 2
+    min_seen = SYNC_MIN_SEEN_S
+
     def run_quality(gl, L):
         """el mejor tramo seguido de segundos en que va con ella (cada uno, correlación > 0,6), y
         la correlación de todo ese tramo junto: (correlación, segundos, tramo). Junto dice mucho
@@ -6098,7 +6164,7 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
             if s0 is not None and r[s0] > 0.6 and (not run or s0 == run[-1] + 1):
                 run.append(s0)
                 continue
-            if len(run) >= 2:
+            if len(run) >= min_run:
                 m = (rel >= run[0]) & (rel < run[-1] + 1)
                 p_f = pred(L)
                 if gl[m].std() > 0 and p_f[m].std() > 0:
@@ -6125,8 +6191,8 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
         return None
     _q, rho, n, Lf, run = ev[0]
     info["vistos"] = run
-    if n < SYNC_MIN_SEEN_S or rho < min_rho:
-        info["why"] = ("vista muy poco rato ({0} s seguidos)".format(n) if n < SYNC_MIN_SEEN_S else
+    if n < min_seen or rho < min_rho:
+        info["why"] = ("vista muy poco rato ({0} s seguidos)".format(n) if n < min_seen else
                        "se parece poco ({0:.2f})".format(rho))
         return None
     if len(ev) > 1 and ev[1][0] > 0.75 * ev[0][0]:
@@ -6153,33 +6219,183 @@ def sync_video_lag(times, cells, lo, hi, code=None, bit=SYNC_BIT_S, info=None, q
     return Lf, float(len(seen)), spread
 
 
-def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=None, live=None):
+def _sync_video_lag_q(times, cells, lo, hi, codes, bit=SYNC_BIT_S, info=None, quick=False,
+                      min_rho=0.75, spread_k=1.0):
+    """sync_video_lag con la claqueta de cuadrantes: cada cuadrante del móvil lleva su código, y
+    cada cuadradito de la imagen que cae dentro de uno lo sigue. A ratos cortos (~0,7 s, para que
+    el móvil apenas se haya movido) se miran los cuadraditos que más cambian, y para cada hora
+    posible del principio se busca, por cuadrante, el que mejor sigue su código: cuantos más
+    cuadrantes encajan a la vez, y mejor, más vale esa hora. No hace falta saber dónde está el móvil
+    ni cómo está girado. Devuelve lo mismo que sync_video_lag."""
+    info = {} if info is None else info
+    codes = [list(c) for c in codes]
+    N = len(times)
+    if cells is None or N < 20 or cells.shape[0] != N or hi <= lo or not codes[0]:
+        info["why"] = "pocas imágenes"
+        return None
+    flat = cells.reshape(N, -1).astype(np.float32)
+    dt = float(times[-1] - times[0]) / (N - 1)
+    if not dt > 0:
+        info["why"] = "horas raras"
+        return None
+    Q = len(codes)
+    Fs = [_sync_on_time(c, bit) for c in codes]
+    T = len(codes[0]) * bit
+    t_end, win = _sync_source_frames(flat, times, dt)
+    cam_dt = max(dt, float(np.median(win)))
+    info["fps"] = round(1.0 / dt, 1)
+    info["fps_camara"] = round(1.0 / cam_dt, 1)
+    # ratos: ~0,7 s (al menos 8 imágenes de la propia cámara), medio rato de paso
+    Wf = max(8, int(round(max(0.7, 8 * cam_dt) / dt)))
+    hop = max(1, Wf // 2)
+    t_a, t_b = lo - 0.5, hi + T + 0.5
+    ok = np.where((t_end >= t_a) & (t_end <= t_b))[0]
+    if len(ok) < Wf:
+        info["why"] = "pocas imágenes"
+        return None
+    starts = list(range(int(ok[0]), int(ok[-1]) - Wf + 2, hop))
+    M = min(24, flat.shape[1])
+    Hs, idx = [], []
+    for a in starts:
+        x = flat[a:a + Wf]
+        x = x - x.mean(axis=0)
+        v = (x * x).sum(axis=0)
+        J = np.argsort(-v)[:M]
+        h = x[:, J] / (np.sqrt(v[J]) + 1e-6)
+        Hs.append(h)
+        idx.append(np.arange(a, a + Wf))
+    Hs = np.stack(Hs).astype(np.float64)                # ratos × imágenes × cuadraditos
+    idx = np.stack(idx)
+    TE, WN = t_end[idx], win[idx]
+    R0 = 0.5
+
+    def best_r(Ls):
+        """por rato, cuadrante y hora: lo mejor que algún cuadradito sigue ese código"""
+        Ls = np.asarray(Ls, dtype=np.float64)
+        out = np.zeros((len(starts), Q, len(Ls)))
+        for c0 in range(0, len(Ls), 64):
+            Lr = Ls[None, None, c0:c0 + 64]
+            te, w = TE[:, :, None], WN[:, :, None]
+            for k, F in enumerate(Fs):
+                p = (F(te - Lr) - F(te - w - Lr)) / w
+                p = np.where((te - Lr > -w) & (te - Lr < T + w), p, 0.0)
+                p = p - p.mean(axis=1, keepdims=True)
+                nrm = np.sqrt((p * p).sum(axis=1, keepdims=True))
+                p = np.where(nrm > 1e-9, p / (nrm + 1e-12), 0.0)
+                r = np.einsum("wfm,wfl->wml", Hs, p)
+                out[:, k, c0:c0 + 64] = r.max(axis=1)
+        return out
+
+    def score(Ls):
+        b = best_r(Ls)
+        return (np.maximum(b - R0, 0.0) ** 2).sum(axis=(0, 1)), b
+
+    Ls = np.arange(lo, hi, dt / 2.0)
+    sc, _b = score(Ls)
+    cands = []
+    for kk in np.argsort(-sc):
+        if sc[kk] <= 0 or len(cands) >= SYNC_CANDIDATES:
+            break
+        if all(abs(Ls[kk] - Ls[c]) > 2.5 * dt for c in cands):
+            cands.append(int(kk))
+    if not cands:
+        info["why"] = "nada parecido a la claqueta"
+        return None
+    step = 0.004 if quick else 0.001
+
+    def fine(L0_, sel=None):
+        grid = L0_ + np.arange(-1.5 * dt, 1.5 * dt + 1e-9, step)
+        b = best_r(grid)
+        if sel is not None:
+            b = b[sel]
+        s2 = (np.maximum(b - R0, 0.0) ** 2).sum(axis=(0, 1))
+        jj = int(np.argmax(s2))
+        return float(grid[0] + step * _parabolic(s2, jj)), float(s2[jj])
+
+    def quality(L):
+        """(calidad, segundos vistos, ratos vistos): ratos en que encajan a la vez al menos dos
+        cuadrantes (> 0,7), y lo bien que encajan de media"""
+        b = best_r([L])[:, :, 0]
+        good = (b > 0.7).sum(axis=1) >= min(2, Q)
+        if not good.any():
+            return 0.0, 0.0, good
+        rho = float(np.mean([b[i][b[i] > 0.7].mean() for i in np.where(good)[0]]))
+        frames = np.unique(idx[good].ravel())
+        return rho, len(frames) * dt, good
+
+    ev = []
+    for kc in cands:
+        L_, _s = fine(float(Ls[kc]))
+        if any(abs(L_ - e[3]) < 2.5 * dt for e in ev):
+            continue
+        rho, secs, good = quality(L_)
+        ev.append((_s, rho, secs, L_, good))
+    ev.sort(key=lambda e: -e[0])
+    info["candidatos"] = [(round(e[3], 3), round(e[1], 2), round(e[2], 1)) for e in ev]
+    if not ev or not ev[0][0] > 0:
+        info["why"] = "no se ve la claqueta"
+        return None
+    sc1, rho, secs, Lf, good = ev[0]
+    info["vistos"] = round(secs, 1)
+    min_seen = SYNC_QUAD_MIN_SEEN_S
+    if secs < min_seen or rho < min_rho:
+        info["why"] = ("vista muy poco rato ({0:.1f} s)".format(secs) if secs < min_seen else
+                       "se parece poco ({0:.2f})".format(rho))
+        return None
+    if len(ev) > 1 and ev[1][0] > 0.6 * sc1:
+        info["why"] = "dudoso: dos momentos del código encajan casi igual"
+        return None
+    if quick:
+        return Lf, secs, 0.0
+    # lo que discrepan entre sí trozos de lo visto (cada par de ratos seguidos)
+    gi = np.where(good)[0]
+    parts = []
+    for j in range(0, len(gi) - 1, 2):
+        sel = np.zeros(len(starts), bool)
+        sel[gi[j:j + 2]] = True
+        parts.append(fine(Lf, sel)[0])
+    spread = float(np.median(np.abs(np.asarray(parts) - Lf))) if parts else 0.0
+    info["desacuerdo_ms"] = round(spread * 1000, 1)
+    lim = spread_k * max(SYNC_MAX_SPREAD, 0.5 / max(1.0, info["fps_camara"]))
+    if spread > lim:
+        info["why"] = "sus trozos no coinciden entre sí ({0:.0f} ms)".format(spread * 1000)
+        return None
+    return Lf, secs, spread
+
+
+def analyze_sync(path, tiles, W, H, labels, has_audio=True, ffmpeg=None, nbits=None, live=None,
+                 quads=None):
     """Mide una grabación de prueba con la claqueta: {"audio": (hora, segundos oídos, desacuerdo)
     o None, "cams": {etiqueta: (hora, segundos vistos, desacuerdo) o None}}. nbits: los trozos
     del código que llegó a dar el móvil (si terminó antes). live: {etiqueta: hora (del PC) a la
-    que empezaba la claqueta en esa cámara} de las que salieron ✓ en directo (SyncLive.lags)."""
-    code = SYNC_CODE[:max(10, min(SYNC_MAX_BITS, int(nbits or SYNC_MAX_BITS)))]
+    que empezaba la claqueta en esa cámara} de las que salieron ✓ en directo (SyncLive.lags).
+    quads: cuántos cuadrantes tenía la claqueta (1 = la de siempre; por defecto, SYNC_QUADS)."""
+    q = SYNC_QUADS if quads is None else int(quads)
+    nb = max(10, min(SYNC_MAX_BITS, int(nbits or SYNC_MAX_BITS)))
+    codes = sync_codes(nb, q)
+    code = codes[0]
     res = {"audio": None, "cams": {}, "info": {}}
     t_a = time.time()
     if has_audio:
         t0, x = sync_read_audio(path, ffmpeg)
         ia = res["info"]["sonido"] = {}
-        res["audio"] = sync_audio_lag(t0, x, 16000, code, info=ia)
+        res["audio"] = sync_audio_lag(t0, x, 16000, info=ia, codes=codes, tones=sync_tones(q))
         log.info("sincronizar: sonido %s (%.0f s grabados): %s", "oído" if res["audio"] else "NO",
                  0 if x is None else len(x) / 16000.0,
                  "empieza a {0:.4f} s, {1:.0f} s oídos, ±{2:.1f} ms".format(
                      res["audio"][0], res["audio"][1], res["audio"][2] * 1000)
                  if res["audio"] else ia.get("why"))
     times, series = sync_read_video(path, tiles, W, H, ffmpeg)
-    log.info("sincronizar: vídeo %d imágenes (%.1f s), %d casillas, código de %d trozos; leído en "
-             "%.1f s", len(times), float(times[-1] - times[0]) if len(times) > 1 else 0.0,
-             len(series), len(code), time.time() - t_a)
+    log.info("sincronizar: vídeo %d imágenes (%.1f s), %d casillas, código de %d trozos%s; leído "
+             "en %.1f s", len(times), float(times[-1] - times[0]) if len(times) > 1 else 0.0,
+             len(series), len(code), " en {0} cuadrantes".format(q) if q > 1 else "",
+             time.time() - t_a)
     a = res["audio"][0] if res["audio"] else None
 
     def measure(i, lab, lo, hi, **kw):
         inf = res["info"][lab] = {}
         try:
-            r = sync_video_lag(times, series[i], lo, hi, code, info=inf, **kw)
+            r = sync_video_lag(times, series[i], lo, hi, info=inf, codes=codes, **kw)
         except Exception as e:
             log.error("sincronizar: falló la medida de «%s»: %r", lab, e)
             return None
