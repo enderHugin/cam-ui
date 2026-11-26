@@ -1,6 +1,9 @@
 """«Abrir en VLC» (para Chromecast, vía el Renderizador propio de VLC): sin Tk ni display, como
 tests/unit_netcam.py -- aquí solo se prueba la lógica de _find_vlc() y CamApp._open_in_vlc(),
 no la ventana."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 

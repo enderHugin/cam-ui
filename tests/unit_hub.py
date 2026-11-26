@@ -7,6 +7,9 @@ en código de barras su número de captura en un reloj común (n = (t - T0) * 30
 en la grabación se lee qué fotograma de cada cámara se ve en cada momento.
 
 Por defecto, con el ffmpeg del sistema; CAMUI_FFMPEGS="ruta1:ruta2" añade otros (p. ej. un 7.x)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

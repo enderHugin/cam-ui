@@ -3,6 +3,9 @@ un display: xvfb-run -a python3 tests/ui_hub.py). Una cámara de red que es "otr
 IpServer real alimentado aquí) entra por el concentrador: vista previa en marcha, la etiqueta
 dice que se alinea por la hora de captura, reiniciar no la reabre, pausar la suelta y desmarcar la
 opción vuelve al motor de siempre."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import re
 import sys

@@ -78,6 +78,25 @@ except ImportError:          # sin Tk: solo funciona la consola (y los tests)
     from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# ---- idiomas (lang-kit): los textos de la interfaz salen de lang/<idioma>.json ----------------------
+# El idioma lo elige el instalador (lang.json) y se cambia en «Modo ▸ Idioma / Language» (reabre cam-ui).
+# El registro (camui.log) sigue en espanol: es tecnico y asi se puede buscar en el.
+# La funcion se llama _t (y no t) porque t ya es nombre de variable en muchas funciones.
+try:
+    import langkit                      # lo instala py-installer junto al programa
+except ImportError:                     # desde el codigo fuente: la copia de vendor/
+    sys.path.insert(0, os.path.join(HERE, "vendor", "lang-kit"))
+    import langkit
+
+
+def lang():
+    return langkit._current or langkit.init(__file__)
+
+
+def _t(key, /, **values):
+    return lang().t(key, **values)
+
 CONFIG = os.path.join(HERE, "config.json")
 DEF_DIR = os.path.join(HERE, "Capturas")
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -10611,6 +10630,9 @@ class CamApp:
         self.mode_menu.add_command(label="Sincronizar sonido y cámaras…", command=self.sync_open)
         self.mode_menu.add_command(label="Reiniciar cámaras (pánico)  F12", command=self.panic_reset)
         self.mode_menu.add_command(label="Icono de la bandeja…", command=lambda: self._tray_boot(True))
+        self.mode_menu.add_separator()
+        langkit.tk_menu(self.mode_menu, lang(), restart=self.restart_for_language).configure(
+            bg=PANEL2, fg=FG, activebackground=ACC, activeforeground="white", bd=0, selectcolor=FG)
         self.mode_menu.add_command(label="Salir", command=self.on_close)
         self.btn_mode = ttk.Menubutton(inner, text="▭  Modo  ▾", menu=self.mode_menu)
         self._bar_right.append((self.btn_mode, {N, C}))
@@ -15279,6 +15301,18 @@ class CamApp:
             msg += ("\n\nÚltimas líneas de ffmpeg (puede no haber ninguna pista útil, si de "
                    "verdad se quedó colgado sin más):\n" + err)
         messagebox.showerror("Vista previa colgada", msg)
+
+    def restart_for_language(self):
+        """Modo ▸ Idioma: reabre cam-ui para verlo en el idioma nuevo (grabando, no: se avisa)."""
+        if self.recording:
+            messagebox.showinfo("cam-ui", _t("lang.restart_recording"))
+            return
+        try:
+            update_spawn_restart(delay=2)
+        except Exception as e:
+            log.error("idioma: no se pudo preparar el reinicio: %r", e)
+            return
+        self.on_close()
 
     def on_close(self):
         if getattr(self, "_sync", None) is not None:   # la prueba de «Sincronizar» no se guarda

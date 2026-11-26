@@ -3,6 +3,9 @@ HTTP MJPEG propio) contra un emisor de verdad (un socket que manda fotogramas, c
 ffmpeg) y peticiones HTTP de verdad. No usa ffmpeg: lo que hace falta probar es el servidor
 HTTP propio, no el "tcp://" de ffmpeg (ese mecanismo ya lo prueba unit_update.py/la cámara
 virtual en producción; aquí el cliente lo simula un socket normal)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import sys, os, io, re, time, socket, threading, http.client
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import camui

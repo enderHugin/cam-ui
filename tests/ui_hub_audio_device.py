@@ -17,6 +17,9 @@ oír). Antes del arreglo, las dos medidas se llevaban ~0,9 s (lo que cambió la 
 
 Y el «Ajuste A/V» guardado por un cam-ui de antes con «Marcas del dispositivo» (medido con la
 cuenta vieja) se pone a 0 una vez, avisando de que hay que volver a «Sincronizar»."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

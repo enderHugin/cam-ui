@@ -4,6 +4,9 @@ ventana de verdad ocupe la pantalla). Botón «⛶ Pantalla completa» sobre la 
 mover el ratón y se esconde solo), entrada en el menú Modo, solo el mosaico a pantalla completa y
 con la vista previa pedida al tamaño de la pantalla (no a 880), salir con Esc / doble clic /
 botón, y vuelta a la vista previa pequeña. También el rótulo «cam-ui@nombre» de otro cam-ui."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import json

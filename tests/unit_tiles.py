@@ -3,6 +3,9 @@ casilla. Al reducir el mosaico a la vista previa, los píxeles de la junta entre
 mezclan las dos: una cámara parada junto a otra que se mueve no debe contar como «cambia»
 (pasaba: una cámara de red cortada, congelada, salía con los fps de su vecina). Con ffmpeg de
 verdad: el mismo mosaico reducido a la vista previa como lo hace cam-ui."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import subprocess

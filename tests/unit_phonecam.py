@@ -4,6 +4,9 @@ servidor SOLO en 127.0.0.1, como si fuera una cámara de red MJPEG de toda la vi
 sockets reales (HTTPS con el certificado autofirmado de verdad, igual que haría un navegador
 tras aceptar el aviso), y un ffmpeg real leyendo la reexposición local, igual que lee cualquier
 otra cámara de red (ver unit_netcam.py)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import io
 import re

@@ -12,6 +12,9 @@ ventana Tk; hace falta un display: xvfb-run -a python3 tests/ui_avsync_window.py
 4) el mapa de «Sincronizar» tras medir: ○ lo que tarda cada una de por sí, ● ahora (con su
    «Retardo»), todas en la raya de «a la vez»; el punto azul (el sonido) se arrastra con el ratón y
    eso cambia el «Ajuste A/V» (al soltar, de 5 en 5 ms)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import json

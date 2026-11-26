@@ -8,6 +8,9 @@ mapearse de verdad, y entonces TODAS las medidas de geometría (winfo_width/heig
 sin que signifique nada (ni es el fallo real, ni demuestra que esté arreglado). En su lugar se dej
 a la raíz como una ventana real minúscula fuera de la vista (root.geometry("1x1+0+0")).
 """
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import time

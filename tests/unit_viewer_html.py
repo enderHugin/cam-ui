@@ -6,6 +6,9 @@ en un navegador de verdad (Chromium vía Playwright) se comprobó a mano al aña
 deja una comprobación ligera, sin esa dependencia extra ni ffmpeg, de que el HTML/CSS/JS
 servidos siguen teniendo las piezas que hacen falta. El propio ffmpeg de HLS (lo que hay detrás
 de /cast.m3u8) se prueba aparte, de verdad, en tests/unit_hls.py."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import json
 import os
 import sys

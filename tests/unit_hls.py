@@ -5,6 +5,9 @@ crudos de verdad por el socket (igual que haría ffmpeg en producción), y pide 
 trozo .ts por HTTP de verdad -- sin mocks en ningún punto. El trozo descargado se comprueba con
 ffprobe (programa aparte, no el propio camui.py) para confirmar que de verdad lleva vídeo H.264,
 no solo que «tiene buena pinta»."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import re
 import sys

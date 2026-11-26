@@ -14,6 +14,9 @@ de dispositivos que daría Windows) y móviles de verdad (PhoneCamHub, fotograma
    las liste en otro orden;
 5) un móvil que se vuelve a conectar (recarga la página) ocupa su casilla de antes, con sus
    ajustes, en vez de otra al final; y al abrir cam-ui otro día, vuelve a su sitio con sus ajustes."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

@@ -7,6 +7,9 @@ display: xvfb-run -a python3 tests/ui_layout_auto.py). Pack 48:
 2) ★ cámaras destacadas: con «Auto», van primero y bastante más grandes que las demás (hasta
    dos; una tercera no se deja), se guardan, se ven en el mapa y en la galería, y el mosaico de
    verdad sale así; con una disposición elegida a mano, no cambian nada."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

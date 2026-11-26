@@ -7,6 +7,9 @@ le pide que termine («terminando», como el botón «Terminar» del PC) y se ap
 trozos que llegó a dar. En la página se anota, refresco a refresco, cuándo está la pantalla en
 blanco: los cambios blanco/negro tienen que caer donde los del código (SYNC_CODE, a SYNC_BIT_S
 cada trozo), ± un refresco de pantalla; y al acabar, la página enseña lo que dice el PC."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import json
