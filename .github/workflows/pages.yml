@@ -5,7 +5,7 @@ name: Publicar la página
 on:
   push:
     branches: [main]
-    paths: ["site/**", "assets/**", "camui.py", "VERSION", "NOVEDADES.md", "py-installer.toml", ".github/workflows/pages.yml"]
+    paths: ["site/**", "assets/**", "camui.py", "lang/**", "VERSION", "NOVEDADES.md", "py-installer.toml", ".github/workflows/pages.yml"]
   pull_request:
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: enderHugin/py-installer@1bc06cd8d4e19af1747eb08e122b3902f0ad8d13
+      - uses: enderHugin/py-installer@874fe3566623809020fc3414b5b034beeae836a6
         with:
           base-url: https://enderhugin.github.io/cam-ui
       - name: Comprobaciones
@@ -32,6 +32,14 @@ jobs:
           test -f _site/dl/pyi_update.py
           python3 -c "import json; u = json.load(open('_site/dl/update.json')); assert {'camui.py', 'pyi_update.py'} <= set(u['files']) and u['pack'] > 0, u"
           ! grep -q '__BASE_URL__\|__VERSION__' _site/index.html
+          test -f _site/dl/cam-ui-instalar-en.cmd
+          test -f _site/dl/cam-ui-instalar-ca.cmd
+      - name: Idiomas del programa (completos, y cada clave usada existe)
+        uses: enderHugin/lang-kit@808044aaf8f675457d5e5f7e8c3ba9e7f8d0127d
+        with:
+          dirs: lang
+          code: camui.py
+          strict: 'true'
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
@@ -50,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: enderHugin/py-installer
-          ref: 1bc06cd8d4e19af1747eb08e122b3902f0ad8d13
+          ref: 874fe3566623809020fc3414b5b034beeae836a6
           path: _pyi
       - name: Montar y servir el sitio en local
         shell: bash
@@ -66,10 +74,10 @@ jobs:
         shell: pwsh
         run: |
           $prog = Join-Path $env:LOCALAPPDATA 'Programs\cam-ui'
-          foreach ($f in 'camui.py', 'pyi_update.py', 'install_info.json', 'icon.ico', 'bin\ffmpeg.exe', 'venv\Scripts\pythonw.exe') {
+          foreach ($f in 'camui.py', 'pyi_update.py', 'langkit.py', 'lang.json', 'lang\es.json', 'lang\en.json', 'lang\ca.json', 'install_info.json', 'icon.ico', 'bin\ffmpeg.exe', 'venv\Scripts\pythonw.exe') {
             if (-not (Test-Path (Join-Path $prog $f))) { throw "falta $f" }
           }
-          & "$prog\venv\Scripts\python.exe" -c "import numpy, PIL, tkinter; tkinter.Tcl(); import sys; sys.path.insert(0, r'$prog'); import pyi_update; print('ok')"
+          & "$prog\venv\Scripts\python.exe" -c "import numpy, PIL, tkinter; tkinter.Tcl(); import sys; sys.path.insert(0, r'$prog'); import pyi_update, langkit; print('ok')"
           if ($LASTEXITCODE -ne 0) { throw 'no cargan las librerias' }
           if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'cam-ui.lnk'))) { throw 'falta el acceso directo' }
           if (-not (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\cam-ui')) { throw 'falta la entrada en Aplicaciones instaladas' }

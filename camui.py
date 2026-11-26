@@ -294,20 +294,20 @@ PLACEHOLDER_FONT = os.path.join(os.environ.get("WINDIR", r"C:\Windows"),
 
 ASPECTS = [("16:9", 16, 9), ("4:3", 4, 3), ("3:2", 3, 2), ("5:4", 5, 4), ("1:1", 1, 1),
            ("4:5 (vertical)", 4, 5), ("9:16 (vertical)", 9, 16), ("21:9", 21, 9), ("2:1", 2, 1)]
-ADAPT = "Adaptado al contenido"
+ADAPT = _t('opt.fitted_content')
 CANVASES = [ADAPT] + [a[0] for a in ASPECTS]
-TILES = [("Como la cámara (sin recorte)", "auto"), ("4:3", "4:3"), ("3:4 (vertical)", "3:4"),
+TILES = [(_t('opt.like_camera_no_cropping'), "auto"), ("4:3", "4:3"), ("3:4 (vertical)", "3:4"),
          ("16:9", "16:9"), ("9:16 (vertical)", "9:16"), ("3:2", "3:2"),
          ("2:3 (vertical)", "2:3"), ("5:4", "5:4"), ("4:5 (vertical)", "4:5"), ("1:1", "1:1"),
          ("21:9", "21:9"), ("2:1", "2:1"), ("2.39:1 (cine)", "2.39:1")]
 COLOR_KEYS = ("bri", "con", "sat", "gam", "temp")
-COLOR_LABELS = (("bri", "Brillo"), ("con", "Contraste"), ("sat", "Saturación"),
-                ("gam", "Gamma"), ("temp", "Temperatura"))
+COLOR_LABELS = (("bri", _t('opt.brightness')), ("con", _t('opt.contrast')), ("sat", _t('opt.saturation')),
+                ("gam", _t('opt.gamma')), ("temp", _t('opt.temperature')))
 AUTO = "Auto"
-CHANS = [("Canal izquierdo", "left"), ("Canal derecho", "right"), ("Mezcla L+R", "mix")]
-QUALITIES = [("Alta (archivo grande)", 18), ("Media", 23), ("Baja (archivo pequeño)", 28)]
+CHANS = [(_t('opt.left_channel'), "left"), (_t('opt.right_channel'), "right"), (_t('opt.l_r_mix'), "mix")]
+QUALITIES = [(_t('opt.high_large_file'), 18), (_t('opt.medium'), 23), (_t('opt.low_small_file'), 28)]
 PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "medium"]
-SYNCS = [("Reloj común (recomendado)", "clock"), ("Marcas del dispositivo", "device")]
+SYNCS = [(_t('opt.common_clock_recommended'), "clock"), (_t('opt.device_timestamps'), "device")]
 ROTS = ["0°", "90°", "180°", "270°"]
 NO_AUDIO = "(Silencio)"
 
@@ -7703,6 +7703,37 @@ def _pair_label(pairs, value, default=None):
     return default if default is not None else pairs[0][0]
 
 
+QUALITY_KEYS = ("opt.high_large_file", "opt.medium", "opt.low_small_file")   # en el orden de QUALITIES
+
+
+def _all_langs(key):
+    """Todos los textos de una clave, en cualquier idioma instalado (para leer lo guardado en otro idioma)."""
+    out = set()
+    folder = os.path.join(HERE, "lang")
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return out
+    for nm in names:
+        if nm.endswith(".json"):
+            try:
+                with open(os.path.join(folder, nm), encoding="utf-8") as f:
+                    v = json.load(f).get(key)
+            except (OSError, ValueError):
+                continue
+            if isinstance(v, str):
+                out.add(v)
+    return out
+
+
+def quality_label(stored):
+    """Calidad guardada (texto en el idioma de entonces) -> texto de la lista en el idioma de ahora."""
+    for (lab, _crf), key in zip(QUALITIES, QUALITY_KEYS):
+        if stored == lab or stored in _all_langs(key):
+            return lab
+    return QUALITIES[1][0]
+
+
 def tile_value(label):
     """Texto del combo de celda -> valor guardado: uno de la lista, o cualquier «ancho:alto» escrito."""
     for lab, val in TILES:
@@ -7873,12 +7904,12 @@ class AudioRow:
 # =====================================================================
 KOFI_URL = "https://ko-fi.com/jaimeluisolguinmesina"
 KOFI_SHOW = "ko-fi.com/jaimeluisolguinmesina"
-ABOUT_TAGLINE = "Tus cámaras y micrófonos, sincronizados y en un solo vídeo."
-ABOUT_CHIPS = (("Multivista", "Encuadre por cámara", "Color en vivo"),
-               ("Audio L/R", "Sincronía A/V", "Grabación segura"))
-ABOUT_ASK = "Si CamWin32 te ahorra tiempo, invítame a un café y ayúdame a seguir mejorándola."
-ABOUT_BTN = "☕   Invítame a un café en Ko-fi"
-ABOUT_CREDIT = "Hecho con cariño por Jaime Luis Olguín Mesina"
+ABOUT_TAGLINE = _t('about.your_cameras_microphones_in')
+ABOUT_CHIPS = ((_t('about.multiview'), _t('about.framing_per_camera'), _t('about.live_colour')),
+               (_t('about.l_r_audio'), _t('about.v_sync'), _t('about.safe_recording')))
+ABOUT_ASK = _t('about.if_camwin32_saves_you')
+ABOUT_BTN = _t('about.buy_me_coffee_on')
+ABOUT_CREDIT = _t('about.made_with_care_by')
 
 
 def _hx(rgb):
@@ -7906,7 +7937,7 @@ class AboutDialog:
         self._phase_seed = [(i * 1.37, 0.4 + 0.23 * i) for i in range(7)]
         top = self.top = tk.Toplevel(parent)
         top.withdraw()
-        top.title("Acerca de CamWin32")
+        top.title(_t('about.about_camwin32'))
         top.overrideredirect(True)
         key = "#010203"
         top.configure(bg=key)
@@ -8122,7 +8153,7 @@ class AboutDialog:
             return cv.create_oval(*a, tags="dyn", **k)
 
         # ---- franja superior de la carcasa ----
-        T(30, 25, text="▸ ACERCA DE", fill="#6b7380", font=F["mono_s"], anchor="w")
+        T(30, 25, text=_t('about.about'), fill="#6b7380", font=F["mono_s"], anchor="w")
         hv = self._hover == "close"
         if hv:
             O(*self._hit["close"], fill="#2b2f36", outline="")
@@ -8263,8 +8294,8 @@ class AboutDialog:
 
 GEO_RE = re.compile(r"^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$")
 MODES = ("normal", "compact", "mini", "fullscreen")
-MODE_NAMES = {"normal": "Modo normal", "compact": "Modo compacto", "mini": "Modo mini",
-              "fullscreen": "Pantalla completa"}
+MODE_NAMES = {"normal": _t('about.normal_mode'), "compact": _t('about.compact_mode'), "mini": _t('about.mini_mode'),
+              "fullscreen": _t('about.full_screen')}
 # pantalla completa: la vista previa se pide al tamaño de la pantalla (en la ventana, hasta
 # 880×560), con este tope -- más, y ffmpeg + Tk moverían cientos de MB por segundo para nada
 PREVIEW_FULL_MAX = (2560, 1440)
@@ -8566,7 +8597,7 @@ class PhoneCamQrDialog:
         self.photo = photo             # referencia viva: sin esto Tk se olvida de la imagen
         self.btn_install_qr = None     # solo existe sin «qrcode» -- ver más abajo
         top = self.top = tk.Toplevel(parent)
-        top.title("Cámara del móvil")
+        top.title(_t('qr.phone_camera'))
         top.configure(bg=PANEL)
         top.resizable(False, False)
         try:
@@ -8578,7 +8609,7 @@ class PhoneCamQrDialog:
         top.bind("<Destroy>", lambda e: setattr(self, "alive", False) if e.widget is top else None)
         frm = ttk.Frame(top, padding=16)
         frm.pack()
-        ttk.Label(frm, text="Un móvil está esperando", font=("Segoe UI", 12, "bold")).pack()
+        ttk.Label(frm, text=_t('qr.phone_waiting'), font=("Segoe UI", 12, "bold")).pack()
         if photo is not None:
             ttk.Label(frm, image=photo).pack(pady=(10, 10))
         else:
@@ -8592,12 +8623,12 @@ class PhoneCamQrDialog:
             lbl_url.bind("<Button-1>", lambda e: webbrowser.open(url))
             if on_install_qr is not None:
                 self.btn_install_qr = ttk.Button(
-                    frm, text="Instalar «qrcode» para ver el código",
+                    frm, text=_t('qr.install_qrcode_see_code'),
                     command=lambda: on_install_qr(url))
                 self.btn_install_qr.pack(pady=(0, 6))
-        ttk.Label(frm, text="Apunta con su cámara a este código para añadirlo al mosaico.",
+        ttk.Label(frm, text=_t('qr.point_its_camera_at'),
                  style="Muted.TLabel", wraplength=320, justify="left").pack()
-        ttk.Button(frm, text="Cerrar", command=self.close).pack(pady=(14, 0))
+        ttk.Button(frm, text=_t('qr.close'), command=self.close).pack(pady=(14, 0))
         try:
             top.update_idletasks()
             px, py = parent.winfo_rootx(), parent.winfo_rooty()
@@ -8655,7 +8686,7 @@ class SyncDialog:
         self._on_av = on_av              # el punto azul arrastrado: nuevo «Ajuste A/V» (ms)
         self._drag = None
         top = self.top = tk.Toplevel(parent)
-        top.title("Sincronizar sonido y cámaras")
+        top.title(_t('sync.sync_sound_cameras'))
         top.configure(bg=PANEL)
         top.resizable(False, False)
         try:
@@ -8666,7 +8697,7 @@ class SyncDialog:
         top.bind("<Escape>", lambda e: self.close())
         frm = ttk.Frame(top, padding=16)
         frm.pack(fill="both")
-        ttk.Label(frm, text="Sincronizar sonido y cámaras",
+        ttk.Label(frm, text=_t('sync.sync_sound_cameras'),
                   font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         left = ttk.Frame(frm)
         left.grid(row=1, column=0, sticky="n", pady=(10, 0))
@@ -8677,17 +8708,7 @@ class SyncDialog:
         lbl_url.pack(pady=(4, 0))
         lbl_url.bind("<Button-1>", lambda e: webbrowser.open(url))
         ttk.Label(frm, justify="left", wraplength=330, text=(
-            "1. Abre este código con un móvil (cualquiera: no hace falta que sea una de las "
-            "cámaras). Sube su volumen y quita el modo silencio.\n\n"
-            "2. Toca «Empezar» en el móvil (o aquí, cuando ya esté abierto).\n\n"
-            "3. Cuando empiece a parpadear y pitar (como un código de barras, unas diez veces por "
-            "segundo), enséñaselo a cada cámara, 3 o 4 segundos a cada una, y que el micrófono "
-            "del PC lo oiga un rato.\n\n"
-            "4. Sobre cada cámara del mosaico sale «✓ lista» en cuanto ya está, y «falta» en las "
-            "que no; aquí debajo (y en el móvil), cuántas faltan y cuánto va cada una. Con todas, "
-            "termina sola (o «Terminar», en el móvil o aquí). Dura como mucho {0} s.\n\n"
-            "cam-ui mide cuánto tarda en llegar cada cámara y ajusta solo su «Retardo» y el del "
-            "sonido. La prueba no se guarda.".format(int(SYNC_MAX_S)))).grid(
+            _t('sync.1_open_this_code', secs=int(SYNC_MAX_S)))).grid(
                 row=1, column=1, sticky="nw", padx=(16, 0),
                                                     pady=(10, 0))
         self.lbl_state = ttk.Label(frm, text="", wraplength=560, justify="left",
@@ -8702,15 +8723,15 @@ class SyncDialog:
         self.lbl_res.grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
         bar = ttk.Frame(frm)
         bar.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(14, 0))
-        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
-        self.btn_undo = ttk.Button(bar, text="Deshacer", command=on_undo, state="disabled")
+        ttk.Button(bar, text=_t('sync.close'), command=self.close).pack(side="right")
+        self.btn_undo = ttk.Button(bar, text=_t('sync.undo'), command=on_undo, state="disabled")
         self.btn_undo.pack(side="right", padx=(0, 6))
-        self.btn_start = ttk.Button(bar, text="Empezar", command=on_start, state="disabled",
+        self.btn_start = ttk.Button(bar, text=_t('sync.start'), command=on_start, state="disabled",
                                     style="Accent.TButton")
         self.btn_start.pack(side="left")
         self.btn_audio = None
         if on_audio is not None:                 # la ventanita «Sincronía audio ↔ vídeo»
-            self.btn_audio = ttk.Button(bar, text="Sonido ↔ vídeo…", command=on_audio)
+            self.btn_audio = ttk.Button(bar, text=_t('sync.sound_video'), command=on_audio)
             self.btn_audio.pack(side="left", padx=(6, 0))
         try:
             top.update_idletasks()
@@ -8757,7 +8778,7 @@ class SyncDialog:
         snd = d.get("sound")
         lines = [(r.get("n", ""), r.get("st"), r.get("ms"), r.get("now")) for r in rows]
         if snd is not None:
-            lines.append(("Sonido", "sonido", snd, d.get("sound_now")))
+            lines.append((_t('sync.sound'), "sonido", snd, d.get("sound_now")))
         vals = [v for l in lines for v in l[2:] if v is not None]
         room = list(vals)
         if d.get("sound_now") is not None:              # sitio para arrastrar el punto azul
@@ -8785,8 +8806,8 @@ class SyncDialog:
             short = name if len(name) <= 26 else name[:25] + "…"
             c.create_text(10, yy, anchor="w", text=short, font=f,
                           fill=ACC if st == "sonido" else FG)
-            mark, col = {"ok": ("✓", OK_GREEN), "falta": ("falta", WARN),
-                         "no": ("no se vio", MUTED), "sonido": ("", ACC)}.get(st, ("", MUTED))
+            mark, col = {"ok": ("✓", OK_GREEN), "falta": (_t('sync.mark_missing'), WARN),
+                         "no": (_t('sync.not_seen'), MUTED), "sonido": ("", ACC)}.get(st, ("", MUTED))
             c.create_text(X0 - 12, yy, anchor="e", text=mark, fill=col,
                           font=("Segoe UI", 11, "bold") if st == "ok" else f)
             c.create_line(X0, yy, X1, yy, fill=LINE)
@@ -8821,7 +8842,7 @@ class SyncDialog:
             c.tag_bind("snd", "<Leave>", lambda e: c.config(cursor=""))
         y = top + RH * len(lines) + 6
         if not lines:
-            c.create_text(10, y, anchor="nw", text="(sin cámaras en el mosaico)", font=f,
+            c.create_text(10, y, anchor="nw", text=_t('sync.no_cameras_in_mosaic'), font=f,
                           fill=MUTED)
             y += 18
         c.config(height=int(y + 4))
@@ -8830,8 +8851,10 @@ class SyncDialog:
     def _snd_text(diff):
         diff = int(round(diff))
         if abs(diff) < 3:
-            return "a la vez"
-        return "{0:+d} ms ({1})".format(diff, "más tarde" if diff > 0 else "antes")
+            return _t('sync.at_same_time')
+        if diff > 0:
+            return _t('sync.sound_later', ms="{0:+d}".format(diff))
+        return _t('sync.sound_earlier', ms="{0:+d}".format(diff))
 
     # el punto azul: arrastrarlo mueve el sonido respecto a la imagen («Ajuste A/V»); se aplica
     # al soltar (cada cambio reinicia la vista previa)
@@ -8864,7 +8887,7 @@ class SyncDialog:
         if dr["now"] != dr["now0"] and self._on_av is not None:
             self._on_av(dr["now"] - dr["now0"])
 
-    def update(self, state, result=None, can_start=False, can_undo=False, start_text="Empezar"):
+    def update(self, state, result=None, can_start=False, can_undo=False, start_text=_t('sync.start')):
         if not self.alive:
             return
         try:
@@ -9048,7 +9071,7 @@ class CamColorDialog:
         self.lab = lab
         self._on_close = on_close
         top = self.top = tk.Toplevel(parent)
-        top.title("Color de «{0}»".format(lab))
+        top.title(_t('colordlg.colour', name=lab))
         top.configure(bg=PANEL)
         top.resizable(False, False)
         try:
@@ -9061,7 +9084,7 @@ class CamColorDialog:
         top.bind("<Escape>", lambda e: self.close())
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both")
-        ttk.Label(frm, text="Color de «{0}»".format(lab[:40]),
+        ttk.Label(frm, text=_t('colordlg.colour', name=lab[:40]),
                   font=("Segoe UI", 11, "bold")).grid(row=0, column=0, columnspan=3, sticky="w",
                                                      pady=(0, 6))
         self.sc, self.lbl = {}, {}
@@ -9080,19 +9103,18 @@ class CamColorDialog:
                         for k in COLOR_KEYS]
         self._labels()
         ttk.Label(frm, style="Muted.TLabel", wraplength=330, justify="left",
-                  text="Doble clic en un deslizador = valor inicial. Rueda del ratón o flechas para "
-                       "moverlo, o escribe el número en su casilla."
+                  text=_t('colordlg.double_click_slider_initial')
                   ).grid(row=len(COLOR_LABELS) + 1, column=0, columnspan=3, sticky="w", pady=(4, 0))
         bar = ttk.Frame(frm)
         bar.grid(row=len(COLOR_LABELS) + 2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        ttk.Button(bar, text="Restablecer", command=cs.reset_color).pack(side="left")
+        ttk.Button(bar, text=_t('colordlg.reset'), command=cs.reset_color).pack(side="left")
         if on_copy is not None:
-            ttk.Button(bar, text="Copiar a todas", command=on_copy).pack(side="left", padx=6)
+            ttk.Button(bar, text=_t('colordlg.copy_all'), command=on_copy).pack(side="left", padx=6)
         self.btn_driver = None
         if on_driver is not None:
-            self.btn_driver = ttk.Button(bar, text="Driver…", command=on_driver)
+            self.btn_driver = ttk.Button(bar, text=_t('colordlg.driver'), command=on_driver)
             self.btn_driver.pack(side="left")
-        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        ttk.Button(bar, text=_t('colordlg.close'), command=self.close).pack(side="right")
         _center_over(top, parent)
 
     def _labels(self):
@@ -9140,7 +9162,7 @@ class AvSyncDialog:
         self.alive = True
         self._on_close = on_close
         top = self.top = tk.Toplevel(parent)
-        top.title("Sincronía audio ↔ vídeo")
+        top.title(_t('sync.audio_video_sync'))
         top.configure(bg=PANEL)
         top.resizable(False, False)
         try:
@@ -9151,28 +9173,27 @@ class AvSyncDialog:
         top.bind("<Escape>", lambda e: self.close())
         frm = ttk.Frame(top, padding=14)
         frm.pack(fill="both")
-        ttk.Label(frm, text="Sincronía audio ↔ vídeo", font=("Segoe UI", 12, "bold")).grid(
+        ttk.Label(frm, text=_t('sync.audio_video_sync'), font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Label(frm, text="Ajuste A/V ms").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(frm, text=_t('sync.v_offset_ms')).grid(row=1, column=0, sticky="w", pady=4)
         self.sp_av = ttk.Spinbox(frm, from_=-SYNC_LIMIT_MS, to=SYNC_LIMIT_MS, increment=10,
                                  width=6, textvariable=v_avoff)
         self.sp_av.grid(row=1, column=1, sticky="w", padx=(6, 0))
         ttk.Label(frm, style="Muted.TLabel", justify="left", wraplength=250,
-                  text="+ = el sonido se oye más tarde. Lo pone solo «Sincronizar» (con un "
-                       "móvil que hace de claqueta), junto con el «Retardo» de cada cámara."
+                  text=_t('sync.sound_heard_later_sync')
                   ).grid(row=1, column=2, rowspan=2, padx=(10, 0), pady=4, sticky="w")
-        ttk.Label(frm, text="Búfer audio ms").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Label(frm, text=_t('sync.audio_buffer_ms')).grid(row=2, column=0, sticky="w", pady=4)
         self.sp_buf = ttk.Spinbox(frm, from_=0, to=500, increment=10, width=6,
                                   textvariable=v_abuf)
         self.sp_buf.grid(row=2, column=1, sticky="w", padx=(6, 0))
         ttk.Label(frm, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Menos búfer = menos retardo. Pon 0 si un micro da error al abrirse."
+                  text=_t('sync.less_buffer_less_delay')
                   ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(2, 4))
         bar = ttk.Frame(frm)
         bar.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        self.btn_sync = ttk.Button(bar, text="⏱  Sincronizar…", command=on_sync)
+        self.btn_sync = ttk.Button(bar, text=_t('sync.sync'), command=on_sync)
         self.btn_sync.pack(side="left")
-        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        ttk.Button(bar, text=_t('sync.close'), command=self.close).pack(side="right")
         if near is not None:
             _place_beside(top, near)
         else:
@@ -9212,7 +9233,7 @@ class PhoneCamCertDialog:
         self.photo = photo
         self.btn_install_qr = None
         top = self.top = tk.Toplevel(parent)
-        top.title("Certificado para iPhone/iPad")
+        top.title(_t('cert.certificate_for_iphone_ipad'))
         top.configure(bg=PANEL)
         top.resizable(False, False)
         try:
@@ -9224,7 +9245,7 @@ class PhoneCamCertDialog:
         top.bind("<Destroy>", lambda e: setattr(self, "alive", False) if e.widget is top else None)
         frm = ttk.Frame(top, padding=16)
         frm.pack()
-        ttk.Label(frm, text="Solo hace falta en iPhone/iPad",
+        ttk.Label(frm, text=_t('cert.only_needed_on_iphone'),
                  font=("Segoe UI", 12, "bold")).pack()
         if photo is not None:
             ttk.Label(frm, image=photo).pack(pady=(10, 10))
@@ -9237,17 +9258,13 @@ class PhoneCamCertDialog:
             lbl_url.bind("<Button-1>", lambda e: webbrowser.open(url))
             if on_install_qr is not None:
                 self.btn_install_qr = ttk.Button(
-                    frm, text="Instalar «qrcode» para ver el código",
+                    frm, text=_t('cert.install_qrcode_see_code'),
                     command=lambda: on_install_qr(url))
                 self.btn_install_qr.pack(pady=(0, 6))
         ttk.Label(frm, style="Muted.TLabel", wraplength=320, justify="left",
-                 text="En Android no hace falta nada de esto (con «Avanzado → Continuar» en el "
-                      "aviso del navegador ya funciona). En iPhone/iPad: apunta con la Cámara a "
-                      "este código y abre la página en Safari (Chrome u otro navegador solo "
-                      "descargan un archivo que no sirve; si se te abre en otro, la página te "
-                      "dice qué escribir en Safari). Solo hay que hacerlo una vez."
+                 text=_t('cert.on_android_none_this')
                  ).pack(pady=(4, 0))
-        ttk.Button(frm, text="Cerrar", command=self.close).pack(pady=(14, 0))
+        ttk.Button(frm, text=_t('cert.close'), command=self.close).pack(pady=(14, 0))
         try:
             top.update_idletasks()
             px, py = parent.winfo_rootx(), parent.winfo_rooty()
@@ -9283,7 +9300,7 @@ class PhoneCamDevicesDialog:
         self.hub = hub
         self._secrets = []
         top = self.top = tk.Toplevel(parent)
-        top.title("Administrar dispositivos móviles")
+        top.title(_t('phones.manage_mobile_devices'))
         top.configure(bg=PANEL)
         top.geometry("520x340")
         top.minsize(360, 240)
@@ -9296,9 +9313,7 @@ class PhoneCamDevicesDialog:
         frm = ttk.Frame(top, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, style="Muted.TLabel", wraplength=400, justify="left",
-                  text="Estos móviles entran solos al abrir «/add» en este PC, sin volver a "
-                       "leer ningún código QR. El nombre es el que llevará su cámara la próxima "
-                       "vez que se conecte."
+                  text=_t('phones.these_phones_join_by')
                   ).pack(anchor="w", pady=(0, 8))
         listfrm = ttk.Frame(frm)
         listfrm.pack(fill="both", expand=True)
@@ -9309,12 +9324,12 @@ class PhoneCamDevicesDialog:
         sb.pack(side="right", fill="y")
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=(10, 0))
-        self.btn_rename = ttk.Button(btns, text="Renombrar…", command=self._rename_selected)
+        self.btn_rename = ttk.Button(btns, text=_t('phones.rename'), command=self._rename_selected)
         self.btn_rename.pack(side="left")
-        self.btn_forget = ttk.Button(btns, text="Olvidar", command=self._forget_selected)
+        self.btn_forget = ttk.Button(btns, text=_t('phones.forget'), command=self._forget_selected)
         self.btn_forget.pack(side="left", padx=(6, 0))
         self.listbox.bind("<Double-Button-1>", lambda e: self._rename_selected())
-        ttk.Button(btns, text="Cerrar", command=self.close).pack(side="right")
+        ttk.Button(btns, text=_t('phones.close'), command=self.close).pack(side="right")
         self._reload()
 
     def _reload(self):
@@ -9325,7 +9340,7 @@ class PhoneCamDevicesDialog:
             self.listbox.insert("end", self.describe(info))
             self._secrets.append(secret)
         if not self._secrets:
-            self.listbox.insert("end", "(ninguno todavía)")
+            self.listbox.insert("end", _t('phones.none_yet'))
 
     @staticmethod
     def describe(info):
@@ -9341,9 +9356,9 @@ class PhoneCamDevicesDialog:
         last = fmt(info.get("last"), "%d/%m/%Y %H:%M")
         added = fmt(info.get("added"), "%d/%m/%Y")
         if last:
-            txt += "   · última conexión {0}".format(last)
+            txt += _t('phones.last_connected', when=last)
         if added:
-            txt += "   · desde {0}".format(added)
+            txt += _t('phones.since', when=added)
         return txt
 
     def _rename_selected(self):
@@ -9360,7 +9375,7 @@ class PhoneCamDevicesDialog:
     def _ask_name(self, current):
         """(aparte para poder probarlo sin teclado) el nombre nuevo, o None si se cancela."""
         from tkinter import simpledialog
-        return simpledialog.askstring("Renombrar", "Nombre del móvil:", initialvalue=current,
+        return simpledialog.askstring(_t('phones.rename_2'), _t('phones.phone_name'), initialvalue=current,
                                       parent=self.top)
 
     def _forget_selected(self):
@@ -9394,7 +9409,7 @@ class KeepAwake:
     siempre desde el hilo de Tk, que vive todo el programa). Lo que Windows NO deja impedir: que
     el usuario lo suspenda a propósito (tapa, botón de encendido, Inicio → Suspender), ni, con
     «Modern Standby» y a batería, que la suspensión llegue 5 minutos después del plazo normal."""
-    REASON = "cam-ui: vista previa, grabación o salida en red en marcha"
+    REASON = _t('awake.cam_ui_preview_recording')
     SYSTEM, EXECUTION = 1, 3          # PowerRequestSystemRequired, PowerRequestExecutionRequired
     ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
 
@@ -9546,7 +9561,7 @@ class CamApp:
         self._arm_watchdog(force=True)
         log.info("init: inicio")
         root.report_callback_exception = self._cb_exception
-        root.title("CamWin32 · cámaras / multivista")
+        root.title(_t('app.camwin32_cameras_multiview'))
         root.configure(bg=BG)
         root.minsize(*MIN_FULL)
         self.eng = FFmpegEngine()
@@ -9942,8 +9957,8 @@ class CamApp:
         if self.mode not in ("normal", "compact", "fullscreen") or self.editing:
             return
         b = self.btn_viewfs
-        b.config(text="✕  Salir de pantalla completa  (Esc)" if self.mode == "fullscreen"
-                 else "⛶  Pantalla completa")
+        b.config(text=_t('ui.leave_full_screen_esc') if self.mode == "fullscreen"
+                 else _t('ui.full_screen'))
         if not b.winfo_ismapped():
             b.place(in_=self.view, relx=1.0, x=-10, y=10, anchor="ne")
             b.lift()
@@ -10042,7 +10057,7 @@ class CamApp:
         self.save_config()
 
     def _refresh_pin(self):
-        self.btn_pin.config(text="📌  Fijada" if self._pinned else "📌  Fijar",
+        self.btn_pin.config(text=_t('ui.pinned') if self._pinned else _t('ui.pin'),
                             style="Accent.TButton" if self._pinned else "TButton")
 
     # ---- barra mini: arrastrar y menú contextual
@@ -10109,20 +10124,20 @@ class CamApp:
             return pystray.MenuItem(MODE_NAMES[m], post("mode", m),
                                     checked=lambda item, m=m: app.mode == m, radio=True)
         menu = pystray.Menu(
-            pystray.MenuItem("Mostrar", post("show"), default=True, visible=False),
+            pystray.MenuItem(_t('tray.show'), post("show"), default=True, visible=False),
             mode_item("normal"), mode_item("compact"), mode_item("mini"), mode_item("fullscreen"),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(lambda item: "■  Parar grabación" if app.recording else "●  Grabar",
+            pystray.MenuItem(lambda item: _t('tray.stop_recording') if app.recording else _t('btn.record'),
                              post("rec")),
-            pystray.MenuItem("Cámara virtual", post("vcam"), checked=lambda item: app.vcam_on),
-            pystray.MenuItem("En la red", post("ip"), checked=lambda item: app.ipout_on),
-            pystray.MenuItem("Abrir en VLC (Chromecast)", post("vlc"),
+            pystray.MenuItem(_t('tray.virtual_camera'), post("vcam"), checked=lambda item: app.vcam_on),
+            pystray.MenuItem(_t('tray.on_network'), post("ip"), checked=lambda item: app.ipout_on),
+            pystray.MenuItem(_t('tray.open_in_vlc_chromecast'), post("vlc"),
                              enabled=lambda item: app.ipout_on),
-            pystray.MenuItem("Iniciar con Windows", post("startup"),
+            pystray.MenuItem(_t('tray.start_with_windows'), post("startup"),
                              checked=lambda item: app.startup_on),
-            pystray.MenuItem("Reiniciar cámaras (pánico)", post("panic")),
-            pystray.MenuItem("Buscar actualizaciones...", post("update")),
-            pystray.MenuItem("Salir", post("quit")))
+            pystray.MenuItem(_t('tray.restart_cameras_panic'), post("panic")),
+            pystray.MenuItem(_t('tray.check_for_updates'), post("update")),
+            pystray.MenuItem(_t('tray.quit'), post("quit")))
         try:
             icon = pystray.Icon("camwin32", make_tray_image(False), "CamWin32", menu)
             try:
@@ -10188,11 +10203,8 @@ class CamApp:
         self._tray_asked = True
         self.save_config()
         if messagebox.askyesno(
-                "Icono en la bandeja",
-                "Para cambiar de modo (normal / compacto / mini) desde un icono junto al reloj hace "
-                "falta el paquete «pystray» (pequeño, se instala con pip y necesita internet).\n\n"
-                "¿Instalarlo ahora?\n\n(Los modos también se cambian con el botón «Modo» o, en el "
-                "modo mini, con clic derecho sobre la barra.)"):
+                _t('tray.tray_icon'),
+                _t('tray.change_mode_normal_compact')):
             self._set_status("Instalando pystray…")
 
             def run():
@@ -10399,7 +10411,7 @@ class CamApp:
         self.v_canvas = t(value=c.get("canvas") if c.get("canvas") in CANVASES else ADAPT)
         self.v_cwidth = t(value=str(c.get("cwidth", 1280)))
         self.v_fps = t(value=str(c.get("fps", 30)))
-        self.v_quality = t(value=c.get("quality", QUALITIES[1][0]))
+        self.v_quality = t(value=quality_label(c.get("quality")))
         self.v_preset = t(value=c.get("preset", "veryfast"))
         self.v_container = t(value=c.get("container", "mp4"))
         self.v_sync = t(value=_pair_label(SYNCS, c.get("sync", "clock")))
@@ -10570,14 +10582,14 @@ class CamApp:
         inner = ttk.Frame(bar, style="Bar.TFrame")
         inner.pack(fill="x", padx=10, pady=8)
         self.bar_inner = inner
-        self.btn_prev = ttk.Button(inner, text="⏸  Pausar vista previa  (F5)", style="Accent.TButton",
+        self.btn_prev = ttk.Button(inner, text=_t('ui.pause_preview_f5'), style="Accent.TButton",
                                    command=self.toggle_preview)
-        self.btn_rec = ttk.Button(inner, text="●  Grabar  (F9)", style="Rec.TButton",
+        self.btn_rec = ttk.Button(inner, text=_t('ui.record_f9'), style="Rec.TButton",
                                   command=self.toggle_rec, state="disabled")
-        self.btn_photo = ttk.Button(inner, text="Foto  (F8)", command=self.take_photo,
+        self.btn_photo = ttk.Button(inner, text=_t('ui.photo_f8'), command=self.take_photo,
                                     state="disabled")
-        self.btn_vcam = ttk.Button(inner, text="📹  Cámara virtual", command=self.toggle_vcam)
-        self.btn_ip = ttk.Button(inner, text="🌐  En la red", command=self.toggle_ipout)
+        self.btn_vcam = ttk.Button(inner, text=_t('ui.virtual_camera'), command=self.toggle_vcam)
+        self.btn_ip = ttk.Button(inner, text=_t('ui.on_network'), command=self.toggle_ipout)
         self.lbl_timer = ttk.Label(inner, text="", style="Bar.TLabel",
                                    font=("Consolas", 12, "bold"))
         self.lbl_ms = ttk.Label(inner, text="", style="Bar.TLabel", foreground=MUTED,
@@ -10598,13 +10610,13 @@ class CamApp:
             b = ttk.Button(inner, text=text, command=cmd)
             self._bar_right.append((b, modes))
             return b
-        self.btn_exit = rbtn("Salir", self.on_close, {N})
-        rbtn("Abrir carpeta", self._open_dir, {N})
-        rbtn("Registro", self._open_log, {N})
+        self.btn_exit = rbtn(_t('ui.quit'), self.on_close, {N})
+        rbtn(_t('ui.open_folder'), self._open_dir, {N})
+        rbtn(_t('ui.log'), self._open_log, {N})
         rbtn("⚠  Reiniciar", self.panic_reset, {N})
-        rbtn("Diagnóstico", self._diagnose, {N})
+        rbtn(_t('ui.diagnostics'), self._diagnose, {N})
         self.btn_sync = rbtn("⏱  Sincronizar", self.sync_open, {N})
-        rbtn("☕  Acerca de", self.show_about, {N})
+        rbtn(_t('ui.about'), self.show_about, {N})
         rbtn("🔄  Actualizaciones", self.show_updates, {N})
         # barra mini (sin marco de ventana): cerrar, restaurar (= modo normal, como Esc) y minimizar
         self.btn_wclose = rbtn("✕", self.on_close, {M})
@@ -10620,23 +10632,23 @@ class CamApp:
                                            command=lambda m=m: self.set_mode(m))
         self.mode_menu.add_separator()
         self._vcam_var = tk.BooleanVar(value=False)
-        self.mode_menu.add_checkbutton(label="Cámara virtual (OBS)", variable=self._vcam_var,
+        self.mode_menu.add_checkbutton(label=_t('ui.virtual_camera_obs'), variable=self._vcam_var,
                                        command=self.toggle_vcam)
         self._ip_var = tk.BooleanVar(value=False)
-        self.mode_menu.add_checkbutton(label="En la red (ver desde otro equipo)", variable=self._ip_var,
+        self.mode_menu.add_checkbutton(label=_t('ui.on_network_watch_from'), variable=self._ip_var,
                                        command=self.toggle_ipout)
-        self.mode_menu.add_command(label="Abrir en VLC (para enviar a Chromecast)…",
+        self.mode_menu.add_command(label=_t('ui.open_in_vlc_send'),
                                    command=self._open_in_vlc)
-        self.mode_menu.add_command(label="Sincronizar sonido y cámaras…", command=self.sync_open)
-        self.mode_menu.add_command(label="Reiniciar cámaras (pánico)  F12", command=self.panic_reset)
-        self.mode_menu.add_command(label="Icono de la bandeja…", command=lambda: self._tray_boot(True))
+        self.mode_menu.add_command(label=_t('ui.sync_sound_cameras'), command=self.sync_open)
+        self.mode_menu.add_command(label=_t('ui.restart_cameras_panic_f12'), command=self.panic_reset)
+        self.mode_menu.add_command(label=_t('ui.tray_icon'), command=lambda: self._tray_boot(True))
         self.mode_menu.add_separator()
         langkit.tk_menu(self.mode_menu, lang(), restart=self.restart_for_language).configure(
             bg=PANEL2, fg=FG, activebackground=ACC, activeforeground="white", bd=0, selectcolor=FG)
-        self.mode_menu.add_command(label="Salir", command=self.on_close)
-        self.btn_mode = ttk.Menubutton(inner, text="▭  Modo  ▾", menu=self.mode_menu)
+        self.mode_menu.add_command(label=_t('ui.quit'), command=self.on_close)
+        self.btn_mode = ttk.Menubutton(inner, text=_t('ui.mode'), menu=self.mode_menu)
         self._bar_right.append((self.btn_mode, {N, C}))
-        self.btn_pin = ttk.Button(inner, text="📌  Fijar", command=self.toggle_pin)
+        self.btn_pin = ttk.Button(inner, text=_t('ui.pin'), command=self.toggle_pin)
         self._bar_right.append((self.btn_pin, {C}))
         # barra mini: arrastrar desde los huecos y menú con clic derecho
         for w in (bar, inner, self.lbl_timer, self.lbl_ms, self.btn_rec):
@@ -10658,7 +10670,7 @@ class CamApp:
         self.nb = ttk.Notebook(left)
         self.nb.pack(fill="both", expand=True)
         tabs = [ttk.Frame(self.nb) for _ in range(5)]
-        for tab, txt in zip(tabs, ("Cámaras", "Encuadre", "Color", "Audio", "Salida")):
+        for tab, txt in zip(tabs, (_t('ui.cameras'), _t('ui.framing'), _t('ui.colour'), _t('ui.audio'), _t('ui.output'))):
             self.nb.add(tab, text=" " + txt + " ")
         self.tab_frame = tabs[1]
         inner = [self._scroll_tab(t) for t in tabs]       # cada pestaña se desplaza si no cabe
@@ -10674,7 +10686,7 @@ class CamApp:
         self.view = tk.Canvas(right, bg="#000", highlightthickness=0)
         self.view.pack(fill="both", expand=True)
         self._ph = self.view.create_text(10, 10, fill=MUTED, font=("Segoe UI", 12),
-                                         text="Marca una o varias cámaras para ver la vista previa",
+                                         text=_t('ui.tick_one_or_more'),
                                          justify="center")
         self._img_item = self.view.create_image(0, 0, anchor="center")
         self.view.bind("<Configure>", self._on_view_resize)
@@ -10687,7 +10699,7 @@ class CamApp:
         self.view.bind("<Button-4>", self._view_wheel)
         self.view.bind("<Button-5>", self._view_wheel)
         self.root.bind("<Escape>", self._on_escape)
-        self.btn_viewfs = ttk.Button(right, text="⛶  Pantalla completa",
+        self.btn_viewfs = ttk.Button(right, text=_t('ui.full_screen'),
                                      command=self.toggle_fullscreen)
         self._fs_hide_job, self._fs_over_btn = None, False
         self.btn_viewfs.bind("<Enter>", lambda e: setattr(self, "_fs_over_btn", True))
@@ -10702,7 +10714,7 @@ class CamApp:
         self.lbl_info = ttk.Label(right, text="", style="Muted.TLabel")
         self.lbl_info.pack(fill="x", pady=(4, 0))
         self.lbl_hint = ttk.Label(right, style="Muted.TLabel",
-                                  text="Clic en una imagen = elegir cámara  ·  doble clic = encuadrar (zoom y posición)")
+                                  text=_t('ui.click_image_choose_camera'))
         self.lbl_hint.pack(fill="x")
         sbar = ttk.Frame(r, style="Bar.TFrame")
         sbar.pack(fill="x", side="bottom")
@@ -10717,7 +10729,7 @@ class CamApp:
         """Selector de cámara al principio de una pestaña (sincronizado con la selección)."""
         f = ttk.Frame(tab)
         f.pack(fill="x", padx=8, pady=(8, 2))
-        ttk.Label(f, text="Cámara").pack(side="left")
+        ttk.Label(f, text=_t('cams.camera')).pack(side="left")
         var = tk.StringVar()
         cb = ttk.Combobox(f, textvariable=var, state="readonly", width=36)
         cb.pack(side="left", padx=6, fill="x", expand=True)
@@ -10758,14 +10770,14 @@ class CamApp:
 
     def _build_cams_tab(self, tab):
         pad = {"padx": 8, "pady": 4}
-        box = ttk.Labelframe(tab, text="1 · Marca las cámaras que quieres usar")
+        box = ttk.Labelframe(tab, text=_t('cams.1_tick_cameras_you'))
         box.pack(fill="x", **pad)
         tree_box = ttk.Frame(box)
         tree_box.pack(fill="x", padx=6, pady=(6, 2))
         self.tree = ttk.Treeview(tree_box, columns=("use", "name"), show="headings", height=5,
                                  selectmode="browse")
         self.tree.heading("use", text="")
-        self.tree.heading("name", text="Cámara", anchor="w")
+        self.tree.heading("name", text=_t('cams.camera'), anchor="w")
         self.tree.column("use", width=34, anchor="center", stretch=False)
         self.tree.column("name", width=300, anchor="w")
         tree_sb = ttk.Scrollbar(tree_box, orient="vertical", command=self.tree.yview)
@@ -10777,19 +10789,19 @@ class CamApp:
         self.tree.bind("<Double-Button-1>", self._tree_double_click)
         row = ttk.Frame(box)
         row.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Button(row, text="Refrescar dispositivos",
+        ttk.Button(row, text=_t('cams.refresh_devices'),
                    command=lambda: self._refresh_devices()).pack(side="left")
-        ttk.Button(row, text="Añadir cámara de red…",
+        ttk.Button(row, text=_t('cams.add_network_camera'),
                    command=self._add_net_cam).pack(side="left", padx=(6, 0))
-        self.btn_net_del = ttk.Button(row, text="Quitar cámara de red",
+        self.btn_net_del = ttk.Button(row, text=_t('cams.remove_network_camera'),
                                       command=self._del_net_cam)
         self.btn_net_del.pack(side="left", padx=(6, 0))
 
-        mb = ttk.Labelframe(tab, text="2 · Mosaico  (clic = elegir · arrastrar = intercambiar)")
+        mb = ttk.Labelframe(tab, text=_t('cams.2_mosaic_click_choose'))
         mb.pack(fill="x", **pad)
         top = ttk.Frame(mb)
         top.pack(fill="x", padx=6, pady=(6, 0))
-        ttk.Label(top, text="Disposición  (clic en una)").pack(side="left")
+        ttk.Label(top, text=_t('cams.layout_click_one')).pack(side="left")
         ttk.Button(top, text="▶", width=3, command=lambda: self._move(1)).pack(side="right")
         ttk.Button(top, text="◀", width=3, command=lambda: self._move(-1)).pack(side="right", padx=2)
         self.gal = tk.Canvas(mb, bg=PANEL, width=372, height=44, highlightthickness=0)
@@ -10799,15 +10811,13 @@ class CamApp:
         self.map = tk.Canvas(mb, bg=PANEL, width=372, height=176, highlightthickness=0)
         self.map.pack(padx=6, pady=6)
         ttk.Label(mb, style="Muted.TLabel", wraplength=372, justify="left",
-                  text="Cada dibujo es una forma de repartir tus cámaras (por filas o por columnas, "
-                       "con el formato real de cada una). Arrastra una celda del mapa sobre otra "
-                       "para cambiar qué cámara va en cada sitio."
+                  text=_t('cams.each_drawing_way_arranging')
                   ).pack(fill="x", padx=8, pady=(0, 6))
         self.map.bind("<ButtonPress-1>", self._map_press)
         self.map.bind("<ButtonRelease-1>", self._map_release)
         self.map.bind("<Double-Button-1>", self._map_double)
 
-        self.det = ttk.Labelframe(tab, text="3 · Ajustes de la cámara seleccionada")
+        self.det = ttk.Labelframe(tab, text=_t('cams.3_settings_selected_camera'))
         self.det.pack(fill="x", **pad)
         d = self.det
         self.det_widgets = []
@@ -10816,37 +10826,37 @@ class CamApp:
             self.det_widgets.append(w)
             return w
 
-        ttk.Label(d, text="Voltear").grid(row=0, column=0, sticky="w", padx=6, pady=3)
-        self.w_h = reg(ttk.Checkbutton(d, text="Horizontal", variable=self._dummy["b"]))
+        ttk.Label(d, text=_t('cams.flip')).grid(row=0, column=0, sticky="w", padx=6, pady=3)
+        self.w_h = reg(ttk.Checkbutton(d, text=_t('cams.horizontal'), variable=self._dummy["b"]))
         self.w_h.grid(row=0, column=1, sticky="w")
-        self.w_v = reg(ttk.Checkbutton(d, text="Vertical", variable=self._dummy["b"]))
+        self.w_v = reg(ttk.Checkbutton(d, text=_t('cams.vertical'), variable=self._dummy["b"]))
         self.w_v.grid(row=0, column=2, columnspan=2, sticky="w")
-        ttk.Label(d, text="Girar").grid(row=1, column=0, sticky="w", padx=6, pady=3)
+        ttk.Label(d, text=_t('cams.rotate')).grid(row=1, column=0, sticky="w", padx=6, pady=3)
         self.w_rot = reg(ttk.Combobox(d, values=ROTS, width=6, state="readonly",
                                       textvariable=self._dummy["s"]))
         self.w_rot.grid(row=1, column=1, sticky="w")
-        ttk.Label(d, text="Retardo ms").grid(row=2, column=0, sticky="w", padx=6, pady=3)
+        ttk.Label(d, text=_t('cams.delay_ms')).grid(row=2, column=0, sticky="w", padx=6, pady=3)
         self.w_delay = reg(ttk.Spinbox(d, from_=-2000, to=2000, increment=10, width=6,
                                        textvariable=self._dummy["i"]))
         self.w_delay.grid(row=2, column=1, sticky="w")
-        ttk.Label(d, text="(+ = se ve más tarde)", style="Muted.TLabel").grid(
+        ttk.Label(d, text=_t('cams.seen_later'), style="Muted.TLabel").grid(
             row=2, column=2, columnspan=2, sticky="w", padx=4)
-        ttk.Label(d, text="Captura").grid(row=3, column=0, sticky="w", padx=6, pady=3)
+        ttk.Label(d, text=_t('cams.capture')).grid(row=3, column=0, sticky="w", padx=6, pady=3)
         self.w_mode = reg(ttk.Combobox(d, values=["Auto"], width=18, state="readonly",
                                        textvariable=self._dummy["s"]))
         self.w_mode.grid(row=3, column=1, columnspan=2, sticky="w")
-        self.w_detect = reg(ttk.Button(d, text="Detectar", command=self._detect_modes))
+        self.w_detect = reg(ttk.Button(d, text=_t('cams.detect'), command=self._detect_modes))
         self.w_detect.grid(row=3, column=3, sticky="w", padx=4)
         self.lbl_mode_now = ttk.Label(d, text="", style="Muted.TLabel", wraplength=380, justify="left")
         self.lbl_mode_now.grid(row=4, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2))
-        self.w_probe = reg(ttk.Button(d, text="Probar modos (abre la cámara con cada uno)",
+        self.w_probe = reg(ttk.Button(d, text=_t('cams.try_modes_opens_camera'),
                                       command=self._probe_modes))
         self.w_probe.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(2, 0))
         self.w_feat = reg(ttk.Checkbutton(
-            d, text="★ Destacada: más grande con la disposición «Auto» (hasta {0})".format(FEAT_MAX),
+            d, text=_t('cams.featured_bigger_with_auto', n=FEAT_MAX),
             variable=self._dummy["b"]))
         self.w_feat.grid(row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 0))
-        self.w_reset = reg(ttk.Button(d, text="Restablecer esta cámara", command=self._reset_cam))
+        self.w_reset = reg(ttk.Button(d, text=_t('cams.reset_this_camera'), command=self._reset_cam))
         self.w_reset.grid(row=7, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6))
 
     def _scale_row(self, parent, r, text, lo, hi, on_reset, step=1.0):
@@ -10864,42 +10874,36 @@ class CamApp:
         pad = {"padx": 8, "pady": 4}
         self._make_picker(tab)
         self.frame_widgets = []
-        lf = ttk.Labelframe(tab, text="Forma de la celda")
+        lf = ttk.Labelframe(tab, text=_t('frame.cell_shape'))
         lf.pack(fill="x", **pad)
-        ttk.Label(lf, text="Celda").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(lf, text=_t('frame.cell')).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         self.w_tile = ttk.Combobox(lf, values=[t[0] for t in TILES], width=28,
                                    textvariable=self._dummy["s"])
         self.w_tile.grid(row=0, column=1, sticky="w")
         ttk.Label(lf, style="Muted.TLabel", wraplength=370, justify="left",
-                  text="«Como la cámara» respeta su formato real: no se pierde nada y el lienzo "
-                       "se adapta. Con otra forma se recorta lo que sobra, y con el zoom y la "
-                       "posición eliges qué parte se queda. Puedes escribir cualquier proporción "
-                       "(p. ej. 2.2:1 o 1008:720)."
+                  text=_t('frame.like_camera_keeps_its')
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        self.w_bars = ttk.Button(lf, text="Quitar barras negras de la imagen",
+        self.w_bars = ttk.Button(lf, text=_t('frame.remove_black_bars_from'),
                                  command=self._autocrop)
         self.w_bars.grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
-        zf = ttk.Labelframe(tab, text="Zoom y posición")
+        zf = ttk.Labelframe(tab, text=_t('frame.zoom_position'))
         zf.pack(fill="x", **pad)
         self.sc_zoom, self.lbl_zoom = self._scale_row(
-            zf, 0, "Zoom", 100, 600, lambda: self._cur_set("zoom", 100.0), step=5)
+            zf, 0, _t('frame.zoom'), 100, 600, lambda: self._cur_set("zoom", 100.0), step=5)
         self.sc_cx, self.lbl_cx = self._scale_row(
-            zf, 1, "Horizontal", 0, 100, lambda: self._cur_set("cx", 50.0))
+            zf, 1, _t('frame.horizontal'), 0, 100, lambda: self._cur_set("cx", 50.0))
         self.sc_cy, self.lbl_cy = self._scale_row(
-            zf, 2, "Vertical", 0, 100, lambda: self._cur_set("cy", 50.0))
-        self.w_center = ttk.Button(zf, text="Centrar y quitar zoom", command=self._reset_frame)
+            zf, 2, _t('frame.vertical'), 0, 100, lambda: self._cur_set("cy", 50.0))
+        self.w_center = ttk.Button(zf, text=_t('frame.centre_remove_zoom'), command=self._reset_frame)
         self.w_center.grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 6))
         ttk.Label(zf, style="Muted.TLabel", wraplength=370, justify="left",
-                  text="(doble clic en un deslizador = valor inicial; rueda del ratón o flechas "
-                       "para moverlo; o escribe el número en su casilla)"
+                  text=_t('frame.double_click_slider_initial')
                   ).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
-        self.w_edit = ttk.Button(tab, text="✂   Encuadrar sobre la imagen…", style="Accent.TButton",
+        self.w_edit = ttk.Button(tab, text=_t('frame.frame_on_image'), style="Accent.TButton",
                                  command=self._edit_toggle)
         self.w_edit.pack(fill="x", padx=8, pady=(8, 2), ipady=4)
         ttk.Label(tab, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Muestra la imagen completa de la cámara con un marco: arrástralo para "
-                       "moverlo y usa la rueda del ratón para el zoom. Esc o «Listo» para volver "
-                       "al mosaico. También: doble clic sobre una cámara en la vista previa."
+                  text=_t('frame.shows_whole_camera_image')
                   ).pack(fill="x", padx=10, pady=4)
         self.frame_widgets = [self.w_tile, self.w_bars, self.sc_zoom, self.sc_cx, self.sc_cy, self.w_center,
                               self.w_edit]
@@ -10907,7 +10911,7 @@ class CamApp:
     def _build_color_tab(self, tab):
         pad = {"padx": 8, "pady": 4}
         self._make_picker(tab, live=True)
-        lf = ttk.Labelframe(tab, text="Corrección de color de esta cámara")
+        lf = ttk.Labelframe(tab, text=_t('color.colour_correction_this_camera'))
         lf.pack(fill="x", **pad)
         self.color_sc, self.color_lbl = {}, {}
         for r, (key, txt) in enumerate(COLOR_LABELS):
@@ -10917,29 +10921,24 @@ class CamApp:
             self._live.add(str(sc))
             self._live.add(str(lbl))                     # (su casilla, también grabando)
         ttk.Label(lf, style="Muted.TLabel", wraplength=370, justify="left",
-                  text="Temperatura: + más cálido (naranja), − más frío (azul). Los cambios se "
-                       "ven al instante, también mientras grabas. Doble clic = valor inicial; "
-                       "rueda del ratón o flechas para moverlo, o escribe el número."
+                  text=_t('color.temperature_warmer_orange_cooler')
                   ).grid(row=len(COLOR_LABELS), column=0, columnspan=3, sticky="w", padx=6,
                          pady=(2, 4))
         bf = ttk.Frame(tab)
         bf.pack(fill="x", padx=8, pady=2)
-        self.w_color_reset = ttk.Button(bf, text="Restablecer color", command=self._reset_color)
+        self.w_color_reset = ttk.Button(bf, text=_t('color.reset_colour'), command=self._reset_color)
         self.w_color_reset.pack(side="left")
-        self.w_color_copy = ttk.Button(bf, text="Copiar a todas las cámaras",
+        self.w_color_copy = ttk.Button(bf, text=_t('color.copy_all_cameras'),
                                        command=self._copy_color_all)
         self.w_color_copy.pack(side="left", padx=6)
         self._live.add(str(self.w_color_reset))
         self._live.add(str(self.w_color_copy))
-        df = ttk.Labelframe(tab, text="Controles del driver de la cámara")
+        df = ttk.Labelframe(tab, text=_t('color.camera_driver_controls'))
         df.pack(fill="x", **pad)
         ttk.Label(df, style="Muted.TLabel", wraplength=370, justify="left",
-                  text="Exposición y balance de blancos automáticos, enfoque, ganancia… los "
-                       "ofrece el propio driver, que cada fabricante implementa a su manera "
-                       "(ffmpeg solo puede abrir su cuadro nativo de Windows). Úsalo para "
-                       "desactivar lo automático y que la imagen no «respire»."
+                  text=_t('color.automatic_exposure_white_balance')
                   ).pack(fill="x", padx=6, pady=(6, 4))
-        self.w_driver = ttk.Button(df, text="Abrir propiedades del driver…",
+        self.w_driver = ttk.Button(df, text=_t('color.open_driver_properties'),
                                    command=self._driver_dialog)
         self.w_driver.pack(anchor="w", padx=6, pady=(0, 8))
         self.color_widgets = list(self.color_sc.values()) + [self.w_color_reset, self.w_color_copy]
@@ -10948,42 +10947,41 @@ class CamApp:
     def _build_audio_tab(self, tab):
         pad = {"padx": 8, "pady": 4}
         ttk.Label(tab, style="Muted.TLabel", justify="left", wraplength=380,
-                  text="Cada canal de la salida se alimenta del dispositivo y del canal de "
-                       "origen que elijas. Ej.: micro A al izquierdo y micro B al derecho."
+                  text=_t('audio.each_output_channel_fed')
                   ).pack(fill="x", padx=10, pady=(8, 2))
         self.adev_cmbs = []
-        for side, title in (("L", "Salida IZQUIERDA (L)"), ("R", "Salida DERECHA (R)")):
+        for side, title in (("L", _t('audio.left_output_l')), ("R", _t('audio.right_output_r'))):
             ar = self.arow[side]
             lf = ttk.Labelframe(tab, text=title)
             lf.pack(fill="x", **pad)
-            ttk.Label(lf, text="Dispositivo").grid(row=0, column=0, sticky="w", padx=6, pady=3)
+            ttk.Label(lf, text=_t('audio.device')).grid(row=0, column=0, sticky="w", padx=6, pady=3)
             cb = ttk.Combobox(lf, textvariable=ar.dev, values=[NO_AUDIO], width=38,
                               state="readonly")
             cb.grid(row=0, column=1, columnspan=3, sticky="w", pady=3)
             self.adev_cmbs.append(cb)
-            ttk.Label(lf, text="Tomar de").grid(row=1, column=0, sticky="w", padx=6, pady=3)
+            ttk.Label(lf, text=_t('audio.take_from')).grid(row=1, column=0, sticky="w", padx=6, pady=3)
             ttk.Combobox(lf, textvariable=ar.chan, values=[c[0] for c in CHANS], width=16,
                          state="readonly").grid(row=1, column=1, sticky="w")
-            ttk.Label(lf, text="Retardo ms").grid(row=1, column=2, sticky="e", padx=4)
+            ttk.Label(lf, text=_t('audio.delay_ms')).grid(row=1, column=2, sticky="e", padx=4)
             ttk.Spinbox(lf, from_=0, to=1000, increment=5, width=5,
                         textvariable=ar.delay).grid(row=1, column=3, sticky="w")
-            ttk.Label(lf, text="Ganancia dB").grid(row=2, column=0, sticky="w", padx=6, pady=3)
+            ttk.Label(lf, text=_t('audio.gain_db')).grid(row=2, column=0, sticky="w", padx=6, pady=3)
             gsc = ttk.Scale(lf, from_=-30, to=20, variable=ar.gain, orient="horizontal",
                             length=180, command=lambda v, a=ar: a.gain.set(int(float(v))))
             gsc.grid(row=2, column=1, columnspan=2, sticky="w")
             gbox = SliderBox(lf, gsc, -30, 20, width=4, follow=ar.gain)
             gbox.grid(row=2, column=3, sticky="w")
             slider_controls(gsc, -30, 20, 1, box=gbox)
-        pf = ttk.Labelframe(tab, text="Preajustes")
+        pf = ttk.Labelframe(tab, text=_t('audio.presets'))
         pf.pack(fill="x", **pad)
-        for txt, fn in (("Estéreo normal", self._preset_stereo), ("Mono a ambos", self._preset_mono),
-                        ("Un micro por canal", self._preset_split)):
+        for txt, fn in ((_t('audio.normal_stereo'), self._preset_stereo), (_t('audio.mono_both'), self._preset_mono),
+                        (_t('audio.one_mic_per_channel'), self._preset_split)):
             ttk.Button(pf, text=txt, command=fn).pack(side="left", padx=6, pady=6)
         # pack 58: los ajustes, en su ventanita (AvSyncDialog), que también se abre desde la
         # de «Sincronizar»; aquí, el botón y cómo están ahora
-        sf = ttk.Labelframe(tab, text="Sincronía audio ↔ vídeo")
+        sf = ttk.Labelframe(tab, text=_t('audio.audio_video_sync'))
         sf.pack(fill="x", **pad)
-        self.btn_avsync = ttk.Button(sf, text="⏱  Sincronía audio ↔ vídeo…",
+        self.btn_avsync = ttk.Button(sf, text=_t('audio.audio_video_sync_2'),
                                      command=self.avsync_open)
         self.btn_avsync.grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
         self.v_avsum = tk.StringVar(value=self._avsync_summary())
@@ -10994,66 +10992,60 @@ class CamApp:
 
     def _build_out_tab(self, tab):
         pad = {"padx": 8, "pady": 4}
-        lf = ttk.Labelframe(tab, text="Formato del vídeo")
+        lf = ttk.Labelframe(tab, text=_t('out.video_format'))
         lf.pack(fill="x", **pad)
 
         def row(r, label, widget, sticky="w"):
             ttk.Label(lf, text=label).grid(row=r, column=0, sticky="w", padx=6, pady=4)
             widget.grid(row=r, column=1, sticky=sticky, pady=4)
 
-        row(0, "Lienzo", ttk.Combobox(lf, textvariable=self.v_canvas, width=22,
+        row(0, _t('out.canvas'), ttk.Combobox(lf, textvariable=self.v_canvas, width=22,
                                       values=CANVASES, state="readonly"))
-        row(1, "Ancho del vídeo (px)", ttk.Combobox(lf, textvariable=self.v_cwidth, width=8,
+        row(1, _t('out.video_width_px'), ttk.Combobox(lf, textvariable=self.v_cwidth, width=8,
                                                      values=["960", "1280", "1600", "1920", "2560"]))
         row(2, "FPS", ttk.Spinbox(lf, from_=5, to=60, width=6, textvariable=self.v_fps))
         self.lbl_size = ttk.Label(lf, text="", style="Muted.TLabel", wraplength=370, justify="left")
         self.lbl_size.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
         ttk.Label(lf, style="Muted.TLabel", wraplength=370, justify="left",
-                  text="«Adaptado al contenido» crea un vídeo con la forma justa para que ninguna "
-                       "cámara pierda nada (p. ej. dos 4:3 arriba y un 16:9 abajo). Con un formato "
-                       "fijo (16:9, 9:16…) el mosaico se centra y se rellena con barras negras."
+                  text=_t('out.fitted_content_makes_video')
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        qf = ttk.Labelframe(tab, text="Codificación")
+        qf = ttk.Labelframe(tab, text=_t('out.encoding'))
         qf.pack(fill="x", **pad)
-        ttk.Label(qf, text="Calidad").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(qf, text=_t('out.quality')).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(qf, textvariable=self.v_quality, values=[q[0] for q in QUALITIES],
                      width=24, state="readonly").grid(row=0, column=1, sticky="w")
-        ttk.Label(qf, text="Velocidad CPU").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(qf, text=_t('out.cpu_speed')).grid(row=1, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(qf, textvariable=self.v_preset, values=PRESETS, width=12,
                      state="readonly").grid(row=1, column=1, sticky="w")
-        ttk.Label(qf, text="Contenedor").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(qf, text=_t('out.container')).grid(row=2, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(qf, textvariable=self.v_container, values=["mp4", "mkv"], width=8,
                      state="readonly").grid(row=2, column=1, sticky="w")
         ttk.Label(qf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="MKV es más seguro si el programa se cierra a mitad de grabación."
+                  text=_t('out.mkv_safer_if_program')
                   ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        vf = ttk.Labelframe(tab, text="Cámara virtual (videollamadas)")
+        vf = ttk.Labelframe(tab, text=_t('out.virtual_camera_video_calls'))
         vf.pack(fill="x", **pad)
-        self.btn_vcam2 = ttk.Button(vf, text="📹  Activar cámara virtual", command=self.toggle_vcam)
+        self.btn_vcam2 = ttk.Button(vf, text=_t('out.turn_on_virtual_camera'), command=self.toggle_vcam)
         self.btn_vcam2.grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
         self._live.add(str(self.btn_vcam2))              # se puede apagar mientras se graba
-        ttk.Label(vf, text="Tamaño").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(vf, text=_t('out.size')).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(vf, textvariable=self.v_vsize, values=[z[0] for z in VCAM_SIZES], width=24,
                      state="readonly").grid(row=0, column=1, sticky="w")
         ttk.Label(vf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Ofrece el mosaico como una cámara más (se elige «OBS Virtual Camera» en "
-                       "Teams, Zoom, Meet…); también en la bandeja, el menú «Modo» y, en compacto y "
-                       "mini, el botón 📹. Necesita OBS Studio instalado y "
-                       "el paquete pyvirtualcam. Solo vídeo, sin audio; el mosaico se centra con "
-                       "barras negras en 16:9. Solo un programa puede usar esa cámara a la vez."
+                  text=_t('out.offers_mosaic_as_one')
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        nf = ttk.Labelframe(tab, text="En la red (verlo desde otro equipo o móvil)")
+        nf = ttk.Labelframe(tab, text=_t('out.on_network_watch_from'))
         nf.pack(fill="x", **pad)
-        self.btn_ip2 = ttk.Button(nf, text="🌐  Activar en la red", command=self.toggle_ipout)
+        self.btn_ip2 = ttk.Button(nf, text=_t('out.turn_on_network_output'), command=self.toggle_ipout)
         self.btn_ip2.grid(row=2, column=0, sticky="w", padx=6, pady=(2, 6))
         self._live.add(str(self.btn_ip2))                # se puede apagar mientras se graba
-        self.btn_vlc = ttk.Button(nf, text="▶️  Abrir en VLC", command=self._open_in_vlc)
+        self.btn_vlc = ttk.Button(nf, text=_t('out.open_in_vlc'), command=self._open_in_vlc)
         self.btn_vlc.grid(row=2, column=1, sticky="w", padx=6, pady=(2, 6))
         self._live.add(str(self.btn_vlc))
-        ttk.Label(nf, text="Tamaño").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(nf, text=_t('out.size')).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(nf, textvariable=self.v_ipsize, values=[z[0] for z in IP_SIZES], width=28,
                      state="readonly").grid(row=0, column=1, sticky="w")
-        ttk.Label(nf, text="Puerto").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(nf, text=_t('out.port')).grid(row=1, column=0, sticky="w", padx=6, pady=4)
         e_ipport = ttk.Entry(nf, textvariable=self.v_ipport, width=8)
         e_ipport.grid(row=1, column=1, sticky="w")
         e_ipport.bind("<Return>", self._on_ipport_commit)
@@ -11062,30 +11054,11 @@ class CamApp:
         self.frm_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
         self._set_link_list(self.frm_ipurl, "No está activa.", [])
         ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="«Tamaño» es el máximo: se manda con la misma forma que el mosaico de aquí "
-                       "(con su encuadre, sin añadir barras negras), lo más grande que quepa, y "
-                       "nunca mayor que el propio mosaico -- así otro cam-ui que lo añada como "
-                       "«cámara de red» lo recibe con el mismo formato y los mismos fps que el "
-                       "mosaico (hasta 30). Un máximo mayor da más resolución a cambio de más wifi "
-                       "(a 1280 de ancho y 30 fps, unos 40 Mbit/s). "
-                       "Abre esa dirección con el navegador de otro equipo o móvil de la misma red "
-                       "(wifi) para ver el mosaico en directo, con pantalla completa; también en la "
-                       "bandeja, el menú «Modo» y, en compacto y mini, el botón 🌐 (clic en la "
-                       "dirección de la barra de estado la abre directamente). Si hay micrófono "
-                       "activado también se oye (botón «Activar sonido» en la página, con su propio "
-                       "control de volumen). Solo para ver: nadie puede controlar cam-ui desde ahí, y "
-                       "es independiente de grabar y de la cámara virtual (se puede usar a la vez). "
-                       "Sin contraseña: cualquiera en esa red puede verlo (y oírlo) mientras esté "
-                       "activa. La primera vez, Windows puede pedir permiso en el cortafuegos: dalo "
-                       "para «redes privadas». «Abrir en VLC» (si está instalado) lo abre ahí en vez "
-                       "del navegador; desde el propio menú de VLC Reproducción -> Renderizador se "
-                       "puede enviar a un Chromecast de la misma red -- VLC hace la conversión él "
-                       "solo, sin nada más que instalar aquí. VLC no sabe enviar a AirPlay (solo "
-                       "existe como función del propio macOS)."
+                  text=_t('out.size_maximum_sent_with')
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-        pf = ttk.Labelframe(tab, text="Cámara del móvil (desde su navegador, sin instalar nada)")
+        pf = ttk.Labelframe(tab, text=_t('out.phone_camera_from_its'))
         pf.pack(fill="x", **pad)
-        ttk.Label(pf, text="Puerto").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
+        ttk.Label(pf, text=_t('out.port')).grid(row=0, column=0, sticky="w", padx=6, pady=(6, 4))
         e_pcport = ttk.Entry(pf, textvariable=self.v_phonecamport, width=8)
         e_pcport.grid(row=0, column=1, sticky="w")
         e_pcport.bind("<Return>", self._on_phonecamport_commit)
@@ -11096,44 +11069,28 @@ class CamApp:
         self.lbl_phonecamqr = ttk.Label(pf)
         self.lbl_phonecamqr.grid(row=2, column=0, padx=6, pady=(2, 4), sticky="w")
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Siempre activa: entra en el móvil a cualquiera de las direcciones de abajo "
-                       "(con «/movil» o «/add» al final) y toca «Escanear»: en cuanto dé el permiso de "
-                       "cámara, aquí mismo aparecerá un código QR para que lo lea con la propia cámara "
-                       "del móvil -- en cuanto lo lea, se añade solo al mosaico, sin tocar nada más "
-                       "aquí. La primera vez el navegador avisará de que la conexión «no es privada» "
-                       "-- es normal (es tu propio cam-ui, no un sitio de verdad), toca «Avanzado» y "
-                       "«Continuar». De momento solo vídeo, sin el sonido del móvil. Tener que ver el "
-                       "QR en la pantalla del PC es lo que de verdad protege esto: nadie en la wifi "
-                       "puede añadirse sin estar delante del ordenador (salvo con la contraseña de "
-                       "más abajo, si pones una). Sin ningún móvil conectado no "
-                       "consume apenas recursos (solo escucha en el puerto, igual que «En la red»)."
+                  text=_t('out.always_on_on_phone')
                   ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         self.btn_phonecam_cert = ttk.Button(
-            pf, text="📲  Instalar certificado (solo iPhone/iPad)",
+            pf, text=_t('out.install_certificate_iphone_ipad'),
             command=self._phonecam_show_cert_dialog)
         self.btn_phonecam_cert.grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
         self._live.add(str(self.btn_phonecam_cert))       # no toca nada de la grabación en marcha
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="En iPhone/iPad hace falta un paso más (botón de arriba, solo una vez): "
-                       "Safari no deja usar la cámara ahí sin él, por mucho que se acepte el "
-                       "aviso de «conexión no privada» -- eso basta para ver la página, pero no "
-                       "para la cámara. En Android no hace falta nada de esto."
+                  text=_t('out.on_iphone_ipad_one')
                   ).grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         self.btn_phonecam_devices = ttk.Button(
-            pf, text="📱  Administrar dispositivos móviles",
+            pf, text=_t('out.manage_mobile_devices'),
             command=self._phonecam_show_devices_dialog)
         self.btn_phonecam_devices.grid(row=6, column=0, columnspan=3, sticky="w", padx=6,
                                        pady=(0, 6))
         self._live.add(str(self.btn_phonecam_devices))     # no toca nada de la grabación en marcha
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Un móvil que ya se emparejó una vez (con el QR de siempre) entra solo "
-                       "la próxima vez que abra esa misma dirección, sin volver a leer ningún "
-                       "código -- aquí se ven cuáles (tipo y última conexión), y se pueden "
-                       "renombrar u «olvidar»."
+                  text=_t('out.phone_that_has_already')
                   ).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 4))
         pwf = ttk.Frame(pf)
         pwf.grid(row=8, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 2))
-        ttk.Label(pwf, text="Contraseña").pack(side="left")
+        ttk.Label(pwf, text=_t('out.password')).pack(side="left")
         self.e_phonecampass = ttk.Entry(pwf, textvariable=self.v_phonecampass, width=22, show="•")
         self.e_phonecampass.pack(side="left", padx=(8, 6))
         self.e_phonecampass.bind("<Return>", self._on_phonecampass_commit)
@@ -11147,40 +11104,28 @@ class CamApp:
         chk_pw.pack(side="left")
         self._live.add(str(chk_pw))
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Opcional: alternativa al QR. En la página del móvil, «🔑 Usar contraseña» "
-                       "y esta misma contraseña lo añaden sin tener que leer nada en esta pantalla. "
-                       "Vacía, solo con el QR. Quien la sepa y esté en la misma wifi puede añadir "
-                       "su cámara: que no sea fácil de adivinar. Tras 5 intentos fallidos, ese "
-                       "móvil tiene que esperar (cada vez más), y si fallan muchos a la vez, la "
-                       "contraseña deja de aceptarse un rato (el QR sigue valiendo)."
+                  text=_t('out.optional_alternative_qr_on')
                   ).grid(row=9, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
-        df = ttk.Labelframe(tab, text="Destino")
+        df = ttk.Labelframe(tab, text=_t('out.destination'))
         df.pack(fill="x", **pad)
-        ttk.Label(df, text="Carpeta").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(df, text=_t('out.folder')).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Entry(df, textvariable=self.v_dir, width=34).grid(row=0, column=1, pady=4)
         ttk.Button(df, text="...", width=3, command=self._pick_dir).grid(row=0, column=2, padx=4)
-        ttk.Label(df, text="Nombre base").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(df, text=_t('out.base_name')).grid(row=1, column=0, sticky="w", padx=6, pady=4)
         ttk.Entry(df, textvariable=self.v_name, width=34).grid(row=1, column=1, pady=4)
-        sf = ttk.Labelframe(tab, text="Avanzado")
+        sf = ttk.Labelframe(tab, text=_t('out.advanced'))
         sf.pack(fill="x", **pad)
-        ttk.Label(sf, text="Sincronía").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(sf, text=_t('out.sync')).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ttk.Combobox(sf, textvariable=self.v_sync, values=[s[0] for s in SYNCS], width=28,
                      state="readonly").grid(row=0, column=1, sticky="w")
         ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="«Reloj común» alinea todas las cámaras y el audio en una misma línea "
-                       "de tiempo. «Marcas del dispositivo» se fía de la hora que da cada cámara: "
-                       "con el motor de siempre, una que la dé mal frena todo el mosaico. Con el "
-                       "motor nuevo no cuenta: siempre el reloj común."
+                  text=_t('out.common_clock_lines_up')
                   ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
-        ttk.Checkbutton(sf, text="Motor nuevo: cada cámara por separado (recomendado)",
+        ttk.Checkbutton(sf, text=_t('out.new_engine_each_camera'),
                         variable=self.v_hub).grid(row=2, column=0, columnspan=2, sticky="w",
                                                   padx=6, pady=(4, 0))
         ttk.Label(sf, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="Abre todas las cámaras a la vez, cada una por su lado: una lenta (10 fps), "
-                       "una que se corta o la de otro PC ya no frenan a las demás, y reiniciar el "
-                       "mosaico o empezar a grabar no vuelve a abrirlas. La de otro cam-ui se "
-                       "alinea por la hora a la que se captó allí. Si algo va peor, desmárcalo "
-                       "y vuelve el motor de siempre (un solo ffmpeg para todas)."
+                  text=_t('out.opens_all_cameras_at')
                   ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
 
     # ------------------------------------------------------------ dispositivos
@@ -11300,13 +11245,13 @@ class CamApp:
         if editing and cur is None:
             return
         top = tk.Toplevel(self.root)
-        top.title("Editar cámara de red" if cur else "Añadir cámara de red")
+        top.title(_t('netcam.edit_network_camera') if cur else _t('netcam.add_network_camera'))
         top.configure(bg=BG)
         top.transient(self.root)
         top.resizable(False, False)
         frm = ttk.Frame(top)
         frm.pack(fill="both", expand=True, padx=12, pady=12)
-        ttk.Label(frm, text="Nombre").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(frm, text=_t('netcam.name')).grid(row=0, column=0, sticky="w", pady=(0, 4))
         name_var = tk.StringVar(value=cur["name"] if cur else "Móvil")
         ttk.Entry(frm, textvariable=name_var, width=38).grid(row=0, column=1, pady=(0, 4))
         ttk.Label(frm, text="URL").grid(row=1, column=0, sticky="w")
@@ -11314,17 +11259,7 @@ class CamApp:
         e_url = ttk.Entry(frm, textvariable=url_var, width=38)
         e_url.grid(row=1, column=1)
         ttk.Label(frm, style="Muted.TLabel", wraplength=380, justify="left",
-                  text="La dirección que da la app del móvil (p. ej. «IP Webcam» en Android): algo "
-                       "como http://192.168.1.50:8080/video, o por rtsp "
-                       "rtsp://192.168.1.50:8080/h264_ulaw.sdp. También vale la dirección de la "
-                       "«salida en red» de otro PC con cam-ui -- la URL completa, terminada en "
-                       "/stream.mjpg (algo como http://192.168.1.50:8554/stream.mjpg) -- para "
-                       "encadenar varios equipos. El otro aparato y este ordenador deben estar "
-                       "en la misma red wifi, y el otro PC debe tener «En la red» activada. Solo "
-                       "vídeo, sin audio. Si esta cámara va lenta o a tirones: aquí no se puede "
-                       "elegir la resolución con la que llega, pero si el origen es otro PC con "
-                       "cam-ui, en SU Ajustes → «En la red» → tamaño se puede bajar la que manda "
-                       "-- pesa menos de recibir aquí sin tocar nada en este equipo."
+                  text=_t('netcam.address_given_by_phone')
                   ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 10))
         err = ttk.Label(frm, text="", foreground="#ff6b6b", background=BG)
         err.grid(row=3, column=0, columnspan=2, sticky="w")
@@ -11335,7 +11270,7 @@ class CamApp:
             name = name_var.get().strip() or "Móvil"
             url = url_var.get().strip()
             if not _is_net_spec(url):
-                err.config(text="La URL debe empezar por http://, https:// o rtsp://")
+                err.config(text=_t('netcam.url_must_start_with'))
                 return
             label = base = "🌐 " + name
             n = 2
@@ -11354,8 +11289,8 @@ class CamApp:
             else:
                 self._set_status("Cámara de red «{0}» añadida; márcala en la lista para usarla.".format(name))
 
-        ttk.Button(bar, text="Cancelar", command=top.destroy).pack(side="right")
-        ttk.Button(bar, text="Guardar" if cur else "Añadir", command=ok).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text=_t('netcam.cancel'), command=top.destroy).pack(side="right")
+        ttk.Button(bar, text=_t('netcam.save') if cur else _t('netcam.add'), command=ok).pack(side="right", padx=(0, 6))
         e_url.focus_set()
         if cur:
             e_url.select_range(0, "end")
@@ -11371,7 +11306,7 @@ class CamApp:
         lab = self.sel
         if not lab or not self.vdev.get(lab, {}).get("net") or self.recording or self.busy:
             return
-        if not messagebox.askokcancel("Quitar cámara de red", "¿Quitar «{0}»?".format(lab)):
+        if not messagebox.askokcancel(_t('netcam.remove_network_camera'), _t('netcam.remove', name=lab)):
             return
         self.net_cams.pop(lab, None)
         self._refresh_devices()
@@ -11598,8 +11533,8 @@ class CamApp:
 
     def _bind_detail(self):
         cs = self.cams.get(self.sel) if self.sel in self.order else None
-        self.det.config(text="3 · Ajustes de «{0}»".format(self.sel) if cs
-                        else "3 · Ajustes de la cámara seleccionada")
+        self.det.config(text=_t('app.3_settings', name=self.sel) if cs
+                        else _t('app.3_settings_selected_camera'))
         d = self._dummy
         self.w_h.config(variable=cs.h if cs else d["b"])
         self.w_v.config(variable=cs.v if cs else d["b"])
@@ -11624,8 +11559,8 @@ class CamApp:
         self._set_state(self.w_detect, free and not is_net)
         self._set_state(self.w_probe, free and not is_net)
         self._set_state(self.btn_net_del, bool(cs) and is_net and not self.recording)
-        self.w_edit.config(text="✔   Terminar el encuadre" if self.editing
-                           else "✂   Encuadrar sobre la imagen…")
+        self.w_edit.config(text=_t('app.finish_framing') if self.editing
+                           else _t('app.frame_on_image'))
         labs = list(self.order)
         for cb, var in self._pickers:
             cb.config(values=labs)
@@ -12027,7 +11962,7 @@ class CamApp:
             ok = self._run_labels[i] in live.ok
             size = int(max(12, min(40, th * sc * 0.16)))
             tid = v.create_text(ix + (tx + tw / 2.0) * sc, iy + ty * sc + 8, anchor="n",
-                                text="✓ lista" if ok else "falta", tags=("ov", "syncmark"),
+                                text=_t('sync.mark_ready') if ok else _t('sync.mark_missing'), tags=("ov", "syncmark"),
                                 fill="#3ddc84" if ok else WARN,
                                 font=("Segoe UI", -size if ok else -max(11, size * 2 // 3), "bold"))
             bb = v.bbox(tid)
@@ -12193,7 +12128,7 @@ class CamApp:
     def _view_menu(self, e):
         if self.editing:                                     # encuadrando: solo terminar
             m = self._menu()
-            m.add_command(label="✔  Terminar el encuadre  (Esc)", command=self._exit_edit)
+            m.add_command(label=_t('cammenu.finish_framing_esc'), command=self._exit_edit)
             self._popup(m, e)
             return
         lab = self._tile_at(e.x, e.y)
@@ -12224,8 +12159,8 @@ class CamApp:
         m.add_command(label="«{0}»".format(lab if len(lab) <= 40 else lab[:39] + "…"),
                       state="disabled")
         m.add_separator()
-        m.add_command(label="🎨  Color…", command=lambda: self._cam_color_open(lab))
-        m.add_command(label="⚙  Propiedades del driver…", state=st(not rec and not is_net),
+        m.add_command(label=_t('cammenu.colour'), command=lambda: self._cam_color_open(lab))
+        m.add_command(label=_t('cammenu.driver_properties'), state=st(not rec and not is_net),
                       command=lambda: self._cam_do(lab, self._driver_dialog, leave_fs=True))
         m.add_separator()
         fr = self._menu(m)
@@ -12235,41 +12170,41 @@ class CamApp:
         pr.add_separator()
         cur = cs.tile.get()
         known = cur in [t[0] for t in TILES]
-        pr.add_command(label="Personalizada…" + ("" if known else "  (ahora {0})".format(cur)),
+        pr.add_command(label=_t('cammenu.custom') + ("" if known else _t('cammenu.now', ratio=cur)),
                        command=lambda: self._cam_custom_ratio(lab))
-        fr.add_cascade(label="Proporción", menu=pr)
+        fr.add_cascade(label=_t('cammenu.aspect_ratio'), menu=pr)
         zm = self._menu(fr)
         for z in (100, 125, 150, 200, 300, 400):
             zm.add_radiobutton(label="{0} %".format(z), variable=cs.zoom, value=float(z))
-        fr.add_cascade(label="Zoom", menu=zm)
-        fr.add_command(label="Centrar y quitar zoom (sin tocar la proporción)",
+        fr.add_cascade(label=_t('cammenu.zoom'), menu=zm)
+        fr.add_command(label=_t('cammenu.centre_remove_zoom_without'),
                        command=lambda: self._cam_center(cs))
-        fr.add_command(label="Quitar barras negras de la imagen",
+        fr.add_command(label=_t('cammenu.remove_black_bars_from'),
                        command=lambda: self._cam_do(lab, self._autocrop))
         fr.add_separator()
-        fr.add_command(label="✂  Encuadrar sobre la imagen…",
+        fr.add_command(label=_t('cammenu.frame_on_image'),
                        command=lambda: self._cam_do(lab, lambda: self._enter_edit(lab),
                                                     leave_fs=True))
-        m.add_cascade(label="Encuadre", menu=fr, state=st(not rec))
-        m.add_checkbutton(label="Voltear horizontal", variable=cs.h, state=st(not rec))
-        m.add_checkbutton(label="Voltear vertical", variable=cs.v, state=st(not rec))
+        m.add_cascade(label=_t('cammenu.framing'), menu=fr, state=st(not rec))
+        m.add_checkbutton(label=_t('cammenu.flip_horizontally'), variable=cs.h, state=st(not rec))
+        m.add_checkbutton(label=_t('cammenu.flip_vertically'), variable=cs.v, state=st(not rec))
         gm = self._menu(m)
         for r in ROTS:
             gm.add_radiobutton(label=r, variable=cs.rot, value=r)
-        m.add_cascade(label="Girar", menu=gm, state=st(not rec))
+        m.add_cascade(label=_t('cammenu.rotate'), menu=gm, state=st(not rec))
         cm = self._menu(m)
         for md in ["Auto"] + list(cs.modes):
             cm.add_radiobutton(label=md, variable=cs.mode, value=md)
         cm.add_separator()
-        cm.add_command(label="Probar modos (abre la cámara con cada uno)…",
+        cm.add_command(label=_t('cammenu.try_modes_opens_camera'),
                        command=lambda: self._cam_do(lab, self._probe_modes), state=st(not is_net))
-        m.add_cascade(label="Captura", menu=cm, state=st(not rec))
-        m.add_checkbutton(label="★ Destacada (más grande en «Auto»)", variable=cs.feat,
+        m.add_cascade(label=_t('cammenu.capture'), menu=cm, state=st(not rec))
+        m.add_checkbutton(label=_t('cammenu.featured_bigger_in_auto'), variable=cs.feat,
                           state=st(not rec))
         m.add_separator()
-        m.add_command(label="Quitar del mosaico", state=st(not rec and not self.busy),
+        m.add_command(label=_t('cammenu.remove_from_mosaic'), state=st(not rec and not self.busy),
                       command=lambda: self._cam_set_use(lab, False))
-        m.add_command(label="Restablecer esta cámara", state=st(not rec),
+        m.add_command(label=_t('cammenu.reset_this_camera'), state=st(not rec),
                       command=lambda: self._cam_do(lab, self._reset_cam))
         return m
 
@@ -12318,8 +12253,8 @@ class CamApp:
         from tkinter import simpledialog
         cur = cs.tile.get()
         val = simpledialog.askstring(
-            "Proporción de «{0}»".format(lab),
-            "Escribe la proporción de la celda (ancho:alto), p. ej. 2.2:1 o 1008:720:",
+            _t('cammenu.aspect_ratio_2', name=lab),
+            _t('cammenu.type_cell_ratio_width'),
             initialvalue=tile_value(cur) if tile_value(cur) != "auto" else "", parent=self.root)
         if val is None:
             return
@@ -12588,13 +12523,11 @@ class CamApp:
                 seen.add(dev["spec"])
                 audios.append((dev["label"], dev["spec"], buf))
         if not cams and not audios:
-            messagebox.showinfo("Diagnóstico", "Marca alguna cámara o elige un micrófono primero.")
+            messagebox.showinfo(_t('diag.diagnostics'), _t('diag.tick_camera_or_choose'))
             return
         if not messagebox.askokcancel(
-                "Diagnóstico de rendimiento",
-                "Se pausa la vista previa unos 30 s y se mide cada dispositivo (fps reales de cada "
-                "cámara, cortes de audio) primero por separado y luego todos a la vez.\n\n"
-                "Así se ve si el problema es de una cámara, del micro o de compartir el USB/CPU."):
+                _t('diag.performance_diagnostics'),
+                _t('diag.preview_pauses_for_about')):
             return
         was_paused = self.paused
         self.paused = True
@@ -12622,7 +12555,7 @@ class CamApp:
 
         self._bg(work, done)
 
-    def _show_report(self, txt, title="Diagnóstico"):
+    def _show_report(self, txt, title=_t('diag.diagnostics')):
         top = tk.Toplevel(self.root)
         top.title(title)
         top.configure(bg=BG)
@@ -12640,8 +12573,8 @@ class CamApp:
             self.root.clipboard_clear()
             self.root.clipboard_append(txt)
             self._set_status("Informe copiado al portapapeles.")
-        ttk.Button(bar, text="Copiar informe", command=copy).pack(side="left")
-        ttk.Button(bar, text="Cerrar", command=top.destroy).pack(side="right")
+        ttk.Button(bar, text=_t('diag.copy_report'), command=copy).pack(side="left")
+        ttk.Button(bar, text=_t('diag.close'), command=top.destroy).pack(side="right")
         box_frame = ttk.Frame(top)
         box_frame.pack(fill="both", expand=True, padx=8, pady=(8, 4))
         box = tk.Text(box_frame, wrap="word", bg=PANEL, fg=FG, insertbackground=FG, relief="flat",
@@ -15044,37 +14977,37 @@ class CamApp:
         def T(full, short):
             return short if m else full
         if self.recording:
-            self.btn_prev.config(text=T("▶  Vista previa  (F5)", "▶  Vista"), state="disabled")
-            self.btn_rec.config(text=T("■  Parar  (F9)", "■  Parar"),
+            self.btn_prev.config(text=T(_t('btn.preview_f5'), _t('btn.view')), state="disabled")
+            self.btn_rec.config(text=T(_t('btn.stop_f9'), _t('btn.stop')),
                                 state="disabled" if b else "normal")
         elif self.previewing:
-            self.btn_prev.config(text=T("⏸  Pausar vista previa  (F5)", "⏸  Pausa"),
+            self.btn_prev.config(text=T(_t('btn.pause_preview_f5'), _t('btn.pause')),
                                  state="disabled" if b else "normal")
-            self.btn_rec.config(text=T("●  Grabar  (F9)", "●  Grabar"),
+            self.btn_rec.config(text=T(_t('btn.record_f9'), _t('btn.record')),
                                 state="disabled" if (b or self.editing) else "normal")
         else:
-            self.btn_prev.config(text=T("▶  Reanudar vista previa  (F5)", "▶  Vista"),
+            self.btn_prev.config(text=T(_t('btn.resume_preview_f5'), _t('btn.view')),
                                  state="disabled" if b else "normal")
-            self.btn_rec.config(text=T("●  Grabar  (F9)", "●  Grabar"),
+            self.btn_rec.config(text=T(_t('btn.record_f9'), _t('btn.record')),
                                 state=("disabled" if b else "normal") if mini else "disabled")
-        self.btn_photo.config(text=T("Foto  (F8)", "Foto"),
+        self.btn_photo.config(text=T(_t('btn.photo_f8'), _t('btn.photo')),
                               state="normal" if (self.previewing and not b) else "disabled")
         von = self.vcam_on
         vst = "disabled" if (b or (self.recording and not von)) else "normal"
         mark = "●" if von else "○"
-        self.btn_vcam.config(text=("📹 " + mark) if mini else ("📹 Virtual " + mark),
+        self.btn_vcam.config(text=("📹 " + mark) if mini else _t('btn.vcam_short', mark=mark),
                              style="Accent.TButton" if von else "TButton", state=vst)
         if getattr(self, "btn_vcam2", None) is not None:
-            self.btn_vcam2.config(text="📹  Apagar cámara virtual" if von else "📹  Activar cámara virtual",
+            self.btn_vcam2.config(text=_t('btn.turn_off_virtual_camera') if von else _t('btn.turn_on_virtual_camera'),
                                   style="Accent.TButton" if von else "TButton", state=vst)
         self._vcam_var.set(von)
         ion = self.ipout_on
         ist = "disabled" if (b or (self.recording and not ion)) else "normal"
         imark = "●" if ion else "○"
-        self.btn_ip.config(text=("🌐 " + imark) if mini else ("🌐 Red " + imark),
+        self.btn_ip.config(text=("🌐 " + imark) if mini else _t('btn.net_short', mark=imark),
                            style="Accent.TButton" if ion else "TButton", state=ist)
         if getattr(self, "btn_ip2", None) is not None:
-            self.btn_ip2.config(text="🌐  Apagar en la red" if ion else "🌐  Activar en la red",
+            self.btn_ip2.config(text=_t('btn.turn_off_network_output') if ion else _t('btn.turn_on_network_output'),
                                 style="Accent.TButton" if ion else "TButton", state=ist)
         if getattr(self, "btn_vlc", None) is not None:
             self.btn_vlc.config(state="disabled" if (b or not ion) else "normal")

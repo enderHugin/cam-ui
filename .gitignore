@@ -11,6 +11,13 @@
 !requirements.txt
 !tests/
 !tests/**
+!lang/
+!lang/**
+!vendor/
+!vendor/**
+!docs/
+!docs/**
+tests/_unit_*
 __pycache__/
 *.log
 config.json
