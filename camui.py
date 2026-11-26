@@ -84,8 +84,8 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ---- actualizaciones: mismo sistema que widget-arena (huella sha256, copia de seguridad,
 # vuelta atrás, reinicio solo), adaptado a un único archivo -----------------------------
-APP_VERSION = "2026.11.24"            # ha de coincidir con el archivo VERSION del repositorio
-APP_PACK = 59                         # crece en cada actualización publicada: así se sabe qué es más nuevo
+APP_VERSION = "2026.11.26"            # ha de coincidir con el archivo VERSION del repositorio
+APP_PACK = 60                         # crece en cada actualización publicada: así se sabe qué es más nuevo
 UPDATE_BASE = "https://enderhugin.github.io/cam-ui/dl/"
 UPDATE_STATE = os.path.join(HERE, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(HERE, "backups_programa")
@@ -8872,6 +8872,118 @@ class SyncDialog:
             self._on_close()
 
 
+class SliderBox(ttk.Entry):
+    """La casilla con el valor de un deslizador (pack 60): se puede escribir el número (Intro, o
+    al salir de ella; vale «125», «125 %», «+15», «-7,5»), y la rueda del ratón encima también
+    lo mueve. Entiende config(text=...) como la etiqueta a la que sustituye (sin pisar lo que se
+    está escribiendo). El valor va a la variable que tenga el deslizador en ese momento (la de la
+    cámara elegida)."""
+
+    def __init__(self, parent, scale, lo, hi, width=6, follow=None, fmt="{0:.0f}"):
+        self._sv = tk.StringVar()
+        ttk.Entry.__init__(self, parent, textvariable=self._sv, width=width, justify="right")
+        self._scale, self._lo, self._hi, self._shown = scale, lo, hi, ""
+        self._dirty = False             # solo se aplica lo que se ha escrito (no lo enseñado)
+        self._own = False
+        self._sv.trace_add("write", lambda *_a: None if self._own else setattr(self, "_dirty", True))
+        for k in ("<Return>", "<KP_Enter>", "<FocusOut>"):
+            self.bind(k, self._apply)
+        self.bind("<Escape>", lambda e: (self._show(), "break")[1])
+        if follow is not None:
+            show = lambda *_a: self.configure(text=fmt.format(_getf(follow)))     # noqa: E731
+            follow.trace_add("write", show)
+            show()
+
+    def configure(self, cnf=None, **kw):
+        if "text" in kw:
+            self._shown = kw.pop("text")
+            if not self._dirty:            # (si se está escribiendo, no se pisa)
+                self._show()
+        if cnf or kw:
+            return ttk.Entry.configure(self, cnf, **kw)
+    config = configure
+
+    def _show(self):
+        self._own = True
+        try:
+            self._sv.set(self._shown)
+        finally:
+            self._own = False
+        self._dirty = False
+
+    def _apply(self, _e=None):
+        if not self._dirty:
+            self._show()
+            return
+        txt = self._sv.get().strip().replace("%", "").replace(",", ".").replace("+", "").strip()
+        self._dirty = False
+        if self._scale.instate(["disabled"]) or not txt:
+            self._show()
+            return
+        try:
+            v = float(txt)
+        except ValueError:
+            self._show()
+            return
+        v = max(float(self._lo), min(float(self._hi), v))
+        self._scale.setvar(str(self._scale.cget("variable")), v)
+        self._show()
+
+
+def slider_controls(scale, lo, hi, step=1.0, box=None):
+    """Rueda del ratón y teclado para un deslizador (pack 60): la rueda encima (de él o de su
+    casilla) lo mueve un paso por golpe (con Mayúsculas, cinco); con el foco (al hacer clic en
+    él), las flechas un paso, RePág/AvPág diez. Sin que la rueda mueva además la pestaña."""
+    def bump(n):
+        if scale.instate(["disabled"]):
+            return "break"
+        name = str(scale.cget("variable"))
+        try:
+            v = float(scale.getvar(name))
+        except (tk.TclError, ValueError, TypeError):
+            v = float(scale.get())
+        scale.setvar(name, max(float(lo), min(float(hi), v + n * step)))
+        return "break"
+
+    def wheel(e):
+        d = getattr(e, "delta", 0) or (120 if getattr(e, "num", 0) == 4 else -120)
+        return bump((1 if d > 0 else -1) * (5 if (e.state & 0x0001) else 1))
+    for w in (scale,) + ((box,) if box is not None else ()):
+        w.bind("<MouseWheel>", wheel)
+        w.bind("<Button-4>", wheel)
+        w.bind("<Button-5>", wheel)
+    scale.configure(takefocus=1)
+    scale.bind("<ButtonPress-1>", lambda e: scale.focus_set(), add="+")
+    for key, n in (("<Left>", -1), ("<Down>", -1), ("<Right>", 1), ("<Up>", 1),
+                   ("<Prior>", 10), ("<Next>", -10)):
+        scale.bind(key, lambda e, n=n: bump(n * (5 if (e.state & 0x0001) else 1)))
+
+
+DRIVER_LIVE_WAIT_S = 1.5   # si el ffmpeg del cuadro del driver sigue vivo esto, el cuadro está fuera
+
+
+def driver_dialog_cmd(ffmpeg, spec):
+    """ffmpeg que enseña el cuadro de propiedades de una cámara DirectShow (y luego intenta
+    sacar una imagen, que con la cámara en uso falla: da igual, ya se ha cerrado el cuadro)."""
+    return [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "dshow",
+            "-show_video_device_dialog", "true", "-i", "video=" + spec,
+            "-frames:v", "1", "-f", "null", "-"]
+
+
+def driver_dialog_was_shown(err, elapsed):
+    """¿Llegó a enseñar el cuadro un ffmpeg de driver_dialog_cmd que ya terminó? ffmpeg lo
+    enseña tras abrir la cámara para mirar sus ajustes y antes de pedirle imagen: si falla
+    después (cámara en uso: «Could not run graph», «connect pins»), el cuadro sí salió; si falla
+    antes (no la encuentra, no se deja abrir) o sale enseguida sin decir nada, no."""
+    e = (err or "").lower()
+    if any(k in e for k in ("bindtoobject", "could not find", "could not enumerate",
+                            "could not create", "could not add device")):
+        return False
+    if any(k in e for k in ("run graph", "connect pins", "already in use")):
+        return True
+    return elapsed >= DRIVER_LIVE_WAIT_S
+
+
 def _center_over(top, ref):
     """Coloca la ventana top centrada sobre ref (otra ventana), un poco hacia arriba."""
     try:
@@ -8903,6 +9015,99 @@ def _place_beside(top, ref):
         top.update_idletasks()                   # ya, antes de traerla delante (lift)
     except Exception:
         pass
+
+
+class CamColorDialog:
+    """Ventanita «Color de «cámara»» (clic derecho en su casilla → «Color…»): los mismos
+    deslizadores que la pestaña «Color», atados a esa cámara aunque esté elegida otra, para
+    poder tocarlos también en pantalla completa (encima de todo). Los cambios se ven al
+    instante, también grabando (como en la pestaña)."""
+
+    def __init__(self, parent, lab, cs, on_copy=None, on_driver=None, on_close=None,
+                 topmost=False):
+        self.alive = True
+        self.lab = lab
+        self._on_close = on_close
+        top = self.top = tk.Toplevel(parent)
+        top.title("Color de «{0}»".format(lab))
+        top.configure(bg=PANEL)
+        top.resizable(False, False)
+        try:
+            top.transient(parent)
+            if topmost:
+                top.attributes("-topmost", True)
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        frm = ttk.Frame(top, padding=12)
+        frm.pack(fill="both")
+        ttk.Label(frm, text="Color de «{0}»".format(lab[:40]),
+                  font=("Segoe UI", 11, "bold")).grid(row=0, column=0, columnspan=3, sticky="w",
+                                                     pady=(0, 6))
+        self.sc, self.lbl = {}, {}
+        for r, (key, txt) in enumerate(COLOR_LABELS, start=1):
+            ttk.Label(frm, text=txt, width=11).grid(row=r, column=0, sticky="w", pady=2)
+            sc = ttk.Scale(frm, from_=-100, to=100, orient="horizontal", length=220,
+                           variable=cs.color[key])
+            sc.grid(row=r, column=1, sticky="ew", padx=4)
+            sc.bind("<Double-Button-1>", lambda e, k=key: cs.color[k].set(0.0))
+            lb = SliderBox(frm, sc, -100, 100, width=5)
+            lb.grid(row=r, column=2, sticky="e")
+            slider_controls(sc, -100, 100, 1, box=lb)
+            self.sc[key], self.lbl[key] = sc, lb
+        self._cs = cs
+        self._traces = [(cs.color[k], cs.color[k].trace_add("write", lambda *_a: self._labels()))
+                        for k in COLOR_KEYS]
+        self._labels()
+        ttk.Label(frm, style="Muted.TLabel", wraplength=330, justify="left",
+                  text="Doble clic en un deslizador = valor inicial. Rueda del ratón o flechas para "
+                       "moverlo, o escribe el número en su casilla."
+                  ).grid(row=len(COLOR_LABELS) + 1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        bar = ttk.Frame(frm)
+        bar.grid(row=len(COLOR_LABELS) + 2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        ttk.Button(bar, text="Restablecer", command=cs.reset_color).pack(side="left")
+        if on_copy is not None:
+            ttk.Button(bar, text="Copiar a todas", command=on_copy).pack(side="left", padx=6)
+        self.btn_driver = None
+        if on_driver is not None:
+            self.btn_driver = ttk.Button(bar, text="Driver…", command=on_driver)
+            self.btn_driver.pack(side="left")
+        ttk.Button(bar, text="Cerrar", command=self.close).pack(side="right")
+        _center_over(top, parent)
+
+    def _labels(self):
+        if not self.alive:
+            return
+        try:
+            for k, lb in self.lbl.items():
+                lb.config(text="{0:+.0f}".format(_getf(self._cs.color[k])))
+        except tk.TclError:
+            pass
+
+    def lift(self):
+        try:
+            self.top.deiconify()
+            self.top.lift()
+            self.top.focus_force()
+        except tk.TclError:
+            self.alive = False
+
+    def close(self):
+        if not self.alive:
+            return
+        self.alive = False
+        for var, tid in self._traces:
+            try:
+                var.trace_remove("write", tid)
+            except Exception:
+                pass
+        try:
+            self.top.destroy()
+        except Exception:
+            pass
+        if self._on_close is not None:
+            self._on_close()
 
 
 class AvSyncDialog:
@@ -9367,6 +9572,8 @@ class CamApp:
         self._peak_t = [0.0, 0.0]
         self.editing = None            # etiqueta de la cámara cuyo encuadre se edita sobre la imagen
         self._edit_drag = None
+        self._pv_drag = None             # arrastrar una casilla de la vista previa sobre otra
+        self._color_dlg = None           # ventanita de color de una cámara (CamColorDialog)
         self._ov_btn = None
         self._img_rect = None
         self._run_labels = []          # cámaras que hay en el ffmpeg en marcha (en orden)
@@ -10453,6 +10660,7 @@ class CamApp:
         self.view.bind("<B1-Motion>", self._view_motion)
         self.view.bind("<ButtonRelease-1>", self._view_release)
         self.view.bind("<Double-Button-1>", self._view_double)
+        self.view.bind("<ButtonPress-3>", self._view_menu)       # opciones de esa cámara
         self.view.bind("<MouseWheel>", self._view_wheel)
         self.view.bind("<Button-4>", self._view_wheel)
         self.view.bind("<Button-5>", self._view_wheel)
@@ -10619,12 +10827,13 @@ class CamApp:
         self.w_reset = reg(ttk.Button(d, text="Restablecer esta cámara", command=self._reset_cam))
         self.w_reset.grid(row=7, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6))
 
-    def _scale_row(self, parent, r, text, lo, hi, on_reset):
+    def _scale_row(self, parent, r, text, lo, hi, on_reset, step=1.0):
         ttk.Label(parent, text=text, width=11).grid(row=r, column=0, sticky="w", padx=6, pady=3)
         sc = ttk.Scale(parent, from_=lo, to=hi, orient="horizontal", variable=self._dummy["d"])
         sc.grid(row=r, column=1, sticky="ew", padx=4)
-        lbl = ttk.Label(parent, text="", width=6, anchor="e", style="Muted.TLabel")
+        lbl = SliderBox(parent, sc, lo, hi, width=6)     # el valor: se puede escribir
         lbl.grid(row=r, column=2, sticky="e", padx=(0, 6))
+        slider_controls(sc, lo, hi, step, box=lbl)
         sc.bind("<Double-Button-1>", lambda e: on_reset())
         parent.columnconfigure(1, weight=1)
         return sc, lbl
@@ -10651,14 +10860,16 @@ class CamApp:
         zf = ttk.Labelframe(tab, text="Zoom y posición")
         zf.pack(fill="x", **pad)
         self.sc_zoom, self.lbl_zoom = self._scale_row(
-            zf, 0, "Zoom", 100, 600, lambda: self._cur_set("zoom", 100.0))
+            zf, 0, "Zoom", 100, 600, lambda: self._cur_set("zoom", 100.0), step=5)
         self.sc_cx, self.lbl_cx = self._scale_row(
             zf, 1, "Horizontal", 0, 100, lambda: self._cur_set("cx", 50.0))
         self.sc_cy, self.lbl_cy = self._scale_row(
             zf, 2, "Vertical", 0, 100, lambda: self._cur_set("cy", 50.0))
         self.w_center = ttk.Button(zf, text="Centrar y quitar zoom", command=self._reset_frame)
         self.w_center.grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 6))
-        ttk.Label(zf, style="Muted.TLabel", text="(doble clic en un deslizador = valor inicial)"
+        ttk.Label(zf, style="Muted.TLabel", wraplength=370, justify="left",
+                  text="(doble clic en un deslizador = valor inicial; rueda del ratón o flechas "
+                       "para moverlo; o escribe el número en su casilla)"
                   ).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
         self.w_edit = ttk.Button(tab, text="✂   Encuadrar sobre la imagen…", style="Accent.TButton",
                                  command=self._edit_toggle)
@@ -10682,9 +10893,11 @@ class CamApp:
                                       lambda k=key: self._cur_color_set(k, 0.0))
             self.color_sc[key], self.color_lbl[key] = sc, lbl
             self._live.add(str(sc))
+            self._live.add(str(lbl))                     # (su casilla, también grabando)
         ttk.Label(lf, style="Muted.TLabel", wraplength=370, justify="left",
                   text="Temperatura: + más cálido (naranja), − más frío (azul). Los cambios se "
-                       "ven al instante, también mientras grabas. Doble clic = valor inicial."
+                       "ven al instante, también mientras grabas. Doble clic = valor inicial; "
+                       "rueda del ratón o flechas para moverlo, o escribe el número."
                   ).grid(row=len(COLOR_LABELS), column=0, columnspan=3, sticky="w", padx=6,
                          pady=(2, 4))
         bf = ttk.Frame(tab)
@@ -10733,10 +10946,12 @@ class CamApp:
             ttk.Spinbox(lf, from_=0, to=1000, increment=5, width=5,
                         textvariable=ar.delay).grid(row=1, column=3, sticky="w")
             ttk.Label(lf, text="Ganancia dB").grid(row=2, column=0, sticky="w", padx=6, pady=3)
-            ttk.Scale(lf, from_=-30, to=20, variable=ar.gain, orient="horizontal",
-                      length=180, command=lambda v, a=ar: a.gain.set(int(float(v)))
-                      ).grid(row=2, column=1, columnspan=2, sticky="w")
-            ttk.Label(lf, textvariable=ar.gain, width=4).grid(row=2, column=3, sticky="w")
+            gsc = ttk.Scale(lf, from_=-30, to=20, variable=ar.gain, orient="horizontal",
+                            length=180, command=lambda v, a=ar: a.gain.set(int(float(v))))
+            gsc.grid(row=2, column=1, columnspan=2, sticky="w")
+            gbox = SliderBox(lf, gsc, -30, 20, width=4, follow=ar.gain)
+            gbox.grid(row=2, column=3, sticky="w")
+            slider_controls(gsc, -30, 20, 1, box=gbox)
         pf = ttk.Labelframe(tab, text="Preajustes")
         pf.pack(fill="x", **pad)
         for txt, fn in (("Estéreo normal", self._preset_stereo), ("Mono a ambos", self._preset_mono),
@@ -11936,6 +12151,7 @@ class CamApp:
 
     def _view_press(self, e):
         self._edit_drag = None
+        self._pv_drag = None
         if self.mode == "fullscreen":          # solo mirar: ni elegir ni arrastrar casillas
             self._fs_hint()
             return
@@ -11948,8 +12164,219 @@ class CamApp:
         lab = self._tile_at(e.x, e.y)
         if lab in self.order:
             self._select(lab)
+            if not (self.recording or self.busy):
+                self._pv_drag = {"lab": lab, "x": e.x, "y": e.y, "moving": False, "to": None}
+
+    # ---- clic derecho sobre una cámara (también en pantalla completa): sus opciones
+    def _view_menu(self, e):
+        if self.editing:                                     # encuadrando: solo terminar
+            m = self._menu()
+            m.add_command(label="✔  Terminar el encuadre  (Esc)", command=self._exit_edit)
+            self._popup(m, e)
+            return
+        lab = self._tile_at(e.x, e.y)
+        cs = self.cams.get(lab) if lab in self.order else None
+        if cs is None:
+            return
+        self._select(lab)
+        self._popup(self._cam_menu(lab, cs), e)
+
+    def _menu(self, parent=None):
+        return tk.Menu(parent or self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACC,
+                       activeforeground="white", bd=0, selectcolor=FG)
+
+    def _popup(self, m, e):
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+
+    def _cam_menu(self, lab, cs):
+        """El menú de una cámara: color, driver, encuadre (proporción, zoom, centrar, quitar
+        barras, encuadrar), voltear, girar, captura, destacada, quitar del mosaico, restablecer.
+        Lo mismo que el panel de la derecha (las mismas variables), sin tener que buscarla."""
+        rec = self.recording
+        is_net = bool(self.vdev.get(lab, {}).get("net"))
+        st = lambda ok: "normal" if ok else "disabled"      # noqa: E731
+        m = self._menu()
+        m.add_command(label="«{0}»".format(lab if len(lab) <= 40 else lab[:39] + "…"),
+                      state="disabled")
+        m.add_separator()
+        m.add_command(label="🎨  Color…", command=lambda: self._cam_color_open(lab))
+        m.add_command(label="⚙  Propiedades del driver…", state=st(not rec and not is_net),
+                      command=lambda: self._cam_do(lab, self._driver_dialog, leave_fs=True))
+        m.add_separator()
+        fr = self._menu(m)
+        pr = self._menu(fr)
+        for txt, _val in TILES:
+            pr.add_radiobutton(label=txt, variable=cs.tile, value=txt)
+        pr.add_separator()
+        cur = cs.tile.get()
+        known = cur in [t[0] for t in TILES]
+        pr.add_command(label="Personalizada…" + ("" if known else "  (ahora {0})".format(cur)),
+                       command=lambda: self._cam_custom_ratio(lab))
+        fr.add_cascade(label="Proporción", menu=pr)
+        zm = self._menu(fr)
+        for z in (100, 125, 150, 200, 300, 400):
+            zm.add_radiobutton(label="{0} %".format(z), variable=cs.zoom, value=float(z))
+        fr.add_cascade(label="Zoom", menu=zm)
+        fr.add_command(label="Centrar y quitar zoom (sin tocar la proporción)",
+                       command=lambda: self._cam_center(cs))
+        fr.add_command(label="Quitar barras negras de la imagen",
+                       command=lambda: self._cam_do(lab, self._autocrop))
+        fr.add_separator()
+        fr.add_command(label="✂  Encuadrar sobre la imagen…",
+                       command=lambda: self._cam_do(lab, lambda: self._enter_edit(lab),
+                                                    leave_fs=True))
+        m.add_cascade(label="Encuadre", menu=fr, state=st(not rec))
+        m.add_checkbutton(label="Voltear horizontal", variable=cs.h, state=st(not rec))
+        m.add_checkbutton(label="Voltear vertical", variable=cs.v, state=st(not rec))
+        gm = self._menu(m)
+        for r in ROTS:
+            gm.add_radiobutton(label=r, variable=cs.rot, value=r)
+        m.add_cascade(label="Girar", menu=gm, state=st(not rec))
+        cm = self._menu(m)
+        for md in ["Auto"] + list(cs.modes):
+            cm.add_radiobutton(label=md, variable=cs.mode, value=md)
+        cm.add_separator()
+        cm.add_command(label="Probar modos (abre la cámara con cada uno)…",
+                       command=lambda: self._cam_do(lab, self._probe_modes), state=st(not is_net))
+        m.add_cascade(label="Captura", menu=cm, state=st(not rec))
+        m.add_checkbutton(label="★ Destacada (más grande en «Auto»)", variable=cs.feat,
+                          state=st(not rec))
+        m.add_separator()
+        m.add_command(label="Quitar del mosaico", state=st(not rec and not self.busy),
+                      command=lambda: self._cam_set_use(lab, False))
+        m.add_command(label="Restablecer esta cámara", state=st(not rec),
+                      command=lambda: self._cam_do(lab, self._reset_cam))
+        return m
+
+    @staticmethod
+    def _cam_center(cs):
+        cs.zoom.set(100.0)
+        cs.cx.set(50.0)
+        cs.cy.set(50.0)
+
+    def _cam_do(self, lab, fn, leave_fs=False):
+        """Hace fn con lab elegida (las acciones del panel van sobre la elegida). leave_fs: lo
+        que necesita la ventana normal (el cuadro del driver, de Windows, podría quedar detrás
+        de la pantalla completa; encuadrar sobre la imagen no se hace en pantalla completa)."""
+        if lab not in self.order:
+            return
+        if leave_fs and self.mode == "fullscreen":
+            self.toggle_fullscreen()
+        self._select(lab)
+        fn()
+
+    def _cam_set_use(self, lab, on):
+        """Marca o desmarca una cámara (como su casilla de la lista)."""
+        cs = self.cams.get(lab)
+        if cs is None or self.recording or self.busy or bool(cs.use) == bool(on):
+            return
+        cs.use = bool(on)
+        if on and lab not in self.order:
+            self.order.append(lab)
+            self.sel = lab
+        elif not on and lab in self.order:
+            self.order.remove(lab)
+            if self.sel == lab:
+                self.sel = self.order[0] if self.order else None
+        try:
+            if self.tree.exists(lab):
+                self.tree.set(lab, "use", "☑" if cs.use else "☐")
+        except tk.TclError:
+            pass
+        self._bind_detail()
+        self._on_change()
+
+    def _cam_custom_ratio(self, lab):
+        cs = self.cams.get(lab)
+        if cs is None or self.recording:
+            return
+        from tkinter import simpledialog
+        cur = cs.tile.get()
+        val = simpledialog.askstring(
+            "Proporción de «{0}»".format(lab),
+            "Escribe la proporción de la celda (ancho:alto), p. ej. 2.2:1 o 1008:720:",
+            initialvalue=tile_value(cur) if tile_value(cur) != "auto" else "", parent=self.root)
+        if val is None:
+            return
+        val = val.strip().replace(",", ".").replace("/", ":")
+        if not parse_ratio(val):
+            self._set_status("«{0}» no es una proporción (prueba con algo como 16:9 o 2.2:1)."
+                             .format(val))
+            return
+        cs.tile.set(val)
+
+    def _cam_color_open(self, lab):
+        cs = self.cams.get(lab)
+        if cs is None:
+            return
+        d = self._color_dlg
+        if d is not None and d.alive:
+            if d.lab == lab:
+                d.lift()
+                return
+            d.close()
+        is_net = bool(self.vdev.get(lab, {}).get("net"))
+        self._color_dlg = CamColorDialog(
+            self.root, lab, cs, on_copy=lambda: self._cam_do(lab, self._copy_color_all),
+            on_driver=None if is_net else
+            (lambda: self._cam_do(lab, self._driver_dialog, leave_fs=True)),
+            on_close=lambda: setattr(self, "_color_dlg", None),
+            topmost=self.mode == "fullscreen")
+
+    def _tile_rect(self, lab):
+        """(x0, y0, x1, y1) en la vista de la casilla de lab, o None."""
+        r, m = self._img_rect, self.eng.meta
+        if not r or lab not in self._run_labels or not m.get("tiles") or not m.get("W"):
+            return None
+        i = self._run_labels.index(lab)
+        if i >= len(m["tiles"]):
+            return None
+        ix, iy, nw, _nh = r
+        sc = nw / float(m["W"])
+        tx, ty, tw, th = m["tiles"][i]
+        return ix + tx * sc, iy + ty * sc, ix + (tx + tw) * sc, iy + (ty + th) * sc
+
+    def _pv_drag_draw(self, e):
+        """Mientras se arrastra una casilla: su marco, el de la casilla de destino y un rótulo
+        junto al puntero («⇄ A ↔ B»)."""
+        v, d = self.view, self._pv_drag
+        v.delete("pvdrag")
+        src = self._tile_rect(d["lab"])
+        if src:
+            v.create_rectangle(src[0] + 2, src[1] + 2, src[2] - 2, src[3] - 2, outline=MUTED,
+                               width=2, dash=(6, 4), tags="pvdrag")
+        to = d["to"]
+        dst = self._tile_rect(to) if to else None
+        if dst:
+            v.create_rectangle(dst[0] + 2, dst[1] + 2, dst[2] - 2, dst[3] - 2, outline=OK_GREEN,
+                               width=3, tags="pvdrag")
+        txt = "⇄  «{0}»  ↔  «{1}»".format(d["lab"][:24], to[:24]) if to else \
+            "⇄  «{0}»: suéltala sobre otra cámara".format(d["lab"][:24])
+        tid = v.create_text(e.x + 14, e.y + 16, anchor="nw", text=txt, tags="pvdrag",
+                            fill=OK_GREEN if to else FG, font=("Segoe UI", 10, "bold"))
+        bb = v.bbox(tid)
+        if bb:
+            rid = v.create_rectangle(bb[0] - 6, bb[1] - 3, bb[2] + 6, bb[3] + 3, fill="#000000",
+                                     outline=OK_GREEN if to else LINE, tags="pvdrag")
+            v.tag_lower(rid, tid)
 
     def _view_motion(self, e):
+        d = self._pv_drag
+        if d is not None and not self.editing:
+            if not d["moving"] and abs(e.x - d["x"]) + abs(e.y - d["y"]) < 8:
+                return                          # (aún es un clic)
+            d["moving"] = True
+            to = self._tile_at(e.x, e.y)
+            d["to"] = to if (to in self.order and to != d["lab"]) else None
+            try:
+                self.view.config(cursor="fleur")
+            except tk.TclError:
+                pass
+            self._pv_drag_draw(e)
+            return
         if not (self.editing and self._edit_drag and self._img_rect):
             return
         ew = self._edit_window()
@@ -11967,6 +12394,22 @@ class CamApp:
 
     def _view_release(self, _e):
         self._edit_drag = None
+        d, self._pv_drag = self._pv_drag, None
+        if d is None or not d["moving"]:
+            return
+        self.view.delete("pvdrag")
+        try:
+            self.view.config(cursor="")
+        except tk.TclError:
+            pass
+        a, b = d["lab"], d["to"]
+        if b is None or self.recording or self.busy or a not in self.order or b not in self.order:
+            return
+        i, j = self.order.index(a), self.order.index(b)       # como en el mapa del panel
+        self.order[i], self.order[j] = self.order[j], self.order[i]
+        log.info("mosaico: «%s» y «%s» cambian de sitio (arrastrando en la vista previa)", a, b)
+        self._redraw_map()
+        self._on_change()
 
     def _view_double(self, e):
         if self.mode == "fullscreen":
@@ -12190,18 +12633,85 @@ class CamApp:
 
     # ------------------------------------------------------------ driver de la cámara
     def _driver_dialog(self):
+        """«Propiedades del driver» de la cámara elegida. Primero sin parar la imagen: muchas
+        webcams dejan abrir su cuadro de propiedades mientras otro programa (aquí, la vista
+        previa) sigue usándolas, y entonces cada cambio (exposición, balance de blancos...) se
+        ve al momento en el mosaico. ffmpeg enseña el cuadro antes de intentar abrir la imagen;
+        si la cámara no deja ni eso (sale enseguida, sin haberlo enseñado), se hace como antes:
+        pausar la vista previa, soltar la cámara y abrir el cuadro."""
         cs = self.cams.get(self.sel) if self.sel in self.order else None
         if cs is None or self.recording or self.busy:
             return
         lab = self.sel
         spec = self.vdev[lab]["spec"]
+        p = getattr(self, "_drv_proc", None)
+        if p is not None and p.poll() is None:
+            self._set_status("Ya está abierto el cuadro de propiedades del driver (si no lo ves, "
+                             "mira en la barra de tareas).")
+            return
+        if not (self.previewing and not self.paused):
+            self._driver_dialog_paused(lab, spec)
+            return
+        cmd = driver_dialog_cmd(self.eng.ffmpeg, spec)
+        log.info("driver dialog (sin parar la imagen): %s", subprocess.list2cmdline(cmd))
+        try:
+            p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
+        except Exception as e:
+            log.warning("driver dialog: no arranca (%s)", e)
+            self._driver_dialog_paused(lab, spec)
+            return
+        self._drv_proc = p
+        t0 = time.time()
+        err = []
+        threading.Thread(target=lambda: err.append(p.stderr.read() or b""), daemon=True).start()
+        self._set_status("Abriendo las propiedades del driver de «{0}» (la imagen sigue)…"
+                         .format(lab))
+        st = {"shown": False}
+
+        def check():
+            rc = p.poll()
+            el = time.time() - t0
+            if rc is None:
+                if el >= DRIVER_LIVE_WAIT_S and not st["shown"]:
+                    st["shown"] = True
+                    log.info("driver dialog: abierto sin parar la imagen («%s»)", lab)
+                    self._set_status("Propiedades del driver de «{0}» abiertas: los cambios se ven "
+                                     "al momento en la imagen. Ciérralo con «Aceptar».".format(lab))
+                if el > 900:
+                    p.kill()
+                self.root.after(200, check)
+                return
+            tail = ""
+            for _ in range(10):                          # (lo que dijo ffmpeg, si ya está)
+                if err:
+                    break
+                time.sleep(0.02)
+            if err:
+                tail = err[0].decode("utf-8", "replace")[-400:]
+            self._drv_proc = None
+            if driver_dialog_was_shown(tail, el):
+                log.info("driver dialog: cerrado (rc=%s) %s", rc, tail.strip()[-200:])
+                self._set_status("Propiedades del driver cerradas.")
+                return
+            log.info("driver dialog: esta cámara no deja abrirlo mientras se usa (rc=%s, %.1f s): "
+                     "%s -- se pausa la imagen", rc, el, tail.strip()[-200:])
+            self._driver_dialog_paused(lab, spec, retry=True)
+        self.root.after(150, check)
+
+    def _driver_dialog_paused(self, lab, spec, retry=False):
+        """Lo de siempre: pausar la vista previa, soltar la cámara y abrir el cuadro."""
+        if lab not in self.order or self.recording or self.busy:
+            return
         if not messagebox.askokcancel(
                 "Propiedades del driver",
-                "La vista previa se pausa un momento para que Windows muestre el cuadro de "
-                "propiedades de «{0}».\n\nAjusta lo que necesites (exposición, balance de blancos, "
-                "enfoque…) y ciérralo con Aceptar; la vista previa se reanuda sola.\n\n"
-                "Si el cuadro no aparece, mira detrás de esta ventana. Que el ajuste se conserve "
-                "depende del fabricante de la cámara.".format(lab)):
+                (("«{0}» no deja abrir sus propiedades mientras se está viendo. " if retry
+                  else "") +
+                 "La vista previa se pausa un momento para que Windows muestre el cuadro de "
+                 "propiedades de «{0}».\n\nAjusta lo que necesites (exposición, balance de "
+                 "blancos, enfoque…) y ciérralo con Aceptar; la vista previa se reanuda sola.\n\n"
+                 "Si el cuadro no aparece, mira detrás de esta ventana. Que el ajuste se conserve "
+                 "depende del fabricante de la cámara.").format(lab)):
             return
         was_paused = self.paused
         self.paused = True
@@ -12213,9 +12723,7 @@ class CamApp:
         def work():
             self.eng.release_devices()
             time.sleep(0.6)
-            cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "dshow",
-                   "-show_video_device_dialog", "true", "-i", "video=" + spec,
-                   "-frames:v", "5", "-f", "null", "-"]
+            cmd = driver_dialog_cmd(ffmpeg, spec)
             log.info("driver dialog: %s", subprocess.list2cmdline(cmd))
             r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                                errors="replace", creationflags=CREATE_NO_WINDOW, timeout=900,

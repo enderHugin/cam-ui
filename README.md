@@ -49,6 +49,12 @@ Descarga `cam-ui-instalar.cmd` desde la página del proyecto y ábrelo: no neces
   Cerrar la tapa o suspenderlo a mano sí lo para; a batería, en portátiles con «Modern Standby»,
   Windows solo lo respeta unos minutos.
 - Encuadre, zoom, color y formato de celda por cámara; detección y prueba de modos de captura.
+- En la vista previa: arrastrar una cámara sobre otra las cambia de sitio; clic derecho sobre una
+  (también en pantalla completa) abre sus opciones: color, propiedades del driver, proporción
+  (también personalizada), zoom, centrar, quitar barras negras, encuadrar, voltear, girar,
+  captura, destacada, quitar del mosaico, restablecer. Las propiedades del driver se abren sin
+  parar la imagen cuando la cámara lo permite (los cambios se ven al momento).
+- Deslizadores con rueda del ratón, flechas del teclado y una casilla para escribir el número.
 - Disposición «Auto» del mosaico, con hasta dos cámaras ★ destacadas que salen bastante más
   grandes que las demás; si una cámara cambia de forma (girar el móvil, otra resolución en una
   cámara IP, otro cam-ui encadenado cuyo mosaico cambia), el mosaico se recoloca solo y, mientras

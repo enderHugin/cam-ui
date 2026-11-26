@@ -1,5 +1,22 @@
 # Novedades de cam-ui
 
+## pack 60 — 2026.11.26
+- **Cambiar cámaras de sitio arrastrando en la vista previa.** Pincha una cámara en la imagen y
+  suéltala sobre otra: se cambian de sitio, como en el mapa pequeño del panel. Mientras arrastras,
+  un rótulo dice cuál con cuál. (En pantalla completa no, para no mover nada sin querer.)
+- **Clic derecho sobre una cámara: sus opciones**, también en pantalla completa: color (en una
+  ventanita propia, encima de todo), propiedades del driver, encuadre (proporción, también
+  personalizada; zoom; centrar; quitar barras negras; encuadrar sobre la imagen), voltear, girar,
+  captura (modos y «Probar modos»), destacada, quitar del mosaico y restablecer. Grabando, solo el
+  color (lo demás cortaría la grabación).
+- **Propiedades del driver sin parar la imagen.** Muchas webcams dejan abrir su cuadro de
+  propiedades mientras se están viendo: entonces se abre así, y cada cambio (exposición, balance
+  de blancos, enfoque…) se ve al momento en el mosaico. Si una cámara no lo deja, se hace como
+  antes (pausa un momento la vista previa, avisando).
+- **Deslizadores más cómodos:** la rueda del ratón encima los mueve (con Mayúsculas, más
+  deprisa), las flechas del teclado también (tras hacer clic en ellos), y al lado de cada uno hay
+  una casilla donde escribir el número (zoom, posición, color, ganancia del audio).
+
 ## pack 59 — 2026.11.24
 - **El mapa de «Sincronizar» enseña lo que tarda cada cámara de por sí.** Antes, al acabar, los
   puntos eran «antes de ajustar», con los retardos que ya tuviera cada una: tras una
