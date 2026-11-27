@@ -97,6 +97,23 @@ check(app.v_canvas.get() == camui.ADAPT, "lienzo %r" % app.v_canvas.get())
 s = camui.SyncDialog._snd_text(40)
 check(s == D[CODE]["sync.sound_later"].replace("{ms}", "+40"), "desfase del sonido %r" % s)
 
+# 5. barra mini: reconoce los mensajes de estado del idioma de ahora
+for status, short in ((camui._t("rec.saved", file="C:/v.mp4", mb="12.5"), camui._t("mini.saved", size="12.5 MB")),
+                      (camui._t("app.recording", outfile="C:/v.mp4"), camui._t("mini.recording")),
+                      (camui._t("net.network_output_turned_off"), camui._t("mini.net_off"))):
+    app._mini_set(status)
+    got = app.lbl_ms.cget("text")
+    check(got == (short if len(short) <= 20 else short[:19] + "…"), "mini: %r -> %r" % (status, got))
+
+# 6. plurales y frases que antes se montaban a trozos
+one, many = camui._t("preview.running", n=1), camui._t("preview.running", n=3)
+check(one != many and "1" in one and "3" in many, "plural: %r / %r" % (one, many))
+for k in ("info.final_size", "info.cameras", "info.layout_auto_cols", "mode.receiving_fps_approx",
+          "err.tips_busy", "badmode.factory", "panic.done", "driver.pause_explain"):
+    v = D[CODE].get(k)
+    check(v is not None and (CODE == "es" or v != D["es"].get(k) or k == "info.final_size"),
+          "%s sin traducir" % k)
+
 try:
     app.on_close()
 except Exception:

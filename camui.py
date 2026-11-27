@@ -97,6 +97,11 @@ def lang():
 def _t(key, /, **values):
     return lang().t(key, **values)
 
+
+def _t_prefix(key):
+    """Lo fijo del principio de un texto (hasta su primera variable), para reconocerlo."""
+    return lang().t(key).split("{", 1)[0]
+
 CONFIG = os.path.join(HERE, "config.json")
 DEF_DIR = os.path.join(HERE, "Capturas")
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -9997,9 +10002,9 @@ class CamApp:
         if self._idle_mini():
             if self.previewing:
                 self.previewing = False
-                self._bg(self.eng.release_devices, lambda r: self._set_idle("Listo para grabar."))
+                self._bg(self.eng.release_devices, lambda r: self._set_idle(_t('sync.ready_record')))
             else:
-                self._set_status("Listo para grabar.")
+                self._set_status(_t('sync.ready_record'))
         elif not self.previewing and not self.paused and self.order:
             self._start_preview(auto=True)
 
@@ -10089,19 +10094,19 @@ class CamApp:
 
     def _mini_set(self, txt):
         """Texto de estado de la barra mini (corto)."""
-        m = re.search(r"\(([\d.]+ MB)\)", txt) if txt.startswith("Grabado:") else None
+        m = re.search(r"\(([\d.]+ MB)\)", txt) if txt.startswith(_t_prefix("rec.saved")) else None
         if m:
-            txt = "✓ Grabado · " + m.group(1)
-        elif txt.startswith("Grabando"):
-            txt = "Grabando…"
-        elif txt.startswith("Cámara virtual activa"):
-            txt = "📹 Cámara virtual ON"
-        elif txt.startswith("Cámara virtual desactivada"):
-            txt = "📹 Cámara virtual OFF"
-        elif txt.startswith("En la red:"):
-            txt = "🌐 En la red ON"
-        elif txt.startswith("Salida en red desactivada"):
-            txt = "🌐 En la red OFF"
+            txt = _t("mini.saved", size=m.group(1))
+        elif txt.startswith(_t_prefix("app.recording")):
+            txt = _t("mini.recording")
+        elif txt.startswith(_t_prefix("vcam.virtual_camera_on")):
+            txt = _t("mini.vcam_on")
+        elif txt.startswith(_t_prefix("vcam.virtual_camera_turned_off")):
+            txt = _t("mini.vcam_off")
+        elif txt.startswith(_t_prefix("net.on_network_2")):
+            txt = _t("mini.net_on")
+        elif txt.startswith(_t_prefix("net.network_output_turned_off")):
+            txt = _t("mini.net_off")
         txt = txt.strip()
         if len(txt) > 20:
             txt = txt[:19] + "…"
@@ -10185,18 +10190,18 @@ class CamApp:
         ok, err = startup_set(want)
         if ok:
             self.startup_on = want
-            self._set_status("Se iniciará con Windows." if want
-                             else "Ya no se inicia con Windows.")
+            self._set_status(_t('app.will_start_with_windows') if want
+                             else _t('app.no_longer_starts_with'))
         else:
             log.warning("inicio con Windows: no se pudo cambiar: %s", err)
-            self._set_status("No se pudo cambiar el inicio con Windows: {0}".format(err[-200:]))
+            self._set_status(_t('app.could_not_change_starting', err=err[-200:]))
         self._tray_update(menu=True)
 
     def _tray_boot(self, force=False):
         """Arranca el icono; si falta pystray ofrece instalarlo (una sola vez)."""
         if self._tray_start():
             if force:
-                self._set_status("El icono de la bandeja ya está activo.")
+                self._set_status(_t('tray.tray_icon_already_on'))
             return
         if self._tray_asked and not force:
             return
@@ -10205,7 +10210,7 @@ class CamApp:
         if messagebox.askyesno(
                 _t('tray.tray_icon'),
                 _t('tray.change_mode_normal_compact')):
-            self._set_status("Instalando pystray…")
+            self._set_status(_t('tray.installing_pystray'))
 
             def run():
                 ok, msg = pip_install("pystray")
@@ -10248,9 +10253,8 @@ class CamApp:
                         importlib.invalidate_caches()
                         self._vcam_enable()
                     else:
-                        self._set_status("No se pudo instalar pyvirtualcam.")
-                        messagebox.showwarning("pyvirtualcam", "No se pudo instalar pyvirtualcam.\n\n{0}\n\n"
-                                               "Puedes instalarlo a mano:  pip install pyvirtualcam".format(msg))
+                        self._set_status(_t('app.could_not_install_pyvirtualcam'))
+                        messagebox.showwarning("pyvirtualcam", _t('app.could_not_install_pyvirtualcam_2', msg=msg))
                 elif cmd == "badmode":
                     self._on_badmode(*arg)
                 elif cmd == "cam_offline":
@@ -10259,7 +10263,7 @@ class CamApp:
                     self._on_hub_down(arg)
                 elif cmd == "probe_prog":
                     lab, i, n, m = arg
-                    self._set_status("Probando «{0}»: {1}/{2} · {3}".format(lab, i, n, m))
+                    self._set_status(_t('app.trying', lab=lab, v1=i, v2=n, v3=m))
                 elif cmd == "panic_done":
                     self._panic_done(*arg)
                 elif cmd == "update":
@@ -10272,11 +10276,10 @@ class CamApp:
                         import importlib
                         importlib.invalidate_caches()
                         if self._tray_start():
-                            self._set_status("Icono de la bandeja activado.")
+                            self._set_status(_t('app.tray_icon_turned_on'))
                             continue
-                    self._set_status("No se pudo instalar pystray.")
-                    messagebox.showwarning("pystray", "No se pudo instalar pystray.\n\n{0}\n\n"
-                                           "Puedes instalarlo a mano:  pip install pystray".format(msg))
+                    self._set_status(_t('app.could_not_install_pystray'))
+                    messagebox.showwarning("pystray", _t('app.could_not_install_pystray_2', msg=msg))
                 elif cmd == "phonecam_pkg_installed":
                     ok, msg = arg
                     if ok:
@@ -10284,34 +10287,31 @@ class CamApp:
                         importlib.invalidate_caches()
                         self._phonecam_enable()
                     else:
-                        self._set_status("No se pudo instalar el paquete para «Cámara del móvil».")
+                        self._set_status(_t('app.could_not_install_package'))
                         messagebox.showwarning(
-                            "Cámara del móvil", "No se pudo instalar.\n\n{0}\n\n"
-                            "Puedes instalarlo a mano:  pip install cryptography".format(msg))
+                            _t('app.phone_camera'), _t('app.could_not_install_you', msg=msg))
                 elif cmd == "phonecam_qr_installed":
                     ok, msg, qr_url = arg
                     if ok:
                         import importlib
                         importlib.invalidate_caches()
-                        self._set_status("qrcode instalado.")
+                        self._set_status(_t('app.qrcode_installed'))
                         self._phonecam_show_pair_qr(qr_url)
                     else:
-                        self._set_status("No se pudo instalar qrcode.")
+                        self._set_status(_t('app.could_not_install_qrcode'))
                         messagebox.showwarning(
-                            "Cámara del móvil", "No se pudo instalar.\n\n{0}\n\n"
-                            "Puedes instalarlo a mano:  pip install qrcode".format(msg))
+                            _t('app.phone_camera'), _t('app.could_not_install_you_2', msg=msg))
                 elif cmd == "phonecam_cert_qr_installed":
                     ok, msg, _cert_url = arg
                     if ok:
                         import importlib
                         importlib.invalidate_caches()
-                        self._set_status("qrcode instalado.")
+                        self._set_status(_t('app.qrcode_installed'))
                         self._phonecam_show_cert_dialog()
                     else:
-                        self._set_status("No se pudo instalar qrcode.")
+                        self._set_status(_t('app.could_not_install_qrcode'))
                         messagebox.showwarning(
-                            "Certificado para iPhone/iPad", "No se pudo instalar.\n\n{0}\n\n"
-                            "Puedes instalarlo a mano:  pip install qrcode".format(msg))
+                            _t('app.certificate_for_iphone_ipad'), _t('app.could_not_install_you_2', msg=msg))
             except Exception:
                 log.error("orden de bandeja %s:\n%s", cmd, traceback.format_exc())
 
@@ -10361,7 +10361,7 @@ class CamApp:
             return self._updates_ctl().show(check=check)
         except Exception as e:
             log.error("actualizaciones:\n%s", traceback.format_exc())
-            messagebox.showwarning("Actualizaciones", "No se pudo abrir el actualizador:\n\n{0}".format(e))
+            messagebox.showwarning(_t('app.updates'), _t('app.could_not_open_updater', v0=e))
 
     def update_restart_app(self):
         """Reinicia cam-ui (pasados unos segundos) y cierra este con el guardado de siempre."""
@@ -10369,8 +10369,7 @@ class CamApp:
             update_spawn_restart()
         except Exception as e:
             log.error("actualizar: no se pudo preparar el reinicio: %r", e)
-            messagebox.showwarning("Actualizar", "La actualización está instalada, pero no se "
-                                   "pudo reiniciar sola.\nCierra y abre de nuevo cam-ui.")
+            messagebox.showwarning(_t('app.update'), _t('app.update_installed_but_cam'))
             return
         self.on_close()
 
@@ -10389,7 +10388,7 @@ class CamApp:
     def _cb_exception(self, et, ev, tb):
         log.error("Excepcion en callback de Tk:\n%s", "".join(traceback.format_exception(et, ev, tb)))
         try:
-            self._set_status("Error interno (ver camui.log): {0}".format(ev))
+            self._set_status(_t('app.internal_error_see_camui', ev=ev))
         except Exception:
             pass
 
@@ -10417,7 +10416,7 @@ class CamApp:
         self.v_sync = t(value=_pair_label(SYNCS, c.get("sync", "clock")))
         self.v_hub = tk.BooleanVar(value=hub_from_cfg(c))
         self.v_dir = t(value=c.get("dir", DEF_DIR))
-        self.v_name = t(value=c.get("name", "Multivista"))
+        self.v_name = t(value=c.get("name", _t("rec.default_name")))
         vs = (self._cfg.get("vcam") or {}).get("size") if isinstance(self._cfg.get("vcam"), dict) else None
         try:
             vsz = (int(vs[0]), int(vs[1]))
@@ -11052,7 +11051,7 @@ class CamApp:
         e_ipport.bind("<FocusOut>", self._on_ipport_commit)
         self.frm_ipurl = ttk.Frame(nf)
         self.frm_ipurl.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 2))
-        self._set_link_list(self.frm_ipurl, "No está activa.", [])
+        self._set_link_list(self.frm_ipurl, _t('out.not_on'), [])
         ttk.Label(nf, style="Muted.TLabel", wraplength=380, justify="left",
                   text=_t('out.size_maximum_sent_with')
                   ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
@@ -11065,7 +11064,7 @@ class CamApp:
         e_pcport.bind("<FocusOut>", self._on_phonecamport_commit)
         self.frm_phonecamurl = ttk.Frame(pf)
         self.frm_phonecamurl.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
-        self._set_link_list(self.frm_phonecamurl, "No está activa.", [])
+        self._set_link_list(self.frm_phonecamurl, _t('out.not_on'), [])
         self.lbl_phonecamqr = ttk.Label(pf)
         self.lbl_phonecamqr.grid(row=2, column=0, padx=6, pady=(2, 4), sticky="w")
         ttk.Label(pf, style="Muted.TLabel", wraplength=380, justify="left",
@@ -11130,14 +11129,14 @@ class CamApp:
 
     # ------------------------------------------------------------ dispositivos
     def _refresh_devices(self, first=False):
-        self._set_status("Buscando dispositivos…")
+        self._set_status(_t('app.looking_for_devices'))
 
         def work():
             return list_devices()
 
         def done(res):
             if isinstance(res, Exception):
-                self._set_status("No se pudieron listar los dispositivos: {0}".format(res))
+                self._set_status(_t('app.could_not_list_devices', res=res))
                 return
             known = self._known_alts()
             self.vdevs, self.adevs = res
@@ -11194,12 +11193,12 @@ class CamApp:
         self._redraw_map()
         self._update_info()
         if not self.vdevs:
-            self._set_status("No se detectaron cámaras. Comprueba ffmpeg.exe y las cámaras.")
+            self._set_status(_t('app.no_cameras_found_check'))
         elif self.order and not self.paused and not self.previewing:
-            self._set_status("Iniciando la vista previa…")
+            self._set_status(_t('app.starting_preview'))
             self.root.after(300, self._auto_preview)
         else:
-            self._set_status("Listo. Marca al menos una cámara.")
+            self._set_status(_t('app.ready_tick_at_least'))
 
     def _add_net_cam(self):
         self._net_cam_dialog()
@@ -11285,9 +11284,9 @@ class CamApp:
             top.destroy()
             self._refresh_devices()
             if editing:
-                self._set_status("Cámara de red «{0}» actualizada.".format(name))
+                self._set_status(_t('netcam.network_camera_updated', name=name))
             else:
-                self._set_status("Cámara de red «{0}» añadida; márcala en la lista para usarla.".format(name))
+                self._set_status(_t('netcam.network_camera_added_tick', name=name))
 
         ttk.Button(bar, text=_t('netcam.cancel'), command=top.destroy).pack(side="right")
         ttk.Button(bar, text=_t('netcam.save') if cur else _t('netcam.add'), command=ok).pack(side="right", padx=(0, 6))
@@ -11310,7 +11309,7 @@ class CamApp:
             return
         self.net_cams.pop(lab, None)
         self._refresh_devices()
-        self._set_status("Cámara de red quitada.")
+        self._set_status(_t('netcam.network_camera_removed'))
 
     def _fill_tree(self):
         self.tree.delete(*self.tree.get_children())
@@ -11375,21 +11374,21 @@ class CamApp:
         cs = self.cams.get(self.sel)
         if not cs or self.previewing or self.busy:
             if self.previewing:
-                self._set_status("Detén la vista previa para detectar los modos de la cámara.")
+                self._set_status(_t('modes.stop_preview_detect_camera'))
             return
         if self.vdev.get(self.sel, {}).get("net"):
-            self._set_status("Las cámaras de red no tienen modos de captura que detectar.")
+            self._set_status(_t('modes.network_cameras_have_no'))
             return
         spec = self.vdev[self.sel]["spec"]
         lab = self.sel
-        self._set_status("Consultando modos de captura de «{0}»…".format(lab))
+        self._set_status(_t('modes.asking_for_its_capture', lab=lab))
 
         def done(res):
             modes = res if isinstance(res, list) else []
             cs.modes = modes
             self.w_mode.config(values=["Auto"] + modes)
-            self._set_status("{0} modos detectados.".format(len(modes)) if modes
-                             else "La cámara no informó de modos; se usará «Auto».")
+            self._set_status(_t("modes.detected", n=len(modes)) if modes
+                             else _t('app.camera_reported_no_modes'))
 
         self._bg(lambda: list_camera_modes(spec), done)
 
@@ -11399,22 +11398,19 @@ class CamApp:
         cs = self.cams.get(self.sel)
         if not cs or self.busy or self.recording or self.sel not in self.vdev:
             if self.recording:
-                self._set_status("No se pueden probar modos mientras se graba.")
+                self._set_status(_t('modes.modes_cannot_be_tried'))
             return
         if self.vdev.get(self.sel, {}).get("net"):
-            self._set_status("Las cámaras de red no tienen modos de captura que probar.")
+            self._set_status(_t('modes.network_cameras_have_no_2'))
             return
         spec, lab = self.vdev[self.sel]["spec"], self.sel
         if not messagebox.askokcancel(
-                "Probar modos",
-                "Se abrirá «{0}» con cada uno de sus modos unos segundos (puede tardar medio minuto) "
-                "para ver cuáles funcionan y cuántos fps dan de verdad.\n\nLa vista previa se detiene "
-                "mientras tanto. Con poca luz las cámaras baratas bajan los fps: enciende una luz antes "
-                "de probar.".format(lab)):
+                _t('modes.try_modes'),
+                _t('modes.will_be_opened_with', lab=lab)):
             return
         resume = self.previewing and not self.paused
         self.previewing = False
-        self._set_status("Probando los modos de «{0}»…".format(lab))
+        self._set_status(_t('modes.trying_modes', lab=lab))
 
         def work():
             self.eng.release_devices()
@@ -11427,7 +11423,7 @@ class CamApp:
             if isinstance(res, tuple):
                 self._probe_apply(lab, cs, *res)
             else:
-                self._set_status("No se pudieron probar los modos: {0}".format(res))
+                self._set_status(_t('app.could_not_try_modes', res=res))
             if resume and not self._idle_mini():
                 self._start_preview(auto=True)
 
@@ -11496,7 +11492,7 @@ class CamApp:
             if o is not None and o is not cs:
                 for k, v in vals.items():
                     o.color[k].set(v)
-        self._set_status("Color copiado a todas las cámaras.")
+        self._set_status(_t('app.colour_copied_all_cameras'))
 
     def _cur_set(self, name, value):
         cs = self.cams.get(self.sel)
@@ -11654,12 +11650,10 @@ class CamApp:
             others = [l for l in self.order if l != lab and l in self.cams and self.cams[l].feat.get()]
             if len(others) >= FEAT_MAX:
                 self._quiet_set(cs.feat, False)
-                self._set_status("Como mucho {0} cámaras destacadas: quítale la ★ a «{1}» o a «{2}» "
-                                 "primero.".format(FEAT_MAX, others[0], others[1]))
+                self._set_status(_t('app.at_most_featured_cameras', v0=FEAT_MAX, others=others[0], others2=others[1]))
                 return
             if parse_structure(self.v_struct.get(), len(self.order)) is not None:
-                self._set_status("★ «{0}» destacada: se nota con la disposición «Auto» (la "
-                                 "primera de la galería).".format(lab))
+                self._set_status(_t('app.featured_shows_with_auto', lab=lab))
         self._on_change()
 
     # ------------------------------------------------------------ galería de disposiciones
@@ -11741,7 +11735,7 @@ class CamApp:
         g = self._geometry()
         self._redraw_gallery(g)
         if not g:
-            c.create_text(Wc / 2, Hc / 2, text="Marca al menos una cámara", fill=MUTED,
+            c.create_text(Wc / 2, Hc / 2, text=_t('app.tick_at_least_one'), fill=MUTED,
                           font=("Segoe UI", 9))
             return
         s = min((Wc - 10) / float(g["W"]), (Hc - 10) / float(g["H"]))
@@ -11851,7 +11845,7 @@ class CamApp:
         except Exception:
             pass
         if self._ov_btn is None:
-            self._ov_btn = ttk.Button(self.view, text="✔  Listo  (Esc)", style="Accent.TButton",
+            self._ov_btn = ttk.Button(self.view, text=_t('app.done_esc'), style="Accent.TButton",
                                       command=self._exit_edit)
             self._ov_btn.place(relx=1.0, x=-12, y=12, anchor="ne")
         self._bind_detail()
@@ -11876,14 +11870,13 @@ class CamApp:
         self._refresh_buttons()
         self._redraw_map()
         self._update_info()
-        self._set_status("Encuadre aplicado.")
+        self._set_status(_t('app.framing_applied'))
         self._last_fc = -1
         if not self.recording:
             self._schedule_restart()
 
     def _edit_hint(self):
-        return ("Encuadre de «{0}»: arrastra el marco para moverlo, rueda del ratón = zoom, "
-                "Esc para terminar.".format(self.editing))
+        return (_t('app.framing_drag_frame_move', editing=self.editing))
 
     def _calc_img_rect(self):
         m = self.eng.meta
@@ -11926,8 +11919,7 @@ class CamApp:
             v.create_rectangle(X0, Y0, X1, Y1, outline=WARN, width=2, tags="ov")
             tid = v.create_text(ix + 14, iy + 12, anchor="nw", fill=WARN, tags="ov",
                                 font=("Consolas", 10, "bold"),
-                                text="ENCUADRE · {0} · zoom {1:.0f}% · celda {2:.2f}:1".format(
-                                    self.editing[:28], _getf(cs.zoom, 100), T))
+                                text=_t('app.framing_zoom_cell_1', editing=self.editing[:28], zoom=_getf(cs.zoom, 100), v2=T))
             bb = v.bbox(tid)
             if bb:
                 rid = v.create_rectangle(bb[0] - 6, bb[1] - 3, bb[2] + 6, bb[3] + 3, fill="#000000",
@@ -12260,8 +12252,7 @@ class CamApp:
             return
         val = val.strip().replace(",", ".").replace("/", ":")
         if not parse_ratio(val):
-            self._set_status("«{0}» no es una proporción (prueba con algo como 16:9 o 2.2:1)."
-                             .format(val))
+            self._set_status(_t('cammenu.not_ratio_try_something', val=val))
             return
         cs.tile.set(val)
 
@@ -12311,7 +12302,7 @@ class CamApp:
             v.create_rectangle(dst[0] + 2, dst[1] + 2, dst[2] - 2, dst[3] - 2, outline=OK_GREEN,
                                width=3, tags="pvdrag")
         txt = "⇄  «{0}»  ↔  «{1}»".format(d["lab"][:24], to[:24]) if to else \
-            "⇄  «{0}»: suéltala sobre otra cámara".format(d["lab"][:24])
+            _t('app.drop_on_another_camera', lab=d['lab'][:24])
         tid = v.create_text(e.x + 14, e.y + 16, anchor="nw", text=txt, tags="pvdrag",
                             fill=OK_GREEN if to else FG, font=("Segoe UI", 10, "bold"))
         bb = v.bbox(tid)
@@ -12447,7 +12438,7 @@ class CamApp:
         old = self._run_color.get(lab) or color_params({})
         if new["temp_on"] != old["temp_on"]:
             if self.recording:                               # el filtro no está en el grafo
-                self._set_status("La temperatura de color se activará en la próxima grabación.")
+                self._set_status(_t('app.colour_temperature_will_apply'))
                 new["temp_on"] = old["temp_on"]
                 new["temperature"] = old["temperature"]
             else:
@@ -12472,7 +12463,7 @@ class CamApp:
         self.paused = True
         self.previewing = False
         self._refresh_buttons()
-        self._set_status("Buscando barras negras en «{0}»… (unos segundos)".format(lab))
+        self._set_status(_t('app.looking_for_black_bars', lab=lab))
         ffmpeg = self.eng.ffmpeg
         fps = self._fps()
         mode = cs.mode.get()                 # las variables de Tk solo se leen en el hilo principal
@@ -12487,11 +12478,11 @@ class CamApp:
         def done(res):
             self.paused = was_paused
             if isinstance(res, Exception) or res is None:
-                self._set_status("No se pudo medir la imagen de «{0}».".format(lab))
+                self._set_status(_t('app.could_not_measure_image', lab=lab))
             else:
                 fr = bars_to_frame(res, bool(cs.h.get()), bool(cs.v.get()), cs.rot_deg())
                 if fr is None:
-                    self._set_status("«{0}» no tiene barras negras: ya llena toda la celda.".format(lab))
+                    self._set_status(_t('app.has_no_black_bars', lab=lab))
                 else:
                     ratio, zoom, cx, cy = fr
                     cs.tile.set(ratio)
@@ -12499,8 +12490,7 @@ class CamApp:
                     cs.cx.set(round(cx, 1))
                     cs.cy.set(round(cy, 1))
                     x, y, w, h, iw, ih = res
-                    self._set_status("Barras quitadas en «{0}»: el contenido real mide {1}×{2} ({3:.3f}:1) "
-                                     "dentro de {4}×{5}.".format(lab, w, h, w / float(h), iw, ih))
+                    self._set_status(_t('app.bars_removed_in_real', lab=lab, v1=w, v2=h, v3=w / float(h), iw=iw, ih=ih))
             if not was_paused:
                 self._schedule_restart(300)
 
@@ -12533,7 +12523,7 @@ class CamApp:
         self.paused = True
         self.previewing = False
         self._refresh_buttons()
-        self._set_status("Midiendo dispositivos… (unos 30 s)")
+        self._set_status(_t('diag.measuring_devices_about_30'))
         ffmpeg = self.eng.ffmpeg
 
         def work():
@@ -12544,11 +12534,11 @@ class CamApp:
         def done(res):
             self.paused = was_paused
             if isinstance(res, Exception):
-                txt = "El diagnóstico falló: {0}".format(res)
+                txt = _t('app.diagnostics_failed', res=res)
             else:
                 txt = res
             log.info("diagnóstico:\n%s", txt)
-            self._set_status("Diagnóstico terminado.")
+            self._set_status(_t('app.diagnostics_finished'))
             self._show_report(txt)
             if not was_paused:
                 self._schedule_restart(300)
@@ -12572,7 +12562,7 @@ class CamApp:
         def copy():
             self.root.clipboard_clear()
             self.root.clipboard_append(txt)
-            self._set_status("Informe copiado al portapapeles.")
+            self._set_status(_t('app.report_copied_clipboard'))
         ttk.Button(bar, text=_t('diag.copy_report'), command=copy).pack(side="left")
         ttk.Button(bar, text=_t('diag.close'), command=top.destroy).pack(side="right")
         box_frame = ttk.Frame(top)
@@ -12601,8 +12591,7 @@ class CamApp:
         spec = self.vdev[lab]["spec"]
         p = getattr(self, "_drv_proc", None)
         if p is not None and p.poll() is None:
-            self._set_status("Ya está abierto el cuadro de propiedades del driver (si no lo ves, "
-                             "mira en la barra de tareas).")
+            self._set_status(_t('driver.driver_properties_box_already'))
             return
         if not (self.previewing and not self.paused):
             self._driver_dialog_paused(lab, spec)
@@ -12620,8 +12609,7 @@ class CamApp:
         t0 = time.time()
         err = []
         threading.Thread(target=lambda: err.append(p.stderr.read() or b""), daemon=True).start()
-        self._set_status("Abriendo las propiedades del driver de «{0}» (la imagen sigue)…"
-                         .format(lab))
+        self._set_status(_t('driver.opening_driver_properties_image', lab=lab))
         st = {"shown": False}
 
         def check():
@@ -12631,8 +12619,7 @@ class CamApp:
                 if el >= DRIVER_LIVE_WAIT_S and not st["shown"]:
                     st["shown"] = True
                     log.info("driver dialog: abierto sin parar la imagen («%s»)", lab)
-                    self._set_status("Propiedades del driver de «{0}» abiertas: los cambios se ven "
-                                     "al momento en la imagen. Ciérralo con «Aceptar».".format(lab))
+                    self._set_status(_t('driver.driver_properties_open_changes', lab=lab))
                 if el > 900:
                     p.kill()
                 self.root.after(200, check)
@@ -12647,7 +12634,7 @@ class CamApp:
             self._drv_proc = None
             if driver_dialog_was_shown(tail, el):
                 log.info("driver dialog: cerrado (rc=%s) %s", rc, tail.strip()[-200:])
-                self._set_status("Propiedades del driver cerradas.")
+                self._set_status(_t('driver.driver_properties_closed'))
                 return
             log.info("driver dialog: esta cámara no deja abrirlo mientras se usa (rc=%s, %.1f s): "
                      "%s -- se pausa la imagen", rc, el, tail.strip()[-200:])
@@ -12659,20 +12646,15 @@ class CamApp:
         if lab not in self.order or self.recording or self.busy:
             return
         if not messagebox.askokcancel(
-                "Propiedades del driver",
-                (("«{0}» no deja abrir sus propiedades mientras se está viendo. " if retry
-                  else "") +
-                 "La vista previa se pausa un momento para que Windows muestre el cuadro de "
-                 "propiedades de «{0}».\n\nAjusta lo que necesites (exposición, balance de "
-                 "blancos, enfoque…) y ciérralo con Aceptar; la vista previa se reanuda sola.\n\n"
-                 "Si el cuadro no aparece, mira detrás de esta ventana. Que el ajuste se conserve "
-                 "depende del fabricante de la cámara.").format(lab)):
+                _t('driver.driver_properties'),
+                (_t("driver.busy_while_viewing", name=lab) + " " if retry else "") +
+                _t("driver.pause_explain", name=lab)):
             return
         was_paused = self.paused
         self.paused = True
         self.previewing = False
         self._refresh_buttons()
-        self._set_status("Abriendo las propiedades del driver…")
+        self._set_status(_t('driver.opening_driver_properties'))
         ffmpeg = self.eng.ffmpeg
 
         def work():
@@ -12689,9 +12671,9 @@ class CamApp:
         def done(res):
             self.paused = was_paused
             if isinstance(res, Exception):
-                self._set_status("No se pudo abrir el cuadro del driver: {0}".format(res))
+                self._set_status(_t('app.could_not_open_driver', res=res))
             else:
-                self._set_status("Propiedades del driver cerradas.")
+                self._set_status(_t('app.driver_properties_closed'))
             if not was_paused:
                 self._schedule_restart(200)
 
@@ -12704,22 +12686,25 @@ class CamApp:
         if cs is None:
             txt = ""
         elif _MODE_PARSE.match(cs.mode.get() or ""):
-            txt = "Modo fijo elegido por ti: {0}".format(cs.mode.get())
+            txt = _t("mode.fixed", mode=cs.mode.get())
         else:
-            txt = "Auto: se elige el modo más rápido que ofrezca la cámara"
+            txt = _t("mode.auto")
             idx = self._run_labels.index(self.sel) if self.sel in self._run_labels else -1
             sizes, fpss = self.eng.input_info()
             sz, fps = sizes.get(idx), fpss.get(idx)
             if (self.previewing or self.recording) and sz:
-                txt = "Auto → recibiendo {0}×{1}{2}".format(
-                    sz[0], sz[1], (" a ~{0:.0f} fps" if self.eng.hub_on else " a {0:g} fps").format(fps)
-                    if fps else "")
+                if not fps:
+                    txt = _t("mode.receiving", w=sz[0], h=sz[1])
+                elif self.eng.hub_on:
+                    txt = _t("mode.receiving_fps_approx", w=sz[0], h=sz[1], fps="{0:.0f}".format(fps))
+                else:
+                    txt = _t("mode.receiving_fps", w=sz[0], h=sz[1], fps="{0:g}".format(fps))
                 ms = (getattr(self, "_chain_info", None) or {}).get(self.sel)
                 if ms:
-                    txt += " · alineada con su PC (se adelanta {0} ms)".format(ms)
+                    txt += " · " + _t("mode.aligned_ahead", ms=ms)
                 it = self.hub.info().get(idx) if self.eng.hub_on else None
                 if it and it[2].reader == "camui":
-                    txt += " · alineada con su PC por la hora de captura"
+                    txt += " · " + _t("mode.aligned_clock")
             elif getattr(cs, "auto_mode", None):
                 txt = "Auto → {0}".format(cs.auto_mode)
         if txt != getattr(self, "_mode_now_txt", None):
@@ -12749,12 +12734,9 @@ class CamApp:
                 log.warning("cámara lenta: «%s» %s %.1f fps con %s", lab,
                             "da" if hub else "anuncia", f, sizes.get(idx))
                 if hub:     # con el concentrador ya no frena a nadie: solo se ve a saltos ella
-                    self._set_status("⚠ «{0}» solo da {1:.0f} fps con este modo (el resto del "
-                                     "mosaico no se frena). Cámaras → Captura → «Detectar» y elige "
-                                     "uno de 30 fps.".format(lab, f))
+                    self._set_status(_t('app.only_gives_fps_with', lab=lab, v1=f))
                 else:
-                    self._set_status("⚠ «{0}» solo da {1:g} fps con este modo y frena el mosaico. "
-                                     "Cámaras → Captura → «Detectar» y elige uno de 30 fps.".format(lab, f))
+                    self._set_status(_t('app.only_gives_fps_with_2', lab=lab, v1=f))
         changed = False
         if getattr(self, "_shape_warned", None) is None:
             self._shape_warned = set()
@@ -12795,9 +12777,7 @@ class CamApp:
                     # con bandas negras (_yuv_fit) y se recoloca al parar
                     self._shape_warned.add(lab)
                     log.info("«%s» cambia de forma grabando: %s (casilla %s)", lab, sz, slot)
-                    self._set_status("«{0}» ha cambiado de forma ({1}×{2}): mientras se graba se ve "
-                                     "entera, con bandas negras; el mosaico se recoloca al parar."
-                                     .format(lab, sz[0], sz[1]))
+                    self._set_status(_t('app.has_changed_shape_while', lab=lab, sz=sz[0], sz2=sz[1]))
                 continue
             if sz and cs is not None and cs.src != sz:
                 known_by_mode = mode_size(cs.mode.get()) is not None
@@ -12811,7 +12791,7 @@ class CamApp:
                 self._hub_restart_t = time.time()
             self.save_config()
             if not self.recording and not self.editing:
-                self._set_status("Ajustando el mosaico al formato real de las cámaras…")
+                self._set_status(_t('app.fitting_mosaic_cameras_real'))
                 self._on_change()
             elif self.editing:
                 self._schedule_restart()
@@ -12847,8 +12827,7 @@ class CamApp:
 
     def _on_hub_down(self, lab):
         if self.previewing or self.recording:
-            self._set_status("«{0}» sin señal: el resto sigue igual y ella se vuelve a "
-                             "conectar sola en cuanto pueda.".format(lab))
+            self._set_status(_t('app.has_no_signal_rest', lab=lab))
 
     # ------------------------------------------------------------ audio presets
     def _first_adev(self, idx=0):
@@ -12879,7 +12858,7 @@ class CamApp:
         for side in "LR":
             self.arow[side].chan.set(_pair_label(CHANS, "mix"))
         if b == NO_AUDIO or a == b:
-            self._set_status("Solo hay un dispositivo de audio: elige otro en la salida derecha.")
+            self._set_status(_t('app.there_only_one_audio'))
 
     # ------------------------------------------------------------ plan / config
     def _fps(self):
@@ -13067,22 +13046,29 @@ class CamApp:
                 self.root.after_cancel(self._restart_job)
             self._restart_job = self.root.after(900, self._auto_preview)
             if self.previewing:
-                self._set_status("Aplicando cambios…")
+                self._set_status(_t('app.applying_changes'))
 
     def _update_info(self):
         g = self._geometry()
         if not g:
-            self.lbl_size.config(text="Sin cámaras marcadas.")
+            self.lbl_size.config(text=_t('app.no_cameras_ticked'))
             return
+        parts = [_t("info.final_size", w=g["W"], h=g["H"]), _t("info.cameras", n=len(g["labels"]))]
         if g.get("feat"):
-            txt = "Vídeo final {0}×{1} · {2} cámara(s) · reparto auto con {3} destacada{4} ★".format(
-                g["W"], g["H"], len(g["labels"]), g["feat"][0], "s" if g["feat"][0] > 1 else "")
+            parts.append(_t("info.layout_featured", n=g["feat"][0]))
         else:
-            txt = "Vídeo final {0}×{1} · {2} cámara(s) · reparto {3}{4}{5}".format(
-                g["W"], g["H"], len(g["labels"]), structure_label(g["rows"]),
-                " (auto)" if g["auto"] else "", " por columnas" if g["transpose"] else "")
+            rows = structure_label(g["rows"])
+            if g["auto"] and g["transpose"]:
+                parts.append(_t("info.layout_auto_cols", rows=rows))
+            elif g["auto"]:
+                parts.append(_t("info.layout_auto", rows=rows))
+            elif g["transpose"]:
+                parts.append(_t("info.layout_cols", rows=rows))
+            else:
+                parts.append(_t("info.layout", rows=rows))
+        txt = " · ".join(parts)
         if g["W"] * g["H"] > 8300000:
-            txt += "\nAviso: más de 4K; la grabación puede ir lenta. Baja el ancho."
+            txt += "\n" + _t("info.over_4k")
         self.lbl_size.config(text=txt)
 
     # ------------------------------------------------------------ modo de captura automático
@@ -13106,7 +13092,8 @@ class CamApp:
                 if not ok and port and not self.eng._abort and ":" + port in err:
                     log.warning("%s no conecta; se arranca sin ella:\n%s", what, err[-300:])
                     plan.pop(key, None)
-                    self._tray_q.append((kind, "ffmpeg no pudo conectar con {0} (¿cortafuegos?).".format(what)))
+                    self._tray_q.append((kind, _t("engine.vcam_no_connect") if key == "vcam"
+                                         else _t("engine.net_no_connect")))
                     res = self.eng.start(plan, **kw)
                     ok, err = res if isinstance(res, tuple) else (False, str(res))
             if not ok:
@@ -13120,14 +13107,14 @@ class CamApp:
                 re.search(r"127\.0\.0\.1|tcp://|connection (?:refused|reset|timed out)", err, re.I):
             log.warning("la salida de la cámara virtual no conecta; se arranca sin ella:\n%s", err[-300:])
             plan.pop("vcam", None)
-            self._tray_q.append(("vcam_off", "ffmpeg no pudo conectar con la cámara virtual (¿cortafuegos?)."))
+            self._tray_q.append(("vcam_off", _t("engine.vcam_no_connect")))
             res = self.eng.start(plan, **kw)
         ok, err = res if isinstance(res, tuple) else (False, str(res))
         if not ok and plan.get("ipout") and not self.eng._abort and \
                 re.search(r"127\.0\.0\.1|tcp://|connection (?:refused|reset|timed out)", err, re.I):
             log.warning("la salida en red no conecta; se arranca sin ella:\n%s", err[-300:])
             plan.pop("ipout", None)
-            self._tray_q.append(("ip_off", "ffmpeg no pudo conectar con la salida en red (¿cortafuegos?)."))
+            self._tray_q.append(("ip_off", _t("engine.net_no_connect")))
             res = self.eng.start(plan, **kw)
         for _ in range(5):
             ok, err = res if isinstance(res, tuple) else (False, str(res))
@@ -13355,15 +13342,15 @@ class CamApp:
         plan = self._plan()
         if plan is None:
             if not auto:
-                messagebox.showwarning("Sin cámaras", "Marca al menos una cámara en la pestaña Cámaras.")
+                messagebox.showwarning(_t('app.no_cameras'), _t('app.tick_at_least_one_2'))
             return
         self.save_config()
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
         self._run_plan, self._tinfo_t = plan, 0.0
         self._slow_warned = set()
         self._stuck_warned = False     # cada intento nuevo merece su propio plazo (ver _on_stuck)
-        self._set_status("Abriendo dispositivos…" if retry == 0 else
-                         "Reintentando (los dispositivos tardan en liberarse)… {0}".format(retry))
+        self._set_status(_t('app.opening_devices') if retry == 0 else
+                         _t('app.retrying_devices_take_while', retry=retry))
 
         def done(res):
             ok, err = res if isinstance(res, tuple) else (False, str(res))
@@ -13371,15 +13358,15 @@ class CamApp:
                 self.previewing = True
                 self._last_fc = -1
                 self._set_status(self._edit_hint() if self.editing else
-                                 "Vista previa en marcha · {0} cámara(s).".format(len(plan["cams"])) +
+                                 _t("preview.running", n=len(plan["cams"])) +
                                  self._resync_note())
             elif retry < 3 and retry > 0:
                 self.root.after(900, lambda: self._start_preview(retry + 1))
             else:
                 self.previewing = False
                 self.paused = True          # evita reintentar en bucle; F5 para reanudar
-                self._set_status("No se pudo iniciar. Pulsa F5 para reintentar.")
-                self._start_failed("Error al iniciar la vista previa", plan, err)
+                self._set_status(_t('app.could_not_start_press'))
+                self._start_failed(_t('app.error_starting_preview'), plan, err)
             self._refresh_buttons()
 
         self._bg(lambda: self._engine_start(plan), done)
@@ -13391,28 +13378,20 @@ class CamApp:
         if kind == "video" and plan:
             for i, c in enumerate(plan.get("cams", [])):
                 if c.get("spec") == spec:
-                    who = "No se pudo abrir la cámara «{0}».\n\n".format(plan["labels"][i])
+                    who = _t("err.open_camera", name=plan["labels"][i]) + "\n\n"
                     break
             else:
-                who = "No se pudo abrir una cámara.\n\n"
+                who = _t("err.open_a_camera") + "\n\n"
         elif kind == "audio":
-            who = "No se pudo abrir un dispositivo de audio.\n\n"
+            who = _t("err.open_audio") + "\n\n"
         tips = ""
         if is_busy_error(err):
-            tips = ("\n\nCausas habituales:\n"
-                    "• Otra aplicación (Teams, OBS, el navegador, otra copia de CamUI o un "
-                    "ffmpeg.exe que se quedó abierto) está usando la cámara.\n"
-                    "• Varias cámaras USB en el mismo hub o puerto: no hay ancho de banda para todas. "
-                    "Repártelas en puertos distintos o baja la resolución/FPS.\n"
-                    "• La cámara no admite el modo elegido: pon «Captura: Auto».\n"
-                    "Se reintentó varias veces con esperas crecientes.")
+            tips = "\n\n" + _t("err.tips_busy")
         elif is_mode_error(err):
-            tips = ("\n\nLa cámara rechazó el modo de captura (tamaño / fps / formato), también el "
-                    "de fábrica del driver. Pulsa «Detectar» y «Probar modos» en la pestaña Encuadre.")
+            tips = "\n\n" + _t("err.tips_mode")
         else:
-            tips = ("\n\nSi una cámara no admite el modo elegido, pon «Captura: Auto». "
-                    "Prueba también «Marcas del dispositivo».")
-        return who + (err or "ffmpeg terminó al iniciar.") + tips
+            tips = "\n\n" + _t("err.tips_other")
+        return who + (err or _t("err.ffmpeg_ended")) + tips
 
     def _start_failed(self, title, plan, err):
         msg = self._explain_start_error(plan, err)
@@ -13421,8 +13400,7 @@ class CamApp:
             return
         pids = [p for p in ffmpeg_pids() if p != os.getpid()]
         if pids:
-            q = (msg + "\n\nHay {0} proceso(s) ffmpeg.exe abiertos (PID {1}) que pueden estar reteniendo "
-                 "la cámara. ¿Cerrarlos y reintentar?").format(len(pids), ", ".join(map(str, pids)))
+            q = msg + "\n\n" + _t("err.ffmpeg_left_open", n=len(pids), pids=", ".join(map(str, pids)))
             if messagebox.askyesno(title, q):
                 for p in pids:
                     try:
@@ -13455,9 +13433,12 @@ class CamApp:
                 self._loading = False
         if self.sel == lab:
             self.w_mode.config(values=["Auto"] + cs.modes)
-        self._set_status("«{0}» no admite el modo {1}: {2}.".format(
-            lab, bad, "probando {0}".format(new) if new else "se usa el modo de fábrica del driver"
-            if new == "" else "vuelve a Auto"))
+        if new:
+            self._set_status(_t("badmode.trying", name=lab, mode=bad, new=new))
+        elif new == "":
+            self._set_status(_t("badmode.factory", name=lab, mode=bad))
+        else:
+            self._set_status(_t("badmode.auto", name=lab, mode=bad))
 
     def _net_watch(self):
         """(motor de siempre; hilo de Tk, en cada _tick) Una cámara de red «sin señal» -- no
@@ -13481,8 +13462,7 @@ class CamApp:
                 lab = labels[i] if i < len(labels) else cams[i].get("spec")
                 log.warning("«%s» se ha cortado con el mosaico en marcha: «sin señal» hasta que "
                             "vuelva a responder", lab)
-                self._set_status("«{0}» se ha cortado: en cuanto vuelva a responder, se "
-                                 "incorpora sola.".format(lab))
+                self._set_status(_t('app.has_dropped_out_as', lab=lab))
         if self._net_plan is not plan:
             self._net_plan, self._net_wait = plan, NET_RETRY_SECONDS
         while self._net_back:
@@ -13495,12 +13475,10 @@ class CamApp:
                 self._net_wait = min(60.0, self._net_wait * 1.5)
                 continue
             if self.recording:
-                self._set_status("«{0}» vuelve a responder: entrará en el mosaico al parar de "
-                                 "grabar.".format(", ".join(back)))
+                self._set_status(_t('app.responds_again_will_join', back=', '.join(back)))
                 continue
             log.info("cámaras de red que vuelven a responder: %s; se reinicia el mosaico", back)
-            self._set_status("«{0}» vuelve a responder: se incorpora al mosaico…".format(
-                ", ".join(back)))
+            self._set_status(_t('app.responds_again_joining_mosaic', back=', '.join(back)))
             self._restart_preview()
             return
         if self._net_probing or self.busy or self.recording or \
@@ -13535,13 +13513,9 @@ class CamApp:
                   _is_net_spec(self._run_plan["cams"][i].get("spec"))
                   for i, l in enumerate((self._run_plan or {}).get("labels") or []))
         if net and not self.eng.hub_on:
-            self._set_status("«{0}» no responde: sigue el resto, con un aviso «sin señal» en su "
-                             "sitio; se vuelve a intentar sola cada {1:g} s.".format(
-                                 lab, NET_RETRY_SECONDS))
+            self._set_status(_t('app.does_not_respond_rest', lab=lab, v1=NET_RETRY_SECONDS))
             return
-        self._set_status("«{0}» no se pudo conectar: sigue el resto, con un aviso «sin señal» "
-                         "en su sitio. Para reintentarla, vuelve a aplicar algún cambio (o "
-                         "«⚠ Reiniciar»).".format(lab))
+        self._set_status(_t('app.could_not_connect_rest', lab=lab))
 
     def panic_reset(self):
         """Botón de pánico: cierra TODOS los ffmpeg (también los huérfanos que retienen una
@@ -13554,11 +13528,10 @@ class CamApp:
             self._sync, self.recording = None, False
             self._rec_parts = []
             self._lock(False)
-            self.phonecam.sync.set("error", "Cancelado (se reiniciaron las cámaras).")
+            self.phonecam.sync.set("error", _t('app.cancelled_cameras_were_restarted'))
         if self.recording and not messagebox.askyesno(
-                "Reiniciar cámaras",
-                "Se está grabando. Reiniciar corta la grabación (lo grabado hasta ahora se guarda)."
-                "\n\n¿Continuar?"):
+                _t('app.restart_cameras'),
+                _t('app.recording_in_progress_restarting')):
             return
         self._panic_on = True
         rec_path, rec_final = (self.rec_path, self.rec_final) if self.recording else (None, None)
@@ -13572,7 +13545,7 @@ class CamApp:
             except Exception:
                 pass
             self._restart_job = None
-        self._set_status("Reiniciando: cerrando todos los ffmpeg…")
+        self._set_status(_t('app.restarting_closing_all_ffmpeg'))
         log.warning("PÁNICO: cerrando ffmpeg")
 
         def work():
@@ -13609,9 +13582,9 @@ class CamApp:
         self.busy = False
         self.rec_clock0 = None
         self._lock(False)
-        msg = "Reiniciado: {0} proceso(s) ffmpeg cerrado(s).".format(n)
+        msg = _t("panic.done", n=n)
         if shown:
-            msg += " Vídeo guardado: {0}".format(shown)
+            msg += " " + _t("panic.video_saved", file=shown)
         self._set_idle(msg)
         if not self._idle_mini():
             self.root.after(300, lambda: None if (self.busy or self.previewing or self.recording)
@@ -13620,7 +13593,7 @@ class CamApp:
     def _stop_preview(self):
         self.previewing = False
         # también suelta las cámaras del motor nuevo: pausar es para liberarlas
-        self._bg(self.eng.release_devices, lambda r: self._set_idle("Vista previa detenida."))
+        self._bg(self.eng.release_devices, lambda r: self._set_idle(_t('app.preview_stopped')))
 
     def _restart_preview(self):
         self._restart_job = None
@@ -13648,11 +13621,11 @@ class CamApp:
             self._last_fc = -1
             if ok:
                 self._set_status(self._edit_hint() if self.editing else
-                                 "Cambios aplicados." + self._resync_note())
+                                 _t('app.changes_applied') + self._resync_note())
             else:
                 self.paused = True
-                self._set_idle("No se pudo aplicar el cambio. Pulsa F5 para reintentar.")
-                self._start_failed("No se pudo aplicar el cambio", plan, err)
+                self._set_idle(_t('app.could_not_apply_change'))
+                self._start_failed(_t('app.could_not_apply_change_2'), plan, err)
             self._refresh_buttons()
 
         self._bg(work, done)
@@ -13661,12 +13634,12 @@ class CamApp:
     def toggle_vcam(self, *_a):
         """Activa / desactiva la cámara virtual (el mosaico como cámara para Teams, Zoom, Meet…)."""
         if self.busy:
-            self._set_status("Un momento…")
+            self._set_status(_t('vcam.just_moment'))
             return
         if self.vcam_on:
             self._vcam_disable()
         elif self.recording:
-            self._set_status("Para activar la cámara virtual termina antes la grabación.")
+            self._set_status(_t('vcam.turn_on_virtual_camera'))
             self._refresh_buttons()
         else:
             self._vcam_enable()
@@ -13677,7 +13650,7 @@ class CamApp:
         if mod is None:
             if quiet:
                 log.info("cámara virtual: falta pyvirtualcam")
-                self._later_status("Cámara virtual: falta pyvirtualcam (usa el botón 📹 para instalarlo).")
+                self._later_status(_t('vcam.virtual_camera_pyvirtualcam_missing'))
             else:
                 self._vcam_offer_install()
             self._refresh_buttons()
@@ -13689,15 +13662,13 @@ class CamApp:
             log.error("cámara virtual: no se pudo abrir: %s", e)
             self._refresh_buttons()
             if quiet:
-                self._later_status("No se pudo abrir la cámara virtual (¿OBS instalado?). Ver el botón 📹.")
+                self._later_status(_t('vcam.could_not_open_virtual'))
             else:
-                messagebox.showerror("Cámara virtual", "No se pudo abrir la cámara virtual.\n\n{0}\n\n{1}".format(
-                    str(e).strip()[-600:], VCAM_INSTALL_HELP))
+                messagebox.showerror(_t('vcam.virtual_camera'), _t('vcam.could_not_open_virtual_2', strip=str(e).strip()[-600:], v1=VCAM_INSTALL_HELP))
             return False
         self.vcam_on = True
         self.paused = False
-        self._vcam_changed("Cámara virtual activa: «{0}» {1}×{2}.".format(
-            self.vcam.device or "OBS Virtual Camera", w, h), quiet)
+        self._vcam_changed(_t('vcam.virtual_camera_on', camera=self.vcam.device or 'OBS Virtual Camera', v1=w, v2=h), quiet)
         return True
 
     def _vcam_disable(self, why=None):
@@ -13705,7 +13676,7 @@ class CamApp:
             return
         self.vcam_on = False
         self.vcam.release()
-        self._vcam_changed(why or "Cámara virtual desactivada.", False)
+        self._vcam_changed(why or _t('vcam.virtual_camera_turned_off'), False)
         if why:
             self._later_status(why)
 
@@ -13728,15 +13699,13 @@ class CamApp:
 
     def _vcam_offer_install(self):
         if self._vcam_asked and not messagebox.askyesno(
-                "Cámara virtual", "pyvirtualcam sigue sin estar instalado. ¿Intentar instalarlo de nuevo?"):
+                _t('vcam.virtual_camera'), _t('vcam.pyvirtualcam_still_not_installed')):
             return
         self._vcam_asked = True
         if messagebox.askyesno(
-                "Cámara virtual",
-                "Para ofrecer el mosaico como una cámara más en Teams, Zoom, Meet… hace falta el "
-                "paquete «pyvirtualcam» (pequeño; se instala con pip y necesita internet) y tener "
-                "OBS Studio instalado (gratis; no hace falta abrirlo).\n\n¿Instalar pyvirtualcam ahora?"):
-            self._set_status("Instalando pyvirtualcam…")
+                _t('vcam.virtual_camera'),
+                _t('vcam.offer_mosaic_as_one')):
+            self._set_status(_t('vcam.installing_pyvirtualcam'))
 
             def run():
                 ok, msg = pip_install("pyvirtualcam")
@@ -13757,12 +13726,12 @@ class CamApp:
     def toggle_ipout(self, *_a):
         """Activa / desactiva la salida en red (ver el mosaico desde otro equipo o móvil)."""
         if self.busy:
-            self._set_status("Un momento…")
+            self._set_status(_t('net.just_moment'))
             return
         if self.ipout_on:
             self._ip_disable()
         elif self.recording:
-            self._set_status("Para activar la salida en red termina antes la grabación.")
+            self._set_status(_t('net.turn_on_network_output'))
             self._refresh_buttons()
         else:
             self._ip_enable()
@@ -13784,7 +13753,7 @@ class CamApp:
         ips = _local_ips()
         urls = [_http_url(ip, port, "/") for ip in ips]
         if not urls:
-            urls = [_http_url("(la IP de este equipo)", port, "/")]
+            urls = [_http_url(_t('net.this_computer_ip'), port, "/")]
         urls.append(_http_url(socket.gethostname(), port, "/"))
         if _host_local():
             urls.append(_http_url(_host_local(), port, "/"))
@@ -13821,7 +13790,7 @@ class CamApp:
         predeterminado de este mismo equipo, para comprobar rápido que responde."""
         try:
             webbrowser.open(url)
-            self._set_status("Abriendo en el navegador: {0}".format(url))
+            self._set_status(_t('net.opening_in_browser', url=url))
         except Exception:
             pass
 
@@ -13856,27 +13825,21 @@ class CamApp:
         que hacer nada más). VLC no tiene AirPlay integrado -- solo existe como función del
         propio macOS, así que no sirve para el Windows al que apunta cam-ui."""
         if not self.ipout_on:
-            self._set_status("Antes activa «En la red».")
+            self._set_status(_t('net.turn_on_on_network'))
             return
         url = "http://127.0.0.1:{0}/stream.mjpg".format(self.ipsrv.port)
         vlc = _find_vlc()
         if not vlc:
             if messagebox.askyesno(
-                    "Abrir en VLC",
-                    "No se encontró VLC instalado en este equipo.\n\n"
-                    "VLC puede reproducir este vídeo y, desde su propio menú Reproducción -> "
-                    "Renderizador, enviarlo a un Chromecast de la misma red sin que cam-ui tenga "
-                    "que hacer nada más.\n\n¿Abrir la página de descarga de VLC "
-                    "(videolan.org)?"):
+                    _t('net.open_in_vlc'),
+                    _t('net.vlc_was_not_found')):
                 webbrowser.open("https://www.videolan.org/vlc/")
             return
         try:
             subprocess.Popen([vlc, url], creationflags=CREATE_NO_WINDOW)
-            self._set_status("Abriendo en VLC… (allí: Reproducción -> Renderizador, para "
-                             "enviarlo a un Chromecast)")
+            self._set_status(_t('net.opening_in_vlc_there'))
         except Exception as e:
-            messagebox.showerror("Abrir en VLC", "No se pudo abrir VLC.\n\n{0}".format(
-                str(e).strip()[-300:]))
+            messagebox.showerror(_t('net.open_in_vlc'), _t('net.could_not_open_vlc', strip=str(e).strip()[-300:]))
 
     def _ip_enable(self, quiet=False):
         """Abre la salida en red. quiet: al arrancar, sin diálogos. True si queda activa. El
@@ -13889,24 +13852,23 @@ class CamApp:
         except OSError as e:
             log.error("salida en red: no se pudo abrir: %s", e)
             self._refresh_buttons()
-            msg = "No se pudo abrir el puerto {0} (¿ya está en uso? prueba con otro en «Ajustes»).".format(port)
+            msg = _t('net.could_not_open_port', port=port)
             if quiet:
                 self._later_status(msg)
             else:
-                messagebox.showerror("En la red", msg + "\n\n{0}".format(str(e).strip()[-300:]))
+                messagebox.showerror(_t('net.on_network'), msg + "\n\n{0}".format(str(e).strip()[-300:]))
             return False
         except Exception as e:
             log.error("salida en red: no se pudo abrir: %s", e)
             self._refresh_buttons()
             if quiet:
-                self._later_status("No se pudo activar la salida en red.")
+                self._later_status(_t('net.could_not_turn_on'))
             else:
-                messagebox.showerror("En la red", "No se pudo activar la salida en red.\n\n{0}".format(
-                    str(e).strip()[-300:]))
+                messagebox.showerror(_t('net.on_network'), _t('net.could_not_turn_on_2', strip=str(e).strip()[-300:]))
             return False
         self.ipout_on = True
         self.paused = False
-        self._ip_changed("En la red: {0}".format(self._ip_urls(port)), quiet)
+        self._ip_changed(_t('net.on_network_2', port=self._ip_urls(port)), quiet)
         return True
 
     def _ip_disable(self, why=None):
@@ -13914,7 +13876,7 @@ class CamApp:
             return
         self.ipout_on = False
         self.ipsrv.release()
-        self._ip_changed(why or "Salida en red desactivada.", False)
+        self._ip_changed(why or _t('net.network_output_turned_off'), False)
         if why:
             self._later_status(why)
 
@@ -13923,10 +13885,10 @@ class CamApp:
         self._tray_update(menu=True)
         if getattr(self, "frm_ipurl", None) is not None:
             if self.ipout_on:
-                self._set_link_list(self.frm_ipurl, "Disponible en:",
+                self._set_link_list(self.frm_ipurl, _t('net.available_at'),
                                     self._ip_url_list(self.ipsrv.port))
             else:
-                self._set_link_list(self.frm_ipurl, "No está activa.", [])
+                self._set_link_list(self.frm_ipurl, _t('net.not_on'), [])
         if quiet:
             return                         # al arrancar: la primera vista previa ya la incluye
         self.save_config()
@@ -13999,7 +13961,7 @@ class CamApp:
         ips = _local_ips()
         urls = [_https_url(ip, self.phonecam.port, _add_path()) for ip in ips]
         if not urls:
-            urls = [_https_url("(la IP de este equipo)", self.phonecam.port, _add_path())]
+            urls = [_https_url(_t('phone.this_computer_ip'), self.phonecam.port, _add_path())]
         # el nombre: «.local» es el que entienden iPhone/iPad (y muchos Android) sin más
         urls.append(_https_url(_host_local() or socket.gethostname(), self.phonecam.port,
                                _add_path()))
@@ -14033,12 +13995,11 @@ class CamApp:
         except OSError as e:
             log.error("cámara del móvil: no se pudo abrir: %s", e)
             self._refresh_buttons()
-            msg = "No se pudo abrir el puerto {0} (¿ya está en uso? prueba con otro en «Ajustes»).".format(
-                self._phonecam_port())
+            msg = _t('phone.could_not_open_port', _phonecam_port=self._phonecam_port())
             if quiet:
                 self._later_status(msg)
             else:
-                messagebox.showerror("Cámara del móvil", msg + "\n\n{0}".format(str(e).strip()[-300:]))
+                messagebox.showerror(_t('phone.phone_camera'), msg + "\n\n{0}".format(str(e).strip()[-300:]))
             return False
         except ModuleNotFoundError as e:
             # «cryptography» (certificado HTTPS, ver _phonecam_ensure_cert) va en requirements.txt
@@ -14051,8 +14012,7 @@ class CamApp:
             self._refresh_buttons()
             if quiet:
                 self._later_status(
-                    "Cámara del móvil: falta el paquete «{0}» -- ábrela en Ajustes para "
-                    "instalarlo.".format(pkg))
+                    _t('phone.phone_camera_package_missing', pkg=pkg))
             else:
                 self._phonecam_offer_install(pkg)
             return False
@@ -14060,10 +14020,9 @@ class CamApp:
             log.error("cámara del móvil: no se pudo activar: %s", e)
             self._refresh_buttons()
             if quiet:
-                self._later_status("No se pudo activar la cámara del móvil.")
+                self._later_status(_t('phone.could_not_turn_on'))
             else:
-                messagebox.showerror("Cámara del móvil", "No se pudo activar.\n\n{0}".format(
-                    str(e).strip()[-300:]))
+                messagebox.showerror(_t('phone.phone_camera'), _t('phone.could_not_turn_on_2', strip=str(e).strip()[-300:]))
             return False
         self.phonecam_on = True
         self._phonecam_changed(quiet)
@@ -14073,12 +14032,9 @@ class CamApp:
         """Mismo patrón que pystray/pyvirtualcam (ver _tray_boot/_vcam_offer_install): pregunta,
         instala con pip en un hilo aparte, y si sale bien reintenta sola la activación."""
         if messagebox.askyesno(
-                "Cámara del móvil",
-                "Para esto hace falta el paquete «{0}» (certificado HTTPS; se instala con pip y "
-                "necesita internet). No parece estar instalado -- puede pasar si cam-ui se ha ido "
-                "actualizando solo desde una versión antigua, porque eso solo cambia el programa, "
-                "nunca los paquetes de Python que usa.\n\n¿Instalarlo ahora?".format(pkg)):
-            self._set_status("Instalando {0}…".format(pkg))
+                _t('phone.phone_camera'),
+                _t('phone.this_needs_package_https', pkg=pkg)):
+            self._set_status(_t('phone.installing', pkg=pkg))
 
             def run():
                 ok, msg = pip_install(pkg)
@@ -14098,8 +14054,8 @@ class CamApp:
         if quiet:
             return
         self.save_config()
-        self._set_status("Cámara del móvil activada." if self.phonecam_on else
-                         "Cámara del móvil desactivada.")
+        self._set_status(_t('phone.phone_camera_turned_on') if self.phonecam_on else
+                         _t('phone.phone_camera_turned_off'))
 
     def _phonecam_show_pair_qr(self, url):
         """Un móvil llegó a «/add» y ya tiene el permiso de su cámara (ver /add/ready): se
@@ -14115,13 +14071,13 @@ class CamApp:
         self.lbl_phonecamqr.config(image=photo or "")
         if photo is not None:
             self._set_link_list(self.frm_phonecamurl,
-                                "Un móvil está esperando: apunta su cámara a este código.", [])
+                                _t('phone.phone_waiting_point_its'), [])
         else:
             # sin el paquete «qrcode» no hay imagen que mostrar, pero la dirección en texto
             # sigue valiendo igual (se puede teclear a mano en el móvil, aunque sea incómodo) --
             # y, ya que aparece, que sea clicable también aquí mismo, por si se quiere probar
             self._set_link_list(self.frm_phonecamurl,
-                                "Un móvil está esperando: abre esto a mano en su navegador:", [url])
+                                _t('phone.phone_waiting_open_this'), [url])
         self._phonecam_pair_shown_at = time.time()
         self._phonecam_popup_qr(url, photo)
 
@@ -14140,11 +14096,9 @@ class CamApp:
         _phonecam_offer_install. Solo hace falta volver a pedir la imagen y reabrir el mismo
         diálogo con la misma URL: la sesión de emparejamiento sigue esperando igual."""
         if messagebox.askyesno(
-                "Cámara del móvil",
-                "Para mostrar el código QR (en vez de la dirección en texto, incómoda de "
-                "teclear a mano) hace falta el paquete «qrcode» (pequeño; se instala con pip y "
-                "necesita internet). No parece estar instalado.\n\n¿Instalarlo ahora?"):
-            self._set_status("Instalando qrcode…")
+                _t('phone.phone_camera'),
+                _t('phone.show_qr_code_instead')):
+            self._set_status(_t('phone.installing_qrcode'))
 
             def run():
                 ok, msg = pip_install("qrcode")
@@ -14164,9 +14118,8 @@ class CamApp:
         corre junto al resto de servidores de PhoneCamHub (ver PhoneCamHub.start)."""
         if not self.phonecam_on or not self.phonecam.active:
             messagebox.showinfo(
-                "Certificado para iPhone/iPad",
-                "Primero activa «Cámara del móvil» (botón de arriba) -- este certificado se "
-                "sirve junto con ella.")
+                _t('phone.certificate_for_iphone_ipad'),
+                _t('phone.first_turn_on_phone'))
             return
         url = self._phonecam_cert_url()
         photo = self._phonecam_qr_photo(url)
@@ -14185,11 +14138,9 @@ class CamApp:
         """Mismo patrón que _phonecam_offer_qr_install, pero para el QR del certificado: al
         terminar, en vez de reabrir el emparejamiento, reabre este mismo diálogo."""
         if messagebox.askyesno(
-                "Certificado para iPhone/iPad",
-                "Para mostrar el código QR (en vez de la dirección en texto, incómoda de "
-                "teclear a mano) hace falta el paquete «qrcode» (pequeño; se instala con pip y "
-                "necesita internet). No parece estar instalado.\n\n¿Instalarlo ahora?"):
-            self._set_status("Instalando qrcode…")
+                _t('phone.certificate_for_iphone_ipad'),
+                _t('phone.show_qr_code_instead')):
+            self._set_status(_t('phone.installing_qrcode'))
 
             def run():
                 ok, msg = pip_install("qrcode")
@@ -14219,11 +14170,10 @@ class CamApp:
             if self.phonecam_on:
                 self._set_link_list(
                     self.frm_phonecamurl,
-                    "Accede a cualquiera de estas direcciones desde el navegador del móvil "
-                    "para añadir la cámara de tu móvil a la lista de dispositivos:",
+                    _t('phone.go_any_these_addresses'),
                     self._phonecam_add_url_list())
             else:
-                self._set_link_list(self.frm_phonecamurl, "No está activa.", [])
+                self._set_link_list(self.frm_phonecamurl, _t('phone.not_on'), [])
         self._phonecam_close_popup_qr()
 
     def _on_phonecampass(self, *_a):
@@ -14254,8 +14204,7 @@ class CamApp:
             # graba o hay una operación en curso. El móvil sigue mandando fotogramas aparte (su
             # sesión no caduca por esto); si se quiere esa conexión en concreto, basta con
             # recargar la página del móvil cuando termine la grabación.
-            self._set_status("Móvil «{0}» conectado, pero hay que esperar a que termine la "
-                             "grabación para añadirlo al mosaico.".format(name))
+            self._set_status(_t('phone.phone_connected_but_you', name=name))
             return
         label = self._phonecam_reusable(name, url)
         again = label is not None
@@ -14289,9 +14238,8 @@ class CamApp:
         self._redraw_map()
         self._update_info()
         self._on_change()
-        self._set_status(("Móvil «{0}» conectado de nuevo: en su sitio del mosaico." if again else
-                          "Móvil «{0}» conectado: añadido al mosaico.").format(
-                              cam.get("name") or name))
+        self._set_status(_t("phone.connected_again", name=cam.get("name") or name) if again else
+                         _t("phone.connected_added", name=cam.get("name") or name))
 
     def _phonecam_reusable(self, name, url):
         """La casilla de una conexión anterior de este mismo móvil (mismo nombre, sin el «#2» que
@@ -14323,14 +14271,14 @@ class CamApp:
     # ------------------------------------------------------------ grabación
     def toggle_rec(self):
         if getattr(self, "_sync", None) is not None:
-            self._set_status("Espera a que termine la sincronización (o ciérrala).")
+            self._set_status(_t('rec.wait_for_sync_finish'))
             return
         if self.busy:
             if self.mode == "mini":
-                self._set_status("Un momento…")
+                self._set_status(_t('rec.just_moment'))
             return
         if self.editing and not self.recording:
-            self._set_status("Termina el encuadre (Esc o «Listo») antes de grabar.")
+            self._set_status(_t('rec.finish_framing_esc_or'))
             return
         if self.recording:
             self._stop_rec()
@@ -14340,13 +14288,13 @@ class CamApp:
     def _start_rec(self):
         plan = self._plan()
         if plan is None:
-            self._set_status("No hay cámaras marcadas: elígelas en el modo normal.")
+            self._set_status(_t('rec.no_cameras_ticked_choose'))
             return
         folder = self.v_dir.get() or DEF_DIR
         try:
             os.makedirs(folder, exist_ok=True)
         except Exception as e:
-            messagebox.showerror("Carpeta no válida", str(e))
+            messagebox.showerror(_t('rec.invalid_folder'), str(e))
             return
         base = re.sub(r'[\\/:*?"<>|]', "_", (self.v_name.get() or "Multivista").strip()) or "Multivista"
         ext = "mkv" if self.v_container.get() == "mkv" else "mp4"
@@ -14360,7 +14308,7 @@ class CamApp:
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
         self._run_plan, self._tinfo_t = plan, 0.0
         self.previewing = False
-        self._set_status("Abriendo dispositivos para grabar…")
+        self._set_status(_t('rec.opening_devices_record'))
 
         def work():
             self.eng.stop()
@@ -14376,10 +14324,10 @@ class CamApp:
                 self.rec_clock0 = None
                 self._last_fc = -1
                 self._lock(True)
-                self._set_status("Grabando → {0}".format(outfile))
+                self._set_status(_t('app.recording', outfile=outfile))
             else:
-                messagebox.showerror("Error al grabar", self._explain_start_error(plan, err))
-                self._set_idle("No se pudo grabar.")
+                messagebox.showerror(_t('app.error_recording'), self._explain_start_error(plan, err))
+                self._set_idle(_t('app.could_not_record'))
                 self.root.after(500, lambda: self._start_preview(1))
             self._refresh_buttons()
 
@@ -14406,7 +14354,7 @@ class CamApp:
                  lab, size[0], size[1], len(self._rec_parts), part, m["W"], m["H"])
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
         self._run_plan, self._tinfo_t = plan, 0.0
-        self._set_status("«{0}» se ha girado: recolocando el mosaico sin dejar de grabar…".format(lab))
+        self._set_status(_t('rec.has_been_rotated_rearranging', lab=lab))
 
         def work():
             self.eng.stop()
@@ -14416,19 +14364,18 @@ class CamApp:
             ok, err = res if isinstance(res, tuple) else (False, str(res))
             if ok and self.recording:
                 self.rec_path = part
-                self._set_status("Grabando → {0} (mosaico recolocado: «{1}» girada)".format(
-                    self.rec_final, lab))
+                self._set_status(_t('app.recording_mosaic_rearranged_rotated', rec_final=self.rec_final, lab=lab))
             elif self.recording:
                 log.error("trozo nuevo de la grabación: %s", err)
                 self._rec_parts.pop()
-                self._set_status("No se pudo seguir grabando tras recolocar: se guarda lo grabado.")
+                self._set_status(_t('app.could_not_keep_recording'))
                 self._stop_rec()
             self._refresh_buttons()
 
         self._bg(work, done)
 
     def _stop_rec(self):
-        self._set_status("Finalizando el vídeo…")
+        self._set_status(_t('rec.finishing_video'))
         self.recording = False
         self.previewing = False
         path, final = self.rec_path, self.rec_final
@@ -14450,10 +14397,10 @@ class CamApp:
             ok, shown, msg = res if isinstance(res, tuple) else (False, path, str(res))
             if ok:
                 mb = os.path.getsize(shown) / 1048576.0
-                self._set_status("Grabado: {0}  ({1:.1f} MB){2}".format(
-                    shown, mb, "  · " + msg if msg else ""))
+                self._set_status(_t("rec.saved", file=shown, mb="{0:.1f}".format(mb)) +
+                                 ("  · " + msg if msg else ""))
             else:
-                self._set_status("ERROR: no se pudo cerrar el vídeo. {0}".format(msg))
+                self._set_status(_t('app.error_could_not_close', msg=msg))
             self.root.after(500, lambda: self._start_preview(1))
 
         self._bg(work, done)
@@ -14462,7 +14409,7 @@ class CamApp:
         """Varios trozos (ver _rec_resegment): se juntan en un MKV y, si hace falta, a MP4."""
         parts = [p for p in parts if os.path.isfile(p) and os.path.getsize(p) > 0]
         if not parts:
-            return False, final, "no se creó el archivo"
+            return False, final, _t('rec.file_was_not_created')
         if len(parts) == 1:
             return self._finalize(parts[0], final)
         joined = final if final.lower().endswith(".mkv") else final[:-4] + ".rec.mkv"
@@ -14470,25 +14417,23 @@ class CamApp:
             joined = joined[:-4] + ".junto.mkv"
         ok, msg = concat_recordings(parts, joined, self.eng.ffmpeg)
         if not ok:
-            return True, parts[0], "no se pudieron juntar los {0} trozos; quedan en la carpeta " \
-                                   "({1})".format(len(parts), msg[-120:])
+            return True, parts[0], _t('rec.pieces_could_not_be', n=len(parts), msg=msg[-120:])
         return self._finalize(joined, final)
 
     def _finalize(self, tmp, final):
         """(ok, ruta_final, mensaje). Pasa el MKV temporal al contenedor elegido."""
         if not (tmp and os.path.isfile(tmp) and os.path.getsize(tmp) > 0):
-            return False, tmp, "no se creó el archivo"
+            return False, tmp, _t('rec.file_was_not_created')
         if tmp == final:
             return True, final, ""
         ok, msg = remux_recording(tmp, final, self.eng.ffmpeg)
         if ok:
             return True, final, ""
-        return True, tmp, "MP4 no generado; el vídeo quedó en MKV"
+        return True, tmp, _t('rec.mp4_not_created_video')
 
     # ------------------------------------------------------------ sincronizar (claqueta)
     def _avsync_summary(self):
-        return "Ahora: ajuste A/V {0:+d} ms · búfer {1} ms".format(_geti(self.v_avoff),
-                                                            max(0, _geti(self.v_abuf, 50)))
+        return _t('sync.now_v_offset_ms', v_avoff=_geti(self.v_avoff), v_abuf=max(0, _geti(self.v_abuf, 50)))
 
     def avsync_open(self, near=None):
         """La ventanita «Sincronía audio ↔ vídeo» (AvSyncDialog): una sola; si ya está, delante."""
@@ -14940,9 +14885,9 @@ class CamApp:
             datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))
         try:
             Image.fromarray(np.ascontiguousarray(frame[:, :, ::-1])).save(path)
-            self._set_status("Foto guardada: {0}".format(path))
+            self._set_status(_t('rec.photo_saved', path=path))
         except Exception as e:
-            self._set_status("No se pudo guardar la foto: {0}".format(e))
+            self._set_status(_t('rec.could_not_save_photo', v0=e))
 
     # ------------------------------------------------------------ estado de la UI
     def _lock(self, locked):
@@ -15018,7 +14963,7 @@ class CamApp:
 
     def _set_status(self, txt):
         self.status.config(text="  " + txt)
-        if self.mode == "mini" and not self.recording or txt.startswith("Grabado"):
+        if self.mode == "mini" and not self.recording or txt.startswith(_t_prefix("rec.saved")):
             self._mini_set(txt)
 
     # ------------------------------------------------------------ bucle de UI
@@ -15048,7 +14993,7 @@ class CamApp:
                 # barra de estado, sin bloquear nada, por si hay alguien mirando
                 if not self.phonecam_on and self._phonecam_enable(quiet=True):
                     self.save_config()
-                    self._set_status("Un móvil encendió «Cámara del móvil» para añadirse.")
+                    self._set_status(_t('app.phone_turned_on_phone'))
             while self._bgq:
                 done, res, gen = self._bgq.popleft()
                 if gen != self._gen:
@@ -15085,7 +15030,7 @@ class CamApp:
                 self._update_timer()
         except Exception as e:          # la UI nunca debe morir por un fallo de dibujo
             log.error("error en _tick:\n%s", traceback.format_exc())
-            self.status.config(text="  (aviso) {0}".format(e))
+            self.status.config(text=_t('app.notice', v0=e))
         self.root.after(33, self._tick)
 
     def _draw_frame(self):
@@ -15159,7 +15104,7 @@ class CamApp:
             if self.eng.frame_count > 0:
                 self.rec_clock0 = time.time()
             else:
-                self.lbl_timer.config(text="iniciando…", foreground=WARN)
+                self.lbl_timer.config(text=_t('app.starting'), foreground=WARN)
                 return
         el = int(time.time() - self.rec_clock0)
         mb = 0.0
@@ -15200,12 +15145,12 @@ class CamApp:
                 self._start_preview(auto=True)
                 return
         self.hub.close(wait=False)        # parado del todo: las cámaras, libres
-        self._set_idle("ffmpeg se detuvo.")
-        msg = "ffmpeg se detuvo de forma inesperada (¿cámara desconectada?).\n\n" + err
+        self._set_idle(_t('app.ffmpeg_stopped'))
+        msg = _t('app.ffmpeg_stopped_unexpectedly_camera') + err
         if was_rec:
             ok, shown, _m = self._finalize(path, final)
-            msg += "\n\nEl vídeo parcial está en:\n{0}".format(shown)
-        messagebox.showerror("Error", msg)
+            msg += _t('app.partial_video_in', shown=shown)
+        messagebox.showerror(_t('app.error'), msg)
 
     def _on_stuck(self):
         """ffmpeg sigue vivo (is_running() == True, así que _on_died no detecta nada) pero no ha
@@ -15224,16 +15169,11 @@ class CamApp:
         self.hub.close(wait=False)
         self.previewing = False
         self.paused = True          # evita reintentar en bucle; F5 para reanudar, igual que _start_preview
-        self._set_idle("No se pudo iniciar: ffmpeg se quedó colgado. Pulsa F5 para reintentar.")
-        msg = ("ffmpeg se quedó colgado al iniciar: llevaba más de {0:g} segundos abierto sin "
-              "llegar a entregar ni un fotograma.\n\nSuele ser una cámara lenta en arrancar "
-              "(por ejemplo, el software de una réflex/EOS) o un atasco con otra cámara del "
-              "mosaico. Prueba a desmarcar cámaras una a una (pestaña Cámaras) hasta encontrar "
-              "cuál lo cuelga, o pulsa F5 para reintentar.").format(STUCK_PREVIEW_SECONDS)
+        self._set_idle(_t('app.could_not_start_ffmpeg'))
+        msg = _t('app.ffmpeg_got_stuck_while', v0=STUCK_PREVIEW_SECONDS)
         if err:
-            msg += ("\n\nÚltimas líneas de ffmpeg (puede no haber ninguna pista útil, si de "
-                   "verdad se quedó colgado sin más):\n" + err)
-        messagebox.showerror("Vista previa colgada", msg)
+            msg += (_t('app.last_lines_from_ffmpeg') + err)
+        messagebox.showerror(_t('app.preview_stuck'), msg)
 
     def restart_for_language(self):
         """Modo ▸ Idioma: reabre cam-ui para verlo en el idioma nuevo (grabando, no: se avisa)."""
@@ -15258,7 +15198,7 @@ class CamApp:
             shutil.rmtree(self._sync.get("dir") or "", ignore_errors=True)
             self._sync = None
         if self.recording and not messagebox.askyesno(
-                "Grabando", "Se está grabando.\n\n¿Parar la grabación, guardar el vídeo y salir?"):
+                _t('app.recording_2'), _t('app.recording_in_progress_stop')):
             return
         log.info("cerrando")
         try:
@@ -15268,7 +15208,7 @@ class CamApp:
         try:
             self.save_config()
             if self.recording or self.previewing:
-                self.status.config(text="  Cerrando…")
+                self.status.config(text=_t('app.closing'))
                 self.root.update_idletasks()
             rec_path, rec_final = (self.rec_path, self.rec_final) if self.recording else (None, None)
             self.recording = self.previewing = False
