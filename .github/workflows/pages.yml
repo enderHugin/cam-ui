@@ -40,6 +40,12 @@ jobs:
           dirs: lang
           code: camui.py
           strict: 'true'
+      - name: Idiomas de la pagina
+        uses: enderHugin/lang-kit@808044aaf8f675457d5e5f7e8c3ba9e7f8d0127d
+        with:
+          dirs: site/lang
+          code: site/index.html
+          strict: 'true'
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

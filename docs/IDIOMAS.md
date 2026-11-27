@@ -21,6 +21,9 @@ Traducción de cam-ui al inglés y al catalán con [lang-kit](https://github.com
    - las claves `web.*` solo se usan en las plantillas: van en `@meta.dynamic` para `lk check`;
    - prueba: `tests/unit_web_lang.py`.
 
+## La página de descarga
+`site/index.html` usa lang-kit como las de md-reader y faster-finder: `data-t-html` / `data-t-attr` con los textos en `site/lang/{es,en,ca}.json`, `site/langkit.js` y un selector de idioma. El enlace de descarga lleva al instalador del mismo idioma (`dl/pyi-lang.js`, de py-installer), también al cambiar el selector. Quien eligió «EN» en la página anterior lo conserva.
+
 ## Cuidado: textos que también son datos
 Hay textos que se guardan en `config.json` o se comparan en el código. Si se traducen sin más, un `config.json` escrito en un idioma no se entendería en otro, o una comparación dejaría de cumplirse.
 

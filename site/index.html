@@ -116,6 +116,7 @@ p { margin: 0 0 1em; max-width: 62ch; }
 .top nav a { color: var(--ink); text-decoration: none; font-weight: 500; }
 .top nav a:hover { text-decoration: underline; }
 .lang { font: 600 0.95rem var(--text); color: var(--ink); background: transparent; border: 1.5px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.lang option { color: #111; }
 .lang:hover { border-color: var(--ink); }
 @media (max-width: 760px) { .top nav { display: none; } }
 
@@ -246,13 +247,13 @@ footer span:first-child { margin-right: auto; }
   <div class="wrap">
     <a class="brand" href="#"><span class="tally" aria-hidden="true"></span>cam-ui</a>
     <nav aria-label="Secciones">
-      <a href="#que" data-en="What it does">Qué hace</a>
-      <a href="#modos" data-en="Window modes">Modos</a>
-      <a href="#instalar" data-en="Install">Instalar</a>
-      <a href="#opinar" data-en="Feedback">Opinar</a>
-      <a href="#apoya" data-en="Support">Apoya</a>
+      <a href="#que" data-t-html="site.what_does">Qué hace</a>
+      <a href="#modos" data-t-html="site.window_modes">Modos</a>
+      <a href="#instalar" data-t-html="site.install">Instalar</a>
+      <a href="#opinar" data-t-html="site.feedback">Opinar</a>
+      <a href="#apoya" data-t-html="site.support">Apoya</a>
     </nav>
-    <button class="lang" id="lang" type="button" aria-label="Cambiar idioma / Switch language">EN</button>
+    <select class="lang" id="lang" data-langkit-picker aria-label="Idioma / Language"></select>
   </div>
 </header>
 
@@ -261,19 +262,19 @@ footer span:first-child { margin-right: auto; }
   <div class="wrap">
     <div class="hero-head">
       <div>
-        <h1 data-en="All your cameras in a single video.">Todas tus cámaras en un solo vídeo.</h1>
-        <p class="hero-lead" data-en="cam-ui joins several USB cameras and two microphones into one synchronized mosaic. Record it to MP4 or use it as a camera in your video calls.">cam-ui junta varias cámaras USB y dos micrófonos en un mosaico sincronizado. Lo grabas en MP4 o lo usas como cámara en tus videollamadas.</p>
+        <h1 data-t-html="site.all_your_cameras_in">Todas tus cámaras en un solo vídeo.</h1>
+        <p class="hero-lead" data-t-html="site.cam_ui_joins_several">cam-ui junta varias cámaras USB y dos micrófonos en un mosaico sincronizado. Lo grabas en MP4 o lo usas como cámara en tus videollamadas.</p>
       </div>
       <div class="get">
-        <a class="rec-btn" id="download" href="dl/cam-ui-instalar.cmd" download data-goatcounter-click="descarga-instalador" data-goatcounter-title="Descargar el instalador"><span class="dot" aria-hidden="true"></span><span data-en="Download for Windows">Descargar para Windows</span></a>
-        <small data-en="Free, no ads. The first run also downloads ffmpeg (about 100 MB). Needs Windows 10 or 11.">Gratis y sin anuncios. La primera vez también descarga ffmpeg (unos 100 MB). Necesita Windows 10 u 11.</small>
-        <small class="alt"><a href="dl/camui.py" download data-goatcounter-click="descarga-camui-py" data-goatcounter-title="Descargar camui.py" data-en="Only the program file (camui.py)">Solo el archivo del programa (camui.py)</a></small>
+        <a class="rec-btn" id="download" href="dl/cam-ui-instalar.cmd" download data-goatcounter-click="descarga-instalador" data-goatcounter-title="Descargar el instalador"><span class="dot" aria-hidden="true"></span><span data-t-html="site.download_for_windows">Descargar para Windows</span></a>
+        <small data-t-html="site.free_no_ads_first">Gratis y sin anuncios. La primera vez también descarga ffmpeg (unos 100 MB). Necesita Windows 10 u 11.</small>
+        <small class="alt"><a href="dl/camui.py" download data-goatcounter-click="descarga-camui-py" data-goatcounter-title="Descargar camui.py" data-t-html="site.only_program_file_camui">Solo el archivo del programa (camui.py)</a></small>
       </div>
     </div>
 
     <figure class="monitor">
       <div class="screen">
-        <canvas id="mosaic" role="img" aria-label="Demostración: cuatro cámaras de prueba combinadas en un mosaico" data-en-label="Demo: four test cameras combined into a mosaic"></canvas>
+        <canvas id="mosaic" role="img" aria-label="Demostración: cuatro cámaras de prueba combinadas en un mosaico" data-t-attr="aria-label:site.demo_label"></canvas>
         <div class="osd" aria-hidden="true">
           <span class="rec"><i></i><span id="tc">00:00:00:00</span></span>
           <span>1280 × 720 · 30 fps</span>
@@ -281,10 +282,10 @@ footer span:first-child { margin-right: auto; }
       </div>
       <div class="deck">
         <fieldset class="layouts">
-          <legend class="sr" data-en="Mosaic layout">Disposición del mosaico</legend>
+          <legend class="sr" data-t-html="site.mosaic_layout">Disposición del mosaico</legend>
           <label><input type="radio" name="lay" value="2x2" checked><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="13" height="8" rx="1"/><rect x="15" y="0" width="13" height="8" rx="1"/><rect x="0" y="10" width="13" height="8" rx="1"/><rect x="15" y="10" width="13" height="8" rx="1"/></svg>2 × 2</span></label>
           <label><input type="radio" name="lay" value="1+2"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="17" height="18" rx="1"/><rect x="19" y="0" width="9" height="8" rx="1"/><rect x="19" y="10" width="9" height="8" rx="1"/></svg>1 + 2</span></label>
-          <label><input type="radio" name="lay" value="3"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="8" height="18" rx="1"/><rect x="10" y="0" width="8" height="18" rx="1"/><rect x="20" y="0" width="8" height="18" rx="1"/></svg><span data-en="3 in a row">3 en fila</span></span></label>
+          <label><input type="radio" name="lay" value="3"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="8" height="18" rx="1"/><rect x="10" y="0" width="8" height="18" rx="1"/><rect x="20" y="0" width="8" height="18" rx="1"/></svg><span data-t-html="site.3_in_row">3 en fila</span></span></label>
           <label><input type="radio" name="lay" value="2+1"><span class="chip"><svg viewBox="0 0 28 18" aria-hidden="true"><rect x="0" y="0" width="13" height="9" rx="1"/><rect x="15" y="0" width="13" height="9" rx="1"/><rect x="0" y="11" width="28" height="7" rx="1"/></svg>2 + 1</span></label>
         </fieldset>
         <div class="meters" aria-hidden="true">
@@ -293,7 +294,7 @@ footer span:first-child { margin-right: auto; }
         </div>
       </div>
     </figure>
-    <p class="hint" data-en="This demo uses generated images, not real cameras. In the program each tile is one of your cameras, and the layout adapts to their shape.">Esta demostración usa imágenes generadas, no cámaras reales. En el programa cada recuadro es una de tus cámaras y la disposición se adapta a su forma.</p>
+    <p class="hint" data-t-html="site.this_demo_uses_generated">Esta demostración usa imágenes generadas, no cámaras reales. En el programa cada recuadro es una de tus cámaras y la disposición se adapta a su forma.</p>
   </div>
 </section>
 
@@ -301,18 +302,18 @@ footer span:first-child { margin-right: auto; }
   <div class="wrap">
     <div class="sec-head">
       <div>
-        <h2 data-en="Made for cheap USB cameras">Pensado para cámaras USB baratas</h2>
-        <p data-en="They rarely agree on resolution, frame rate or timing. cam-ui checks what each one really delivers and keeps image and sound together.">Casi nunca se ponen de acuerdo en resolución, fps ni tiempos. cam-ui comprueba qué entrega cada una de verdad y mantiene imagen y sonido juntos.</p>
+        <h2 data-t-html="site.made_for_cheap_usb">Pensado para cámaras USB baratas</h2>
+        <p data-t-html="site.they_rarely_agree_on">Casi nunca se ponen de acuerdo en resolución, fps ni tiempos. cam-ui comprueba qué entrega cada una de verdad y mantiene imagen y sonido juntos.</p>
       </div>
       <dl class="spec">
-        <div><dt data-en="Sync">Sincronía</dt><dd data-en="Every camera and microphone shares one clock, so picture and sound stay aligned even when each device starts at a different time. The «Sync» button turns any phone into a clapperboard: it flashes a never-repeating code, like a barcode in time, in front of each camera, and cam-ui measures to the millisecond how late each one arrives and sets its delay by itself.">Todas las cámaras y micrófonos comparten un mismo reloj, así que imagen y sonido no se desfasan aunque cada dispositivo arranque en un momento distinto. El botón «Sincronizar» convierte cualquier móvil en una claqueta: delante de cada cámara da un código que nunca se repite, como un código de barras en el tiempo, y cam-ui mide al milisegundo lo que tarda en llegar cada una y ajusta solo su retardo.</dd></div>
-        <div><dt data-en="Left and right audio">Audio izquierdo y derecho</dt><dd data-en="Each output channel comes from any microphone, and from its left, right or mixed input, with its own gain. Live level meters.">Cada canal de salida sale del micrófono que elijas, de su lado izquierdo, derecho o mezcla, con ganancia propia. Vúmetros en vivo.</dd></div>
-        <div><dt data-en="Framing and colour">Encuadre y color</dt><dd data-en="Flip, rotate, crop and zoom each camera. Adjust brightness and colour while recording, without stopping. Each camera remembers its settings and its place in the mosaic, even if it stays unplugged for months.">Voltea, gira, recorta y haz zoom por cámara. Ajusta brillo y color mientras grabas, sin parar. Cada cámara recuerda sus ajustes y su sitio en el mosaico, aunque pase meses sin conectarla.</dd></div>
-        <div><dt data-en="Capture modes">Modos de captura</dt><dd data-en="Reads which sizes and frame rates each camera offers and tests which ones it can keep up with. If a camera rejects a mode, cam-ui tries another by itself.">Lee qué tamaños y fps ofrece cada cámara y prueba cuáles aguanta de verdad. Si una cámara rechaza un modo, cam-ui prueba otro sola.</dd></div>
-        <div><dt data-en="Safe recording">Grabación segura</dt><dd data-en="Records to MKV and converts to MP4 at the end, so a crash does not lose the video. The preview never stops while recording.">Graba en MKV y lo pasa a MP4 al terminar, así un fallo no pierde el vídeo. La vista previa no se corta mientras grabas.</dd></div>
-        <div><dt><span data-en="Virtual camera">Cámara virtual</span><span class="tag" data-en="Experimental">En pruebas</span></dt><dd data-en="Offers the mosaic as a camera in Teams, Zoom or Meet. Needs OBS Studio installed (free; you do not need to open it). Video only, no audio.">Ofrece el mosaico como una cámara en Teams, Zoom o Meet. Necesita tener OBS Studio instalado (gratis; no hace falta abrirlo). Solo vídeo, sin audio.</dd></div>
-        <div><dt><span data-en="Watch over the network">Verlo en red</span><span class="tag" data-en="Experimental">En pruebas</span></dt><dd data-en="Watch (and, with a microphone, listen to) the mosaic live from another PC or phone on the same wifi, in a browser, with fullscreen, no app needed. Works at the same time as recording and the virtual camera; view only, no password.">Ve (y, si hay micrófono, oye) el mosaico en vivo desde otro PC o móvil de la misma wifi, con el navegador, con pantalla completa, sin instalar nada. Funciona a la vez que se graba y que la cámara virtual; solo para ver, sin contraseña.</dd></div>
-        <div><dt data-en="Reset button">Botón de reinicio</dt><dd data-en="If a camera stays locked by a stuck ffmpeg, F12 closes them all and starts again.">Si una cámara se queda retenida por un ffmpeg atascado, F12 los cierra todos y vuelve a empezar.</dd></div>
+        <div><dt data-t-html="site.sync">Sincronía</dt><dd data-t-html="site.every_camera_microphone_shares">Todas las cámaras y micrófonos comparten un mismo reloj, así que imagen y sonido no se desfasan aunque cada dispositivo arranque en un momento distinto. El botón «Sincronizar» convierte cualquier móvil en una claqueta: delante de cada cámara da un código que nunca se repite, como un código de barras en el tiempo, y cam-ui mide al milisegundo lo que tarda en llegar cada una y ajusta solo su retardo.</dd></div>
+        <div><dt data-t-html="site.left_right_audio">Audio izquierdo y derecho</dt><dd data-t-html="site.each_output_channel_comes">Cada canal de salida sale del micrófono que elijas, de su lado izquierdo, derecho o mezcla, con ganancia propia. Vúmetros en vivo.</dd></div>
+        <div><dt data-t-html="site.framing_colour">Encuadre y color</dt><dd data-t-html="site.flip_rotate_crop_zoom">Voltea, gira, recorta y haz zoom por cámara. Ajusta brillo y color mientras grabas, sin parar. Cada cámara recuerda sus ajustes y su sitio en el mosaico, aunque pase meses sin conectarla.</dd></div>
+        <div><dt data-t-html="site.capture_modes">Modos de captura</dt><dd data-t-html="site.reads_which_sizes_frame">Lee qué tamaños y fps ofrece cada cámara y prueba cuáles aguanta de verdad. Si una cámara rechaza un modo, cam-ui prueba otro sola.</dd></div>
+        <div><dt data-t-html="site.safe_recording">Grabación segura</dt><dd data-t-html="site.records_mkv_converts_mp4">Graba en MKV y lo pasa a MP4 al terminar, así un fallo no pierde el vídeo. La vista previa no se corta mientras grabas.</dd></div>
+        <div><dt><span data-t-html="site.virtual_camera">Cámara virtual</span><span class="tag" data-t-html="site.experimental">En pruebas</span></dt><dd data-t-html="site.offers_mosaic_as_camera">Ofrece el mosaico como una cámara en Teams, Zoom o Meet. Necesita tener OBS Studio instalado (gratis; no hace falta abrirlo). Solo vídeo, sin audio.</dd></div>
+        <div><dt><span data-t-html="site.watch_over_network">Verlo en red</span><span class="tag" data-t-html="site.experimental_2">En pruebas</span></dt><dd data-t-html="site.watch_with_microphone_listen">Ve (y, si hay micrófono, oye) el mosaico en vivo desde otro PC o móvil de la misma wifi, con el navegador, con pantalla completa, sin instalar nada. Funciona a la vez que se graba y que la cámara virtual; solo para ver, sin contraseña.</dd></div>
+        <div><dt data-t-html="site.reset_button">Botón de reinicio</dt><dd data-t-html="site.if_camera_stays_locked">Si una cámara se queda retenida por un ffmpeg atascado, F12 los cierra todos y vuelve a empezar.</dd></div>
       </dl>
     </div>
   </div>
@@ -320,23 +321,23 @@ footer span:first-child { margin-right: auto; }
 
 <section id="modos">
   <div class="wrap">
-    <h2 data-en="Three window sizes">Tres tamaños de ventana</h2>
+    <h2 data-t-html="site.three_window_sizes">Tres tamaños de ventana</h2>
     <div class="modes">
       <figure>
-        <img class="shot" src="img/normal.webp" width="1400" height="747" alt="Ventana normal de cam-ui con tres cámaras de prueba en el mosaico, lista de cámaras, mapa de disposición y vúmetros" data-en-alt="cam-ui normal window with three test cameras in the mosaic, camera list, layout map and level meters" loading="lazy">
-        <figcaption data-en="<b>Normal.</b> Everything to set up: cameras, layout, framing, colour, audio and output. Screenshot with test cameras.">
+        <img class="shot" src="img/normal.webp" width="1400" height="747" alt="Ventana normal de cam-ui con tres cámaras de prueba en el mosaico, lista de cámaras, mapa de disposición y vúmetros" data-t-attr="alt:site.alt_cam_ui_normal" loading="lazy">
+        <figcaption data-t-html="site.normal_everything_set_up">
           <b>Normal.</b> Todo para preparar: cámaras, disposición, encuadre, color, audio y salida. Captura con cámaras de prueba.</figcaption>
       </figure>
       <div class="modes-row">
         <figure>
-          <img class="shot" src="img/compact.webp" width="682" height="400" alt="Ventana compacta de cam-ui: barra de botones y vista previa" data-en-alt="cam-ui compact window: button bar and preview" loading="lazy">
-          <figcaption data-en="<b>Compact.</b> Just the preview and the main buttons. It can stay on top of other windows while you work.">
+          <img class="shot" src="img/compact.webp" width="682" height="400" alt="Ventana compacta de cam-ui: barra de botones y vista previa" data-t-attr="alt:site.alt_cam_ui_compact" loading="lazy">
+          <figcaption data-t-html="site.compact_just_preview_main">
             <b>Compacto.</b> Solo la vista previa y los botones principales. Puede quedarse encima de otras ventanas mientras trabajas.</figcaption>
         </figure>
         <div class="mini-wrap">
           <figure>
-            <img class="shot" src="img/mini.webp" width="610" height="48" alt="Barra mini de cam-ui con los botones Grabar y Cámara virtual y los controles de ventana" data-en-alt="cam-ui mini bar with Record and Virtual camera buttons and window controls" loading="lazy">
-            <figcaption data-en="<b>Mini.</b> One thin bar with Record and Stop, no preview. Esc goes back to the normal window. All three sizes are also in the tray icon menu.">
+            <img class="shot" src="img/mini.webp" width="610" height="48" alt="Barra mini de cam-ui con los botones Grabar y Cámara virtual y los controles de ventana" data-t-attr="alt:site.alt_cam_ui_mini" loading="lazy">
+            <figcaption data-t-html="site.mini_one_thin_bar">
               <b>Mini.</b> Una barra fina con Grabar y Parar, sin vista previa. Con Esc vuelves a la ventana normal. Los tres tamaños también están en el menú del icono de la bandeja.</figcaption>
           </figure>
         </div>
@@ -347,68 +348,68 @@ footer span:first-child { margin-right: auto; }
 
 <section id="instalar" class="band">
   <div class="wrap">
-    <h2 data-en="Install">Instalar</h2>
+    <h2 data-t-html="site.install_2">Instalar</h2>
     <div class="install">
       <ol class="steps">
-        <li><h3 data-en="Download the installer">Descarga el instalador</h3><p data-en="One small file, cam-ui-instalar.cmd. You can read it in the repository before running it.">Un archivo pequeño, cam-ui-instalar.cmd. Puedes leerlo en el repositorio antes de ejecutarlo.</p></li>
-        <li><h3 data-en="Open it">Ábrelo</h3><p data-en="It sets up its own Python (you don't need Python installed) and downloads ffmpeg. The first time takes a couple of minutes.">Prepara su propio Python (no necesitas tener Python instalado) y descarga ffmpeg. La primera vez tarda un par de minutos.</p></li>
-        <li><h3 data-en="Use it from the Start menu">Úsalo desde el menú Inicio</h3><p data-en="cam-ui opens when it finishes. To update, run the installer again: your settings stay.">cam-ui se abre al terminar. Para actualizar, vuelve a ejecutar el instalador: tus ajustes se conservan.</p></li>
+        <li><h3 data-t-html="site.download_installer">Descarga el instalador</h3><p data-t-html="site.one_small_file_cam">Un archivo pequeño, cam-ui-instalar.cmd. Puedes leerlo en el repositorio antes de ejecutarlo.</p></li>
+        <li><h3 data-t-html="site.open">Ábrelo</h3><p data-t-html="site.sets_up_its_own">Prepara su propio Python (no necesitas tener Python instalado) y descarga ffmpeg. La primera vez tarda un par de minutos.</p></li>
+        <li><h3 data-t-html="site.use_from_start_menu">Úsalo desde el menú Inicio</h3><p data-t-html="site.cam_ui_opens_when">cam-ui se abre al terminar. Para actualizar, vuelve a ejecutar el instalador: tus ajustes se conservan.</p></li>
       </ol>
       <div class="manual">
-        <h3 data-en="By hand">A mano</h3>
-        <p data-en="With Python 3.10 or newer and ffmpeg.exe next to camui.py:">Con Python 3.10 o superior y ffmpeg.exe junto a camui.py:</p>
+        <h3 data-t-html="site.by_hand">A mano</h3>
+        <p data-t-html="site.with_python_3_10">Con Python 3.10 o superior y ffmpeg.exe junto a camui.py:</p>
         <code>pip install numpy pillow pystray pyvirtualcam
 python camui.py</code>
-        <p data-en="Source code and notes: <a href='https://github.com/enderHugin/cam-ui'>github.com/enderHugin/cam-ui</a>">Código y notas: <a href="https://github.com/enderHugin/cam-ui">github.com/enderHugin/cam-ui</a></p>
+        <p data-t-html="site.source_code_notes_github">Código y notas: <a href="https://github.com/enderHugin/cam-ui">github.com/enderHugin/cam-ui</a></p>
       </div>
     </div>
     <details>
-      <summary data-en="What does the installer put on my computer?">¿Qué instala y dónde?</summary>
-      <p data-en="Everything goes into your own user folders (the program in %LOCALAPPDATA%\Programs\cam-ui, its own Python and ffmpeg in %LOCALAPPDATA%\cam-ui), with a shortcut in the Start menu and on the desktop, and it shows up in “Installed apps”. It does not touch any Python you already have, or ask for administrator rights.">Todo va a tus propias carpetas de usuario (el programa en %LOCALAPPDATA%\Programs\cam-ui, su Python propio y ffmpeg en %LOCALAPPDATA%\cam-ui), con un acceso en el menú Inicio y en el escritorio, y aparece en «Aplicaciones instaladas». No toca el Python que ya tengas, ni pide permisos de administrador.</p>
+      <summary data-t-html="site.what_does_installer_put">¿Qué instala y dónde?</summary>
+      <p data-t-html="site.everything_goes_into_your">Todo va a tus propias carpetas de usuario (el programa en %LOCALAPPDATA%\Programs\cam-ui, su Python propio y ffmpeg en %LOCALAPPDATA%\cam-ui), con un acceso en el menú Inicio y en el escritorio, y aparece en «Aplicaciones instaladas». No toca el Python que ya tengas, ni pide permisos de administrador.</p>
     </details>
     <details>
-      <summary data-en="How do I remove it?">¿Cómo lo quito?</summary>
-      <p data-en="From Windows Settings → Apps → Installed apps, look for “cam-ui” — same as removing any other program. It asks whether to also delete your captures, recordings and settings, or keep them for next time.">Desde Configuración de Windows → Aplicaciones → Aplicaciones instaladas, busca «cam-ui» — igual que para quitar cualquier otro programa. Pregunta si también quieres borrar tus capturas, grabaciones y ajustes, o conservarlos por si lo vuelves a instalar.</p>
+      <summary data-t-html="site.how_do_i_remove">¿Cómo lo quito?</summary>
+      <p data-t-html="site.from_windows_settings_apps">Desde Configuración de Windows → Aplicaciones → Aplicaciones instaladas, busca «cam-ui» — igual que para quitar cualquier otro programa. Pregunta si también quieres borrar tus capturas, grabaciones y ajustes, o conservarlos por si lo vuelves a instalar.</p>
     </details>
     <details>
-      <summary data-en="Why does Windows warn me about the file?">¿Por qué Windows me avisa al abrir el archivo?</summary>
-      <p data-en="The installer is a plain script that is not signed by a company, so Windows shows a warning for any downloaded script. If you want to check it first, open it with a text editor: it is short and only downloads the files listed above.">El instalador es un script sin firmar por una empresa, y Windows avisa con cualquier script descargado. Si quieres comprobarlo antes, ábrelo con un editor de texto: es corto y solo descarga lo que se lista arriba.</p>
+      <summary data-t-html="site.why_does_windows_warn">¿Por qué Windows me avisa al abrir el archivo?</summary>
+      <p data-t-html="site.installer_is_plain_script">El instalador es un script sin firmar por una empresa, y Windows avisa con cualquier script descargado. Si quieres comprobarlo antes, ábrelo con un editor de texto: es corto y solo descarga lo que se lista arriba.</p>
     </details>
     <details>
-      <summary data-en="How much space does it need?">¿Cuánto espacio necesita?</summary>
-      <p data-en="About 500 MB free on the drive where your user folder lives (usually C:), for Python, ffmpeg and the libraries; the installer warns you if it finds less. If that drive is too full, you can install on another one: open a command window, type set CAMUI_INSTALL_DIR=D:\cam-ui (with the drive and folder you want) and run the installer from that same window.">Alrededor de 500 MB libres en la unidad donde está tu carpeta de usuario (normalmente C:), entre Python, ffmpeg y las librerías; el instalador avisa si encuentra menos. Si esa unidad anda corta, puedes instalar en otra: abre una ventana de comandos, escribe set CAMUI_INSTALL_DIR=D:\cam-ui (con la unidad y carpeta que quieras) y ejecuta el instalador desde esa misma ventana.</p>
+      <summary data-t-html="site.how_much_space_does">¿Cuánto espacio necesita?</summary>
+      <p data-t-html="site.about_500_mb_free">Alrededor de 500 MB libres en la unidad donde está tu carpeta de usuario (normalmente C:), entre Python, ffmpeg y las librerías; el instalador avisa si encuentra menos. Si esa unidad anda corta, puedes instalar en otra: abre una ventana de comandos, escribe set CAMUI_INSTALL_DIR=D:\cam-ui (con la unidad y carpeta que quieras) y ejecuta el instalador desde esa misma ventana.</p>
     </details>
     <details>
-      <summary data-en="Does the virtual camera need something else?">¿La cámara virtual necesita algo más?</summary>
-      <p data-en="Yes: OBS Studio installed (free, obsproject.com). cam-ui uses its virtual camera, so you pick “OBS Virtual Camera” in your video-call app. Only one program can use that camera at a time, so do not start the virtual camera inside OBS at the same time.">Sí: OBS Studio instalado (gratis, obsproject.com). cam-ui usa su cámara virtual, así que en tu app de videollamadas eliges «OBS Virtual Camera». Solo un programa puede usar esa cámara a la vez: no inicies además la cámara virtual dentro de OBS.</p>
+      <summary data-t-html="site.does_virtual_camera_need">¿La cámara virtual necesita algo más?</summary>
+      <p data-t-html="site.yes_obs_studio_installed">Sí: OBS Studio instalado (gratis, obsproject.com). cam-ui usa su cámara virtual, así que en tu app de videollamadas eliges «OBS Virtual Camera». Solo un programa puede usar esa cámara a la vez: no inicies además la cámara virtual dentro de OBS.</p>
     </details>
     <details>
-      <summary data-en="My camera shows low quality or fails to open">Mi cámara sale con poca calidad o no abre</summary>
-      <p data-en="In the Framing tab press “Detect” and then “Test modes”. cam-ui measures what each mode really delivers and picks the best one that works. If it still fails, send me the report (see the next section).">En la pestaña Encuadre pulsa «Detectar» y luego «Probar modos». cam-ui mide lo que entrega cada modo y elige el mejor que funcione. Si sigue fallando, mándame el informe (mira la sección siguiente).</p>
+      <summary data-t-html="site.my_camera_shows_low">Mi cámara sale con poca calidad o no abre</summary>
+      <p data-t-html="site.in_framing_tab_press">En la pestaña Encuadre pulsa «Detectar» y luego «Probar modos». cam-ui mide lo que entrega cada modo y elige el mejor que funcione. Si sigue fallando, mándame el informe (mira la sección siguiente).</p>
     </details>
     <details>
-      <summary data-en="What is the “New engine”?">¿Qué es el «Motor nuevo»?</summary>
-      <p data-en="The default since pack 45 (it can be turned off in Settings → Advanced). Each camera opens on its own and all at the same time, and none of them holds back the others: a slow camera, one that drops out, or another PC's, only stutters or shows “No signal” itself — the rest stay smooth — and it comes back on its own. Restarting the mosaic or starting to record no longer reopens the cameras. If you chain another PC running cam-ui and both use the new engine, its camera lines up with yours by the time it was captured, even if the two PCs' clocks don't match. If something works worse than with the usual engine (a single ffmpeg for all cameras), untick it.">El de serie desde el pack 45 (se puede quitar en Ajustes → Avanzado). Cada cámara se abre por su lado y todas a la vez, y ninguna frena a las demás: una cámara lenta, una que se corta o la de otro PC solo va a saltos o pone «Sin señal» ella — el resto sigue fluido — y vuelve sola. Reiniciar el mosaico o empezar a grabar ya no vuelve a abrir las cámaras. Si encadenas otro PC con cam-ui y los dos llevan el motor nuevo, su cámara se alinea con las tuyas por la hora a la que se captó, aunque los relojes de los dos PCs no coincidan. Si algo va peor que con el motor de siempre (un solo ffmpeg para todas), desmárcalo.</p>
+      <summary data-t-html="site.what_is_new_engine">¿Qué es el «Motor nuevo»?</summary>
+      <p data-t-html="site.default_since_pack_45">El de serie desde el pack 45 (se puede quitar en Ajustes → Avanzado). Cada cámara se abre por su lado y todas a la vez, y ninguna frena a las demás: una cámara lenta, una que se corta o la de otro PC solo va a saltos o pone «Sin señal» ella — el resto sigue fluido — y vuelve sola. Reiniciar el mosaico o empezar a grabar ya no vuelve a abrir las cámaras. Si encadenas otro PC con cam-ui y los dos llevan el motor nuevo, su cámara se alinea con las tuyas por la hora a la que se captó, aunque los relojes de los dos PCs no coincidan. Si algo va peor que con el motor de siempre (un solo ffmpeg para todas), desmárcalo.</p>
     </details>
     <details>
-      <summary data-en="Does it keep working with the PC locked?">¿Sigue funcionando con el PC bloqueado?</summary>
-      <p data-en="Yes. Locking (Win+L) doesn't stop desktop programs, and while the preview is running (and with it recording, “On the network” and the virtual camera) cam-ui asks Windows not to put the computer to sleep for inactivity; the screen still turns off as usual. What Windows doesn't let any program prevent: putting it to sleep on purpose (closing the lid, the power button, Start → Sleep — the lid action can be changed in Windows' power options) and, on laptops on battery with “Modern Standby”, sleep arriving anyway a few minutes later. Plugged in, it can run for as long as you want.">Sí. Bloquear (Win+L) no para los programas de escritorio, y mientras la vista previa está en marcha (y con ella la grabación, «En la red» y la cámara virtual) cam-ui le pide a Windows que no suspenda el equipo por inactividad; la pantalla sí se apaga como siempre. Lo que Windows no deja evitar a ningún programa: suspenderlo a propósito (cerrar la tapa, el botón de encendido, Inicio → Suspender — lo de la tapa se cambia en las opciones de energía de Windows) y, en portátiles a batería con «Modern Standby», que la suspensión llegue igualmente unos minutos después. Enchufado, aguanta lo que haga falta.</p>
+      <summary data-t-html="site.does_keep_working_with">¿Sigue funcionando con el PC bloqueado?</summary>
+      <p data-t-html="site.yes_locking_win_l">Sí. Bloquear (Win+L) no para los programas de escritorio, y mientras la vista previa está en marcha (y con ella la grabación, «En la red» y la cámara virtual) cam-ui le pide a Windows que no suspenda el equipo por inactividad; la pantalla sí se apaga como siempre. Lo que Windows no deja evitar a ningún programa: suspenderlo a propósito (cerrar la tapa, el botón de encendido, Inicio → Suspender — lo de la tapa se cambia en las opciones de energía de Windows) y, en portátiles a batería con «Modern Standby», que la suspensión llegue igualmente unos minutos después. Enchufado, aguanta lo que haga falta.</p>
     </details>
     <details>
-      <summary data-en="Can I use my phone as one of the cameras?">¿Puedo usar el móvil como una de las cámaras?</summary>
-      <p data-en="Yes, two ways. The simplest, nothing to install: the phone-camera server is always on (nothing to turn on first) — in the Settings tab, under “Phone camera”, open any of the fixed addresses it shows, all ending in /movil (with no port number when the PC's port 443 is free, e.g. https://192.168.1.129/movil), in the phone's own browser. That page just asks for camera permission to scan a QR code — by itself it doesn't add anything. As soon as you grant it, a one-time QR code appears on the PC's own screen — in a pop-up window, right away, whichever tab you're on — scan it with that same phone camera (still on the /add page) and the phone navigates on its own to the capture page — the camera appears on its own in the list, already ticked and ready to record. Because you have to be looking at the PC's screen to see that QR, nobody else on the wifi can add a camera without you seeing it happen. If you already have the “watch over the network” page open on the phone, there's a shortcut button there too — “Add phone camera” — that jumps straight to this same /add address, so you don't have to remember a second port. The first time, the browser will warn the connection “isn't private”: that's cam-ui's own one-off certificate (needed for the browser to allow the camera at all), not a fault — “Advanced → Continue” once and it's remembered; on an iPhone or iPad there's one extra, one-time step too (an “Install certificate” button in that same tab, with its own QR code — open that page in Safari: Chrome and other iPhone/iPad browsers only download it as a file), because Safari won't allow the camera there at all without it — Android needs none of this. Video only for now, no audio. The phone is remembered once it pairs, so it won't need the QR again even after restarting cam-ui — Settings has a “Manage mobile devices” list to see which ones (“iPad”, “iPhone” or “Android · model”, with their last connection), rename them or forget any of them. The older way still works too: install an app that streams video (such as “IP Webcam”), put the phone on the same wifi, and in cam-ui press “Add network camera…” with the address the app shows (something like http://192.168.1.50:8080/video, or an rtsp:// address) — useful if you'd rather keep that app's own settings, or already have it set up. Either way, you can double-click the camera later in the list to edit its name without losing its framing or colour settings, and if it drops the connection cam-ui doesn't stop the whole mosaic: it shows “No signal: &lt;name&gt;” in that camera's spot, keeps recording the rest, and reconnects on its own once it comes back. The same “Add network camera…” box also accepts another PC's cam-ui “watch over the network” address, to chain several computers together — it arrives with the same shape and frame rate as that PC's mosaic (its framing included, no added black bars, up to 30 fps); its “Over the network” size setting is only the maximum, so pick a bigger one there for more resolution.">Sí, de dos formas. La más sencilla, sin instalar nada: el servidor de la cámara del móvil está siempre activo (no hay que encenderlo) — en la pestaña Ajustes, en «Cámara del móvil», abre cualquiera de las direcciones fijas que muestra, todas terminadas en /movil (sin número de puerto si el 443 del PC está libre, p. ej. https://192.168.1.129/movil), en el propio navegador del móvil. Esa página solo pide permiso de cámara para leer un código QR — por sí sola no añade nada. En cuanto concedes el permiso, aparece un QR de un solo uso en la propia pantalla del PC — en una ventana flotante, al instante, estés en la pestaña que estés — léelo con esa misma cámara del móvil (sin salir de la página «/add») y el móvil navega solo hasta la página de captura — la cámara aparece sola en la lista, ya marcada y lista para grabar. Como hay que estar mirando la pantalla del PC para ver ese QR, nadie más de la wifi puede añadir una cámara sin que lo veas ocurrir. Si ya tienes abierta en el móvil la página de «verlo en red», ahí hay también un botón «Añadir cámara del móvil» que lleva directo a esa misma dirección «/add», sin tener que acordarte de otro puerto. La primera vez, el navegador avisará de que la conexión "no es privada": es el certificado propio de cam-ui (necesario para que el navegador deje usar la cámara), no un fallo — «Avanzado → Continuar» una vez y ya lo recuerda; en iPhone o iPad hace falta, además, un paso extra de una sola vez (botón «Instalar certificado» en esa misma pestaña, con su propio QR — abre esa página en Safari: Chrome y los demás navegadores de iPhone/iPad solo lo descargan como un archivo), porque sin él Safari no deja usar la cámara ahí en absoluto — en Android no hace falta nada de esto. Por ahora solo vídeo, sin audio. El móvil queda recordado en cuanto se empareja, así que no vuelve a pedir el QR ni aunque se reinicie cam-ui — en Ajustes, «Administrar dispositivos móviles» muestra cuáles son («iPad», «iPhone» o «Android · modelo», con su última conexión) y deja renombrarlos u olvidar cualquiera. La forma de siempre también sigue funcionando: instala una app que transmita vídeo (como «IP Webcam»), pon el móvil en la misma wifi y en cam-ui pulsa «Añadir cámara de red…» con la dirección que da la app (algo como http://192.168.1.50:8080/video, o una dirección rtsp://) — útil si prefieres mantener los ajustes propios de esa app, o ya la tienes configurada. De cualquier forma, puedes hacer doble clic sobre la cámara en la lista para editar su nombre sin perder su encuadre ni su color, y si se desconecta cam-ui no para todo el mosaico: pone «Sin señal: &lt;nombre&gt;» en su sitio, sigue grabando el resto, y reconecta sola cuando vuelva. Ese mismo cuadro de «Añadir cámara de red…» también vale la dirección de «verlo en red» de otro PC con cam-ui, para encadenar varios equipos — llega con la misma forma y los mismos fps que el mosaico de ese PC (con su encuadre, sin barras negras añadidas, hasta 30 fps); su «Tamaño» de «En la red» es solo el máximo, así que para más resolución basta con elegir uno mayor allí.</p>
+      <summary data-t-html="site.can_i_use_my">¿Puedo usar el móvil como una de las cámaras?</summary>
+      <p data-t-html="site.yes_two_ways_simplest">Sí, de dos formas. La más sencilla, sin instalar nada: el servidor de la cámara del móvil está siempre activo (no hay que encenderlo) — en la pestaña Ajustes, en «Cámara del móvil», abre cualquiera de las direcciones fijas que muestra, todas terminadas en /movil (sin número de puerto si el 443 del PC está libre, p. ej. https://192.168.1.129/movil), en el propio navegador del móvil. Esa página solo pide permiso de cámara para leer un código QR — por sí sola no añade nada. En cuanto concedes el permiso, aparece un QR de un solo uso en la propia pantalla del PC — en una ventana flotante, al instante, estés en la pestaña que estés — léelo con esa misma cámara del móvil (sin salir de la página «/add») y el móvil navega solo hasta la página de captura — la cámara aparece sola en la lista, ya marcada y lista para grabar. Como hay que estar mirando la pantalla del PC para ver ese QR, nadie más de la wifi puede añadir una cámara sin que lo veas ocurrir. Si ya tienes abierta en el móvil la página de «verlo en red», ahí hay también un botón «Añadir cámara del móvil» que lleva directo a esa misma dirección «/add», sin tener que acordarte de otro puerto. La primera vez, el navegador avisará de que la conexión "no es privada": es el certificado propio de cam-ui (necesario para que el navegador deje usar la cámara), no un fallo — «Avanzado → Continuar» una vez y ya lo recuerda; en iPhone o iPad hace falta, además, un paso extra de una sola vez (botón «Instalar certificado» en esa misma pestaña, con su propio QR — abre esa página en Safari: Chrome y los demás navegadores de iPhone/iPad solo lo descargan como un archivo), porque sin él Safari no deja usar la cámara ahí en absoluto — en Android no hace falta nada de esto. Por ahora solo vídeo, sin audio. El móvil queda recordado en cuanto se empareja, así que no vuelve a pedir el QR ni aunque se reinicie cam-ui — en Ajustes, «Administrar dispositivos móviles» muestra cuáles son («iPad», «iPhone» o «Android · modelo», con su última conexión) y deja renombrarlos u olvidar cualquiera. La forma de siempre también sigue funcionando: instala una app que transmita vídeo (como «IP Webcam»), pon el móvil en la misma wifi y en cam-ui pulsa «Añadir cámara de red…» con la dirección que da la app (algo como http://192.168.1.50:8080/video, o una dirección rtsp://) — útil si prefieres mantener los ajustes propios de esa app, o ya la tienes configurada. De cualquier forma, puedes hacer doble clic sobre la cámara en la lista para editar su nombre sin perder su encuadre ni su color, y si se desconecta cam-ui no para todo el mosaico: pone «Sin señal: &lt;nombre&gt;» en su sitio, sigue grabando el resto, y reconecta sola cuando vuelva. Ese mismo cuadro de «Añadir cámara de red…» también vale la dirección de «verlo en red» de otro PC con cam-ui, para encadenar varios equipos — llega con la misma forma y los mismos fps que el mosaico de ese PC (con su encuadre, sin barras negras añadidas, hasta 30 fps); su «Tamaño» de «En la red» es solo el máximo, así que para más resolución basta con elegir uno mayor allí.</p>
     </details>
     <details>
-      <summary data-en="Can I watch it from another PC or phone?">¿Puedo verlo desde otro PC o móvil?</summary>
-      <p data-en="Yes: in the “Mode” menu (or the button bar, the Settings tab, or the tray icon) turn on “Over the network”, and open the address it shows (something like http://192.168.1.50:8554/) in a browser on another device on the same wifi — clicking that address in the status bar opens it for you in your own default browser, as a quick check. The page has a fullscreen button, and if a microphone is set up, a “Turn on sound” button (browsers block audio from starting on its own) with its own mute and volume controls. It's view only — anyone on your wifi can open that address while it's on, there's no password — and it keeps working while you record and while the virtual camera is on. The first time, Windows may ask to allow cam-ui through the Firewall: allow it, or no device will be able to connect.">Sí: en el menú «Modo» (o el botón de la barra, la pestaña Ajustes, o el icono de la bandeja) activa «En la red» y abre la dirección que te muestra (algo como http://192.168.1.50:8554/) en el navegador de otro aparato de la misma wifi — hacer clic en esa dirección en la barra de estado la abre en tu propio navegador predeterminado, para comprobarlo rápido. La página tiene un botón de pantalla completa y, si hay un micrófono configurado, un botón «Activar sonido» (los navegadores no dejan arrancarlo solo) con su propio control de silencio y volumen. Es solo para ver — cualquiera en tu wifi puede abrir esa dirección mientras esté activa, no tiene contraseña — y sigue funcionando mientras grabas y mientras la cámara virtual está encendida. La primera vez, Windows puede preguntar si deja pasar a cam-ui por el Firewall: permítelo, o ningún aparato podrá conectarse.</p>
+      <summary data-t-html="site.can_i_watch_from">¿Puedo verlo desde otro PC o móvil?</summary>
+      <p data-t-html="site.yes_in_mode_menu">Sí: en el menú «Modo» (o el botón de la barra, la pestaña Ajustes, o el icono de la bandeja) activa «En la red» y abre la dirección que te muestra (algo como http://192.168.1.50:8554/) en el navegador de otro aparato de la misma wifi — hacer clic en esa dirección en la barra de estado la abre en tu propio navegador predeterminado, para comprobarlo rápido. La página tiene un botón de pantalla completa y, si hay un micrófono configurado, un botón «Activar sonido» (los navegadores no dejan arrancarlo solo) con su propio control de silencio y volumen. Es solo para ver — cualquiera en tu wifi puede abrir esa dirección mientras esté activa, no tiene contraseña — y sigue funcionando mientras grabas y mientras la cámara virtual está encendida. La primera vez, Windows puede preguntar si deja pasar a cam-ui por el Firewall: permítelo, o ningún aparato podrá conectarse.</p>
     </details>
     <details>
-      <summary data-en="Can I send it to a Chromecast or AirPlay?">¿Puedo enviarlo a un Chromecast o AirPlay?</summary>
-      <p data-en="To a Chromecast, yes, two ways. From the computer running cam-ui: with “Over the network” on, press “Open in VLC” (Settings tab, “Mode” menu, or tray icon) — if VLC is installed, it opens the stream there instead of the browser, and from VLC's own Playback → Renderer menu you can pick a Chromecast on the same wifi; VLC does the conversion itself, nothing else to set up in cam-ui. If VLC isn't installed, it offers to open its download page. From whoever's watching in a browser: the viewer page itself has a Chromecast button — on Chrome or Edge with internet, it's the real native cast icon (the YouTube one): one tap, pick the TV, done; cam-ui switches on a second, separate ffmpeg just for that (H.264 over HLS, live, only while it's actually being watched on the TV — the regular browser view keeps using the same low-latency stream as always). Without that icon (no internet, or another browser), it falls back to a button that explains how to use the browser's own “Cast…” feature instead — either way there's always something that works. AirPlay has no equivalent on Windows: no player brings it built in the way VLC brings Chromecast (AirPlay video only really exists as a macOS feature), so it isn't supported for now.">A un Chromecast, sí, de dos formas. Desde el equipo donde corre cam-ui: con «En la red» activada, pulsa «Abrir en VLC» (pestaña Ajustes, menú «Modo», o icono de la bandeja) — si VLC está instalado, abre ahí el vídeo en vez del navegador, y desde el propio menú de VLC Reproducción → Renderizador se puede elegir un Chromecast de la misma wifi; VLC hace la conversión él solo, sin nada más que configurar en cam-ui. Si VLC no está instalado, ofrece abrir su página de descarga. Desde quien lo esté viendo por el navegador: la propia página del visor tiene un botón de Chromecast — en Chrome o Edge con internet, es el icono nativo de verdad (el de YouTube): un toque, eliges la tele, y ya está; cam-ui enciende para eso un segundo ffmpeg aparte (H.264 por HLS, en directo, solo mientras se está viendo de verdad en la tele — la vista normal del navegador sigue usando el mismo stream de siempre, sin ningún cambio). Sin ese icono (sin internet, u otro navegador), cae en un botón que explica cómo usar el «Convertir en Chromecast» del propio navegador — de una forma u otra, siempre hay algo que funciona. AirPlay no tiene equivalente en Windows: ningún reproductor lo trae integrado como VLC trae Chromecast (el vídeo por AirPlay es sobre todo una función de macOS), así que por ahora no está soportado.</p>
+      <summary data-t-html="site.can_i_send_chromecast">¿Puedo enviarlo a un Chromecast o AirPlay?</summary>
+      <p data-t-html="site.chromecast_yes_two_ways">A un Chromecast, sí, de dos formas. Desde el equipo donde corre cam-ui: con «En la red» activada, pulsa «Abrir en VLC» (pestaña Ajustes, menú «Modo», o icono de la bandeja) — si VLC está instalado, abre ahí el vídeo en vez del navegador, y desde el propio menú de VLC Reproducción → Renderizador se puede elegir un Chromecast de la misma wifi; VLC hace la conversión él solo, sin nada más que configurar en cam-ui. Si VLC no está instalado, ofrece abrir su página de descarga. Desde quien lo esté viendo por el navegador: la propia página del visor tiene un botón de Chromecast — en Chrome o Edge con internet, es el icono nativo de verdad (el de YouTube): un toque, eliges la tele, y ya está; cam-ui enciende para eso un segundo ffmpeg aparte (H.264 por HLS, en directo, solo mientras se está viendo de verdad en la tele — la vista normal del navegador sigue usando el mismo stream de siempre, sin ningún cambio). Sin ese icono (sin internet, u otro navegador), cae en un botón que explica cómo usar el «Convertir en Chromecast» del propio navegador — de una forma u otra, siempre hay algo que funciona. AirPlay no tiene equivalente en Windows: ningún reproductor lo trae integrado como VLC trae Chromecast (el vídeo por AirPlay es sobre todo una función de macOS), así que por ahora no está soportado.</p>
     </details>
     <details>
-      <summary data-en="Does it update itself?">¿Se actualiza sola?</summary>
-      <p data-en="Yes. cam-ui checks for a newer version when it opens and, if there is one, asks before installing it (you can turn this off and check by hand with the “🔄 Updates” button or the tray icon). There's also an optional “update automatically when opening, without asking” tickbox, for whoever prefers not to be asked at all. Either way it keeps a copy of the version you had and the program can go back to it with one click; your configuration is never touched.">Sí. cam-ui comprueba si hay una versión más nueva al abrirse y, si la hay, pregunta antes de instalarla (puedes desactivarlo y comprobar a mano con el botón «🔄 Actualizaciones» o el icono de la bandeja). También hay una casilla opcional «actualizar automáticamente al abrir, sin preguntar», para quien prefiera que ni se le pregunte. En cualquier caso guarda una copia de la versión que tenías y el programa puede volver a ella con un clic; tu configuración nunca se toca.</p>
+      <summary data-t-html="site.does_update_itself">¿Se actualiza sola?</summary>
+      <p data-t-html="site.yes_cam_ui_checks">Sí. cam-ui comprueba si hay una versión más nueva al abrirse y, si la hay, pregunta antes de instalarla (puedes desactivarlo y comprobar a mano con el botón «🔄 Actualizaciones» o el icono de la bandeja). También hay una casilla opcional «actualizar automáticamente al abrir, sin preguntar», para quien prefiera que ni se le pregunte. En cualquier caso guarda una copia de la versión que tenías y el programa puede volver a ella con un clic; tu configuración nunca se toca.</p>
     </details>
   </div>
 </section>
@@ -417,38 +418,38 @@ python camui.py</code>
   <div class="wrap">
     <div class="sec-head">
       <div>
-        <h2 data-en="Tell me how it goes">Cuéntame cómo te va</h2>
-        <p data-en="It is worth writing even if everything worked. It tells me which cameras and setups to look after.">Vale la pena escribir aunque todo haya ido bien: me dice qué cámaras y montajes cuidar.</p>
+        <h2 data-t-html="site.tell_me_how_goes">Cuéntame cómo te va</h2>
+        <p data-t-html="site.is_worth_writing_even">Vale la pena escribir aunque todo haya ido bien: me dice qué cámaras y montajes cuidar.</p>
       </div>
     </div>
     <div class="routes">
       <a class="route r1" href="https://github.com/enderHugin/cam-ui/issues/new?template=opinion.yml">
-        <h3 data-en="Share my experience">Dar mi opinión</h3>
-        <p data-en="What you used it for, which cameras you have, what you liked and what cost you.">Para qué lo usas, qué cámaras tienes, qué te ha gustado y qué te ha costado.</p>
+        <h3 data-t-html="site.share_my_experience">Dar mi opinión</h3>
+        <p data-t-html="site.what_you_used_for">Para qué lo usas, qué cámaras tienes, qué te ha gustado y qué te ha costado.</p>
       </a>
       <a class="route r2" href="https://github.com/enderHugin/cam-ui/issues/new?template=bug_report.yml">
-        <h3 data-en="Something does not work">Algo no funciona</h3>
-        <p data-en="A camera will not open, the video comes out wrong, the program closes.">Una cámara no abre, el vídeo sale mal, el programa se cierra.</p>
+        <h3 data-t-html="site.something_does_not_work">Algo no funciona</h3>
+        <p data-t-html="site.camera_will_not_open">Una cámara no abre, el vídeo sale mal, el programa se cierra.</p>
       </a>
       <a class="route r3" href="https://github.com/enderHugin/cam-ui/issues/new?template=feature_request.yml">
-        <h3 data-en="Ask for a feature">Pedir una función</h3>
-        <p data-en="Tell me what you are trying to do and I will look at how to make it possible.">Cuéntame qué intentas conseguir y veo cómo hacerlo posible.</p>
+        <h3 data-t-html="site.ask_for_feature">Pedir una función</h3>
+        <p data-t-html="site.tell_me_what_you">Cuéntame qué intentas conseguir y veo cómo hacerlo posible.</p>
       </a>
     </div>
-    <p class="note" data-en="You need a free GitHub account. To report a problem, attach the camui.log file (next to camui.py; the “Registro” button opens it) and, if it is about resolution or frame rate, the “Test modes” report. You can also <a href='https://github.com/enderHugin/cam-ui/issues'>read what others have sent</a>.">Hace falta una cuenta gratuita de GitHub. Para avisar de un problema, adjunta el archivo camui.log (junto a camui.py; el botón «Registro» lo abre) y, si es de resolución o fps, el informe de «Probar modos». También puedes <a href="https://github.com/enderHugin/cam-ui/issues">leer lo que han enviado otras personas</a>.</p>
+    <p class="note" data-t-html="site.you_need_free_github">Hace falta una cuenta gratuita de GitHub. Para avisar de un problema, adjunta el archivo camui.log (junto a camui.py; el botón «Registro» lo abre) y, si es de resolución o fps, el informe de «Probar modos». También puedes <a href="https://github.com/enderHugin/cam-ui/issues">leer lo que han enviado otras personas</a>.</p>
   </div>
 </section>
 
 <section id="apoya" class="support">
   <div class="wrap">
     <div>
-      <h2 data-en="Support cam-ui">Apoya cam-ui</h2>
-      <p style="margin-top:14px" data-en="cam-ui is free and has no ads. If it saves you time, buy me a coffee and help me keep improving it.">cam-ui es gratis y no tiene anuncios. Si te ahorra tiempo, invítame a un café y ayúdame a seguir mejorándolo.</p>
+      <h2 data-t-html="site.support_cam_ui">Apoya cam-ui</h2>
+      <p style="margin-top:14px" data-t-html="site.cam_ui_is_free">cam-ui es gratis y no tiene anuncios. Si te ahorra tiempo, invítame a un café y ayúdame a seguir mejorándolo.</p>
     </div>
     <div>
       <a class="kofi" href="https://ko-fi.com/jaimeluisolguinmesina" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"/><path d="M17 9h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3v2M12 3v2"/></svg>
-        <span data-en="Buy me a coffee">Invítame a un café</span>
+        <span data-t-html="site.buy_me_coffee">Invítame a un café</span>
       </a>
     </div>
   </div>
@@ -458,41 +459,22 @@ python camui.py</code>
 <footer>
   <div class="wrap">
     <span>cam-ui v__VERSION__</span>
-    <span data-en="Free software, MIT license">Software libre, licencia MIT</span>
+    <span data-t-html="site.free_software_mit_license">Software libre, licencia MIT</span>
     <a href="https://github.com/enderHugin/cam-ui">GitHub</a>
   </div>
 </footer>
 
+<script src="langkit.js"></script>
 <script>
 (function () {
   "use strict";
 
   /* ---------- idioma ---------- */
+  // textos: site/lang/<idioma>.json con lang-kit (langkit.js); mientras cargan, lo que trae el HTML (espanol)
   var root = document.documentElement;
-  var T = { es: { cam: "Cámara ", title: "cam-ui · varias cámaras en un solo vídeo" },
-            en: { cam: "Camera ", title: "cam-ui · several cameras in one video" } };
-  var lang = "es";
-  function stored() { try { return localStorage.getItem("camui-lang"); } catch (e) { return null; } }
-  function setLang(l) {
-    lang = l;
-    root.lang = l; root.setAttribute("data-lang", l);
-    document.title = T[l].title;
-    document.querySelectorAll("[data-en]").forEach(function (el) {
-      if (el._es === undefined) el._es = el.innerHTML;
-      el.innerHTML = l === "en" ? el.getAttribute("data-en") : el._es;
-    });
-    document.querySelectorAll("[data-en-alt]").forEach(function (el) {
-      if (el._es === undefined) el._es = el.getAttribute("alt");
-      el.setAttribute("alt", l === "en" ? el.getAttribute("data-en-alt") : el._es);
-    });
-    var cv = document.getElementById("mosaic");
-    if (cv._es === undefined) cv._es = cv.getAttribute("aria-label");
-    cv.setAttribute("aria-label", l === "en" ? cv.getAttribute("data-en-label") : cv._es);
-    document.getElementById("lang").textContent = l === "en" ? "ES" : "EN";
-    try { localStorage.setItem("camui-lang", l); } catch (e) {}
-    drawNow();
-  }
-  document.getElementById("lang").addEventListener("click", function () { setLang(lang === "es" ? "en" : "es"); });
+  var L = null;
+  function t(k, v) { return L ? L.t(k, v) : k; }
+  function camLabel(n) { return L ? t("site.js.camera", {n: n}) : "Cámara " + n; }
 
   /* ---------- mosaico de demostración ---------- */
   var cv = document.getElementById("mosaic"), ctx = cv.getContext("2d");
@@ -585,7 +567,7 @@ python camui.py</code>
       if (w < 4 || h < 4) continue;
       ctx.save(); ctx.globalAlpha = Math.min(1, r.a); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.translate(x, y);
       SRC[i](ctx, w, h, t);
-      var label = T[lang].cam + (i + 1);
+      var label = camLabel(i + 1);
       ctx.font = "600 " + fs + "px Barlow, 'Segoe UI', sans-serif"; var tw = ctx.measureText(label).width;
       ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(gap * 2, h - fs * 2.3, tw + fs, fs * 1.7);
       ctx.fillStyle = "#fff"; ctx.textBaseline = "middle"; ctx.fillText(label, gap * 2 + fs / 2, h - fs * 1.45);
@@ -633,8 +615,21 @@ python camui.py</code>
     });
   });
 
-  var s = stored();
-  setLang(s === "es" || s === "en" ? s : ((navigator.language || "es").toLowerCase().indexOf("es") === 0 ? "es" : "en"));
+  function applyLang() {
+    document.title = t("site.js.title");
+    root.setAttribute("data-lang", L.code);
+    if (window.PyiLang) window.PyiLang.apply(L.code);   // el instalador, en el mismo idioma
+    drawNow();
+  }
+  try {     // eleccion guardada por la version anterior de la pagina (solo es/en)
+    var old = localStorage.getItem("camui-lang");
+    if (old && !localStorage.getItem("langkit.lang")) localStorage.setItem("langkit.lang", old);
+  } catch (e) {}
+  LangKit.init({ dir: "lang/", langs: ["es", "en", "ca"], source: "es" }).then(function (lk) {
+    L = lk;
+    L.onChange(applyLang);
+    applyLang();
+  });
   drawNow(); start();
 })();
 </script>
