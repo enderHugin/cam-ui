@@ -12,6 +12,9 @@ flotante aparte, y que el botón «Añadir cámara del móvil» de la página «
 ventana -- en vez de decir que hay que ir antes a Ajustes a mano. Hace falta un display (Xvfb en
 Linux: xvfb-run -a python3 tests/ui_phonecam.py), porque lo que se comprueba es precisamente la
 ventana real, no solo la lógica de más abajo."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import io
 import json

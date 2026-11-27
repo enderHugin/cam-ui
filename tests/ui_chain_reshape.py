@@ -8,6 +8,9 @@ al parar se juntan en un solo vídeo, del mismo tamaño).
 
 Hace falta un display (xvfb-run -a python3 tests/ui_chain_reshape.py); Omen corre como otro
 proceso (este mismo archivo con «--omen») en el mismo display."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

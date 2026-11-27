@@ -3,6 +3,9 @@ el mosaico recolocado, y al parar se juntan sin recodificar en un solo vídeo. A
 verdad (vídeo H.264 + audio, del mismo tamaño, como los que graba cam-ui) juntados en MKV y en MP4,
 con el primer trozo llamado igual que el archivo final (así graba cam-ui en MKV); y qué pasa con un
 solo trozo o con trozos que no se pueden juntar."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import json

@@ -2,6 +2,9 @@
 """Pruebas del sistema de actualizaciones (mismo diseño que widget-arena): se levanta un
 servidor HTTP local que hace de «enderhugin.github.io/cam-ui/dl/» y se ejercita update_check /
 update_apply / update_rollback de verdad contra él (sin red real ni GUI)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import sys, os, re, json, time, hashlib, shutil, tempfile, threading
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import camui

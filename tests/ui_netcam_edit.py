@@ -4,6 +4,9 @@ display (Xvfb en Linux: xvfb-run -a python3 tests/ui_netcam_edit.py), porque lo 
 comprueba es precisamente el diálogo y la fila de la lista (Treeview), no solo la lógica de
 más abajo. CamApp se crea de verdad (sin ffmpeg: no llega a arrancar vista previa ni grabar).
 """
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import time

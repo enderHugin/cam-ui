@@ -2,6 +2,9 @@
 de día, camui.log se guarda en «registros» con el nombre de su rango de horas y su pack, y se
 empieza otro. Y los avisos de DirectShow «real-time buffer … too full» (uno por fotograma
 tirado) se resumen, para que no se coman las líneas de ffmpeg que se apuntan."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

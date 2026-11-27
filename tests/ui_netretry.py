@@ -8,6 +8,9 @@ reiniciándose justo cuando arrancaba este.
 2) la que no respondía al arrancar queda «sin señal»... y entra sola en cuanto responde;
 3) la que se corta con todo en marcha pasa a «sin señal» en su rótulo (no «imagen fija» ni los
    fps de su vecina) y, cuando vuelve, entra sola otra vez."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import json

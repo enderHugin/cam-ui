@@ -18,6 +18,9 @@ que ffmpeg le reportaría (cuántos fotogramas, desde cuándo), no is_running() 
 Hace falta un display (Xvfb en Linux: xvfb-run -a python3 tests/ui_stuck_preview.py), porque lo
 que se comprueba incluye _set_idle()/_refresh_buttons() tocando widgets reales de la ventana.
 """
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import subprocess
 import sys

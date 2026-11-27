@@ -2,6 +2,9 @@
 con la sesión bloqueada). Sin Windows de verdad: se sustituye kernel32 por uno de mentira que
 apunta cada llamada, y se comprueba qué se le pide y cuándo -- incluida la estructura
 REASON_CONTEXT real que monta ctypes (el motivo que enseña «powercfg /requests»)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import ctypes

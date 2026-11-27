@@ -20,6 +20,9 @@ Se sabe exactamente cuándo llega cada cosa, y se comprueba que se mide eso, al 
 6) (pack 58) tres cámaras que ven la claqueta flojita: solas no salen («se parece poco»), pero
    si salieron ✓ en directo se buscan donde se las vio y salen bien (± 30 ms); a una que no la vio
    nunca no se le inventa nada aunque se le dé una pista, y una pista equivocada no cuela."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import re
 import sys

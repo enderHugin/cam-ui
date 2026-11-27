@@ -1,5 +1,8 @@
 """«Reloj común» entre PCs encadenados (ChainClock / CamApp._chain_net_cams): sin hardware,
 con IpServer, ffmpeg y servidores HTTP reales en 127.0.0.1."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import os
 import sys
 import time

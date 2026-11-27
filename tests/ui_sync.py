@@ -18,6 +18,9 @@ mundo) y para cuando el PC se lo pide.
 4) «Deshacer» vuelve a lo de antes; al cerrar la ventana, la página del móvil ya no vale.
 
 (Más fino que ± un fotograma del mosaico no puede quedar: cada imagen solo puede salir en uno.)"""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

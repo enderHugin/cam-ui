@@ -21,6 +21,9 @@ display: xvfb-run -a python3 tests/ui_preview_menu.py). Tres cámaras («📱 Ro
    encima los mueve (con Mayúsculas, cinco veces más), las flechas y RePág/AvPág también, y en su
    casilla se puede escribir el número (con %, coma o signo; fuera de rango, al tope; si no es
    un número, se queda como estaba); grabando, el zoom no se mueve y el color sí."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys

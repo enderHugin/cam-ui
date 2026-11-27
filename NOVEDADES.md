@@ -1,5 +1,15 @@
 # Novedades de cam-ui
 
+## pack 61 — 2026.11.27
+- **cam-ui en inglés y en catalán**, además de en castellano. Se cambia en *Modo ▸ Idioma /
+  Language* (cam-ui se vuelve a abrir; si está grabando, el idioma nuevo sale la próxima vez que
+  se abra). La primera vez sale en el idioma de Windows si es uno de estos tres (si no, en
+  inglés). El registro (`camui.log`) sigue en castellano.
+- **Las páginas que se abren en el móvil** (cámara del móvil, emparejar, claqueta de
+  «Sincronizar», «En la red», certificado del iPhone) salen en el idioma del navegador del móvil,
+  aunque el PC esté en otro.
+- Los ajustes guardados se siguen entendiendo al cambiar de idioma (calidad, lienzo…).
+
 ## pack 60 — 2026.11.26
 - **Cambiar cámaras de sitio arrastrando en la vista previa.** Pincha una cámara en la imagen y
   suéltala sobre otra: se cambian de sitio, como en el mapa pequeño del panel. Mientras arrastras,

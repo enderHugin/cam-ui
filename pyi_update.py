@@ -20,6 +20,8 @@ El motor no depende de ninguna interfaz. Encima hay una sola ventana de Actualiz
 comportamiento para todos los programas, en dos versiones: tkinter (tk_install) y Qt (qt_install).
 El atajo secreto Ctrl+Shift+Alt+F12 lo recibe siempre el actualizador, venga de la ventana que venga.
 El actualizador tiene su propia version (PYI_VERSION), aparte de la del programa.
+Sus textos salen de lang/pyi.<idioma>.json con lang-kit (langkit.py), en el idioma del programa;
+sin lang-kit, en espanol (_ES, abajo).
 
 Uso minimo:
     import pyi_update
@@ -39,7 +41,7 @@ import time
 
 # version de py-installer (instalador + este actualizador). Va aparte de la del programa: sale en la
 # ventana de Actualizaciones y en update.json ("updater"), para saber que actualizador tiene cada uno.
-PYI_VERSION = '1.3.0'
+PYI_VERSION = '1.4.0'
 PYI_UPDATE_VERSION = 3                      # (antiguo: numero entero del actualizador)
 MAX_FILE = 64 * 1048576
 MAX_JSON = 262144
@@ -71,6 +73,96 @@ def _safe_rel(name):
 
 class UpdateError(ValueError):
     pass
+
+
+# ---- textos ------------------------------------------------------------------------------------
+# Los textos que ve el usuario, en espanol: son el original de lang/pyi.es.json (claves "upd.*") y
+# lo que se usa si no hay lang-kit. Con lang-kit salen en el idioma del programa (lang.json).
+_ES = {
+    'title': 'Actualizaciones',
+    'yours': 'Tu versión:  {v}',
+    'published': 'Publicada:  {v}',
+    'notes': 'Novedades',
+    'auto': 'Avisarme al abrir el programa si hay una versión nueva',
+    'auto_apply': 'Actualizar automáticamente al abrir, sin preguntar (se guarda una copia por si quieres volver)',
+    'watch': 'Vigilar sola, sin avisos: actualizar en cuanto se publique una versión nueva',
+    'watch_help': 'Mientras el programa está abierto mira cada rato; si hay versión nueva la instala y se '
+                  'reinicia sola cuando no estés haciendo nada. Esta casilla se ve con {keys}.',
+    'check': 'Buscar de nuevo',
+    'back': 'Volver a la versión anterior',
+    'go': 'Actualizar y reiniciar',
+    'go_diverged': 'Sustituir por la publicada',
+    'close': 'Cerrar',
+    'footer': 'Actualizador py-installer {v}',
+    'state.newer': 'Hay una versión nueva: {v}.',
+    'state.same': 'Tienes la última versión.',
+    'state.older': 'Tu versión es más nueva que la publicada.',
+    'state.diverged': 'Tu copia no coincide con la publicada (puedes sustituirla por la publicada).',
+    'auto_done': '{app} se ha actualizado solo a {v}',
+    'auto_installing': 'Instalando la versión nueva de {app} ({v})…',
+    'auto_failed': 'No se pudo actualizar solo: {error}',
+    'restart_failed': 'La actualización está instalada, pero no se pudo reiniciar sola.\nCierra y abre de nuevo {app}.\n\n({error})',
+    'checking': 'Buscando la versión publicada…',
+    'check_failed': 'No se pudo comprobar: {error}\nRevisa la conexión e inténtalo de nuevo.',
+    'downloading': 'Descargando y comprobando…',
+    'apply_failed': 'No se pudo completar: {error}\nNo se ha cambiado nada.',
+    'installed_busy': 'Instalado. {app} se reiniciará en cuanto termine lo que está haciendo.',
+    'installed': 'Listo. El programa se reinicia en unos segundos…',
+    'rollback_q': '¿Volver a la versión anterior y reiniciar {app}?',
+    'restoring': 'Restaurando…',
+    'rollback_failed': 'No se pudo volver atrás: {error}',
+    'rolled_back': 'Hecho. El programa se reinicia en unos segundos…',
+    'not_installed': 'Este programa no está instalado con su instalador: no puede actualizarse solo.',
+    'ask.title': 'Hay una versión nueva de {app} ({v}).',
+    'ask.text': '¿Descargarla e instalarla ahora? Se guarda una copia de la versión actual y el programa se reinicia; tus datos no se tocan.',
+    'ask.dont': 'No preguntar más al abrir (prefiero actualizar a mano)',
+    'ask.notes': 'Ver novedades',
+    'ask.later': 'Ahora no',
+    'ask.go': 'Actualizar',
+    'no_answer': 'sin respuesta',
+    'err.url': 'dirección no permitida',
+    'err.redirect': 'redirección a otro sitio rechazada',
+    'err.too_big': 'la respuesta es demasiado grande',
+    'err.missing_main': 'update.json no incluye {file}',
+    'err.bad_name': 'update.json: nombre de archivo no permitido ({file})',
+    'err.bad_json': 'update.json no es válido ({file})',
+    'err.not_installed': 'este programa no está instalado con py-installer (no se sabe de dónde actualizar)',
+    'err.hash': '{file}: lo descargado no coincide con la huella publicada (se cancela; si acaban de publicar, inténtalo de nuevo en unos minutos)',
+    'err.frozen_apply': 'Esta instalación es un ejecutable: descarga el instalador nuevo desde la página del programa.',
+    'err.no_write': 'No hay permiso para escribir en la carpeta del programa ({dir}).',
+    'err.wrong_pack': 'El archivo publicado no es el de la versión anunciada (se cancela).',
+    'err.frozen_back': 'Esta instalación es un ejecutable: no se puede cambiar la versión desde aquí.',
+    'err.no_backup': 'No hay una copia anterior a la que volver.',
+}
+_LANG = None
+
+
+def _lang():
+    """El diccionario de lang-kit: el que ya use el programa (langkit.init) o uno propio de su carpeta."""
+    global _LANG
+    try:
+        import langkit
+        if getattr(langkit, '_current', None) is not None:
+            return langkit._current
+        if _LANG is None:
+            _LANG = langkit.Lang(os.path.dirname(os.path.abspath(__file__)))
+        return _LANG
+    except Exception:
+        return None
+
+
+def _t(key, **values):
+    """Texto del actualizador en el idioma del programa (lang/pyi.<idioma>.json), o en espanol."""
+    L = _lang()
+    if L is not None:
+        try:
+            return L.t('upd.' + key, _ES.get(key, key), **values)
+        except Exception:
+            pass
+    s = _ES.get(key, key)
+    for k, v in values.items():
+        s = s.replace('{' + k + '}', str(v))
+    return s
 
 
 class Updater:
@@ -226,12 +318,12 @@ class Updater:
         import urllib.request
         base = self.base
         if not base or not url.startswith(base):
-            raise UpdateError('direccion no permitida')
+            raise UpdateError(_t('err.url'))
 
         class _Same(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 if not newurl.startswith(base):
-                    raise UpdateError('redireccion a otro sitio rechazada')
+                    raise UpdateError(_t('err.redirect'))
                 return super().redirect_request(req, fp, code, msg, headers, newurl)
         try:
             import certifi
@@ -243,7 +335,7 @@ class Updater:
         with op.open(req, timeout=timeout) as r:
             data = r.read(limit + 1)
         if len(data) > limit:
-            raise UpdateError('la respuesta es demasiado grande')
+            raise UpdateError(_t('err.too_big'))
         return data
 
     # ---- comprobar --------------------------------------------------------------------------
@@ -258,13 +350,13 @@ class Updater:
     def _validate(self, info):
         files = info.get('files')
         if not isinstance(files, dict) or self.main not in files:
-            raise UpdateError('update.json no incluye %s' % self.main)
+            raise UpdateError(_t('err.missing_main', file=self.main))
         for name, meta in files.items():
             if not _safe_rel(name):
-                raise UpdateError('update.json: nombre de archivo no permitido (%s)' % name)
+                raise UpdateError(_t('err.bad_name', file=name))
             sha, size = str(meta.get('sha256', '')).lower(), int(meta.get('size', 0))
             if not re.fullmatch(r'[0-9a-f]{64}', sha) or size <= 0 or size > MAX_FILE:
-                raise UpdateError('update.json no es valido (%s)' % name)
+                raise UpdateError(_t('err.bad_json', file=name))
         if self.pack is not None and 'pack' in info:
             int(info['pack'])
 
@@ -272,7 +364,7 @@ class Updater:
         """Mira la version publicada. Devuelve {ok, state: newer|same|older|diverged, info, local}
         o {ok: False, error}."""
         if not self.enabled:
-            return {'ok': False, 'error': 'este programa no esta instalado con py-installer (no se sabe de donde actualizar)'}
+            return {'ok': False, 'error': _t('err.not_installed')}
         try:
             info = json.loads(self._get(self.base + 'update.json?t=%d' % int(time.time()), MAX_JSON).decode('utf-8'))
             self._validate(info)
@@ -297,8 +389,7 @@ class Updater:
     def _download(self, name, meta):
         data = self._get(self.base + name + '?v=' + str(meta['sha256'])[:12], int(meta['size']))
         if len(data) != int(meta['size']) or hashlib.sha256(data).hexdigest() != str(meta['sha256']).lower():
-            raise UpdateError('%s: lo descargado no coincide con la huella publicada (se cancela; si acaban de '
-                              'publicar, intentalo de nuevo en unos minutos)' % name)
+            raise UpdateError(_t('err.hash', file=name))
         if name.endswith('.py'):
             compile(data, name, 'exec')           # que al menos sea Python valido antes de tocar nada
         return data
@@ -354,9 +445,9 @@ class Updater:
         """Descarga y comprueba la version publicada, guarda una copia de lo que cambia y lo sustituye.
         Devuelve {backup, files}. Si algo falla antes de escribir, no se toca nada."""
         if getattr(sys, 'frozen', False):
-            raise UpdateError('Esta instalacion es un ejecutable: descarga el instalador nuevo desde la pagina del programa.')
+            raise UpdateError(_t('err.frozen_apply'))
         if not os.access(self.dir, os.W_OK) or not os.access(self.app_file, os.W_OK):
-            raise UpdateError('No hay permiso para escribir en la carpeta del programa (%s).' % self.dir)
+            raise UpdateError(_t('err.no_write', dir=self.dir))
         self._validate(info)
         files = info['files']
         todo = {}
@@ -368,7 +459,7 @@ class Updater:
         if main is not None and self.pack is not None and info.get('pack') is not None:
             m = re.search(rb'^APP_PACK\s*=\s*(\d+)', main, re.M)
             if not m or int(m.group(1)) != int(info['pack']):
-                raise UpdateError('El archivo publicado no es el de la version anunciada (se cancela).')
+                raise UpdateError(_t('err.wrong_pack'))
         names = sorted(todo) + (['VERSION'] if info.get('version') and os.path.isfile(os.path.join(self.dir, 'VERSION')) else [])
         bk = self._backup(names)
         # el principal, el ultimo: si algo falla a medias, el programa sigue arrancando con lo anterior
@@ -401,9 +492,9 @@ class Updater:
     def rollback(self):
         """Vuelve a la copia de la ultima actualizacion (y deja lo actual como copia, por si quieres volver)."""
         if getattr(sys, 'frozen', False):
-            raise UpdateError('Esta instalacion es un ejecutable: no se puede cambiar la version desde aqui.')
+            raise UpdateError(_t('err.frozen_back'))
         if not self.backup_available():
-            raise UpdateError('No hay una copia anterior a la que volver.')
+            raise UpdateError(_t('err.no_backup'))
         st = self.state()
         bs = st.get('last_backup_set')
         if bs:
@@ -469,31 +560,17 @@ def run(fn, *a):
 #   * _Window: la ventana de Actualizaciones (logica), con dos caras: tkinter y Qt.
 #   * tk_install(...) / qt_install(...): lo montan en un programa con una sola llamada.
 # =============================================================================================
-TXT = {
-    'title': 'Actualizaciones',
-    'yours': 'Tu versión:  %s',
-    'published': 'Publicada:  %s',
-    'notes': 'Novedades',
-    'auto': 'Avisarme al abrir el programa si hay una versión nueva',
-    'auto_apply': 'Actualizar automáticamente al abrir, sin preguntar (se guarda una copia por si quieres volver)',
-    'watch': 'Vigilar sola, sin avisos: actualizar en cuanto se publique una versión nueva',
-    'watch_help': 'Mientras el programa está abierto mira cada rato; si hay versión nueva la instala y se '
-                  'reinicia sola cuando no estés haciendo nada. Esta casilla se ve con ' + SECRET_KEYS + '.',
-    'check': 'Buscar de nuevo',
-    'back': 'Volver a la versión anterior',
-    'go': 'Actualizar y reiniciar',
-    'go_diverged': 'Sustituir por la publicada',
-    'close': 'Cerrar',
-    'footer': 'Actualizador py-installer %s' % PYI_VERSION,
-}
+def TXT(key, **values):
+    """Textos de la ventana de Actualizaciones (antes un diccionario fijo en espanol)."""
+    if key == 'footer':
+        values.setdefault('v', PYI_VERSION)
+    if key == 'watch_help':
+        values.setdefault('keys', SECRET_KEYS)
+    return _t(key, **values)
 
 
 def _state_text(r, u):
-    v = u.label(r.get('info') or {})
-    return {'newer': 'Hay una versión nueva: %s.' % v,
-            'same': 'Tienes la última versión.',
-            'older': 'Tu versión es más nueva que la publicada.',
-            'diverged': 'Tu copia no coincide con la publicada (puedes sustituirla por la publicada).'}[r['state']]
+    return _t('state.' + r['state'], v=u.label(r.get('info') or {}))
 
 
 class _Controller:
@@ -530,7 +607,7 @@ class _Controller:
     def _startup(self):
         n = self.u.pop_auto_notice()
         if n:
-            self.notify('%s se ha actualizado solo a %s' % (self.name, n))
+            self.notify(_t('auto_done', app=self.name, v=n))
         st = self.u.state()
         if (self.u.startup_check_due(self.min_interval) or st.get('silent_watch')) and not self.busy():
             self._probe(startup=True)
@@ -568,13 +645,13 @@ class _Controller:
     def auto_install(self, info):
         if not self.u.auto_try_ok(info):
             return
-        self.notify('Instalando la versión nueva de %s (%s)…' % (self.name, self.u.label(info)))
+        self.notify(_t('auto_installing', app=self.name, v=self.u.label(info)))
         self.ui.bg(lambda: run(self.u.apply, info), lambda res: self._auto_done(res, info))
 
     def _auto_done(self, res, info):
         if not res.get('ok'):
             self.u._say('actualizar: la actualizacion automatica fallo: %s' % res.get('error'))
-            self.notify('No se pudo actualizar solo: %s' % res.get('error'))
+            self.notify(_t('auto_failed', error=res.get('error')))
             return
         self.u.mark_auto_notice(info)
         self.restart_when_idle()
@@ -597,8 +674,7 @@ class _Controller:
             self.u.spawn_restart()
         except Exception as e:
             self._restarting = False
-            self.ui.warn('La actualización está instalada, pero no se pudo reiniciar sola.\n'
-                         'Cierra y abre de nuevo %s.\n\n(%s)' % (self.name, e))
+            self.ui.warn(_t('restart_failed', app=self.name, error=e))
             return
         self.on_close()
 
@@ -617,7 +693,7 @@ class _Window:
         t = self.u.label()
         if self.u.pack is not None and loc.get('version'):
             t += '  ·  ' + loc['version']
-        return TXT['yours'] % t
+        return TXT('yours', v=t)
 
     # casillas
     def toggled_auto(self, on):
@@ -641,7 +717,7 @@ class _Window:
     def start_check(self):
         if not self.u.enabled:
             return
-        self._w_status('Buscando la versión publicada…')
+        self._w_status(_t('checking'))
         self._w_enable('check', False)
         self.ctl.ui.bg(self.u.check, lambda r: self.apply_result(r, ask=True))   # buscar a mano = revisar antes
 
@@ -651,13 +727,13 @@ class _Window:
             return
         self._w_enable('check', True)
         if not r.get('ok'):
-            self._w_status('No se pudo comprobar: %s\nRevisa la conexión e inténtalo de nuevo.' % r.get('error'))
+            self._w_status(_t('check_failed', error=r.get('error')))
             return
         self.info, self.state = r['info'], r['state']
-        self._w_remote(TXT['published'] % self.u.label(self.info))
+        self._w_remote(TXT('published', v=self.u.label(self.info)))
         self._w_status(_state_text(r, self.u))
         self._w_notes(self.info.get('notes') or '')
-        self._w_go_text(TXT['go_diverged'] if self.state == 'diverged' else TXT['go'])
+        self._w_go_text(TXT('go_diverged') if self.state == 'diverged' else TXT('go'))
         self._w_enable('go', self.state in ('newer', 'diverged'))
         if self.state == 'newer' and not ask:
             self.apply()
@@ -665,7 +741,7 @@ class _Window:
     def apply(self):
         if not self.info:
             return
-        self._w_status('Descargando y comprobando…')
+        self._w_status(_t('downloading'))
         self._w_enable('go', False)
         self._w_enable('check', False)
         self.ctl.ui.bg(lambda: run(self.u.apply, self.info), self._applied)
@@ -677,29 +753,29 @@ class _Window:
             return
         self._w_enable('check', True)
         if not res.get('ok'):
-            self._w_status('No se pudo completar: %s\nNo se ha cambiado nada.' % res.get('error'))
+            self._w_status(_t('apply_failed', error=res.get('error')))
             self._w_enable('go', True)
             return
         self._w_enable('back', True)
         if self.ctl.busy():
-            self._w_status('Instalado. %s se reiniciará en cuanto termine lo que está haciendo.' % self.ctl.name)
+            self._w_status(_t('installed_busy', app=self.ctl.name))
         else:
-            self._w_status('Listo. El programa se reinicia en unos segundos…')
+            self._w_status(_t('installed'))
         self.later(800, self.ctl.restart_when_idle)
 
     def rollback(self):
-        if not self._w_confirm('¿Volver a la versión anterior y reiniciar %s?' % self.ctl.name):
+        if not self._w_confirm(_t('rollback_q', app=self.ctl.name)):
             return
-        self._w_status('Restaurando…')
+        self._w_status(_t('restoring'))
         self.ctl.ui.bg(lambda: run(self.u.rollback), self._rolled)
 
     def _rolled(self, res):
         if not res.get('ok'):
             if self.alive():
-                self._w_status('No se pudo volver atrás: %s' % res.get('error'))
+                self._w_status(_t('rollback_failed', error=res.get('error')))
             return
         if self.alive():
-            self._w_status('Hecho. El programa se reinicia en unos segundos…')
+            self._w_status(_t('rolled_back'))
         self.later(800, self.ctl.restart_when_idle)
 
 
@@ -756,7 +832,7 @@ class _TkUI:
             if t.is_alive():
                 self.root.after(150, poll)
             else:
-                done(box.get('r') or {'ok': False, 'error': 'sin respuesta'})
+                done(box.get('r') or {'ok': False, 'error': _t('no_answer')})
         self.root.after(150, poll)
 
     def ui_busy(self):
@@ -785,21 +861,20 @@ class _TkUI:
         top.resizable(False, False)
         f = ttk.Frame(top, padding=14)
         f.pack(fill='both', expand=True)
-        ttk.Label(f, text='Hay una versión nueva de %s (%s).' % (name, self.ctl.u.label(info)),
+        ttk.Label(f, text=_t('ask.title', app=name, v=self.ctl.u.label(info)),
                   font=('', 10, 'bold')).pack(anchor='w')
-        ttk.Label(f, text='¿Descargarla e instalarla ahora? Se guarda una copia de la versión actual y el '
-                          'programa se reinicia; tus datos no se tocan.', wraplength=380).pack(anchor='w', pady=(4, 8))
+        ttk.Label(f, text=_t('ask.text'), wraplength=380).pack(anchor='w', pady=(4, 8))
         dont = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text='No preguntar más al abrir (prefiero actualizar a mano)', variable=dont).pack(anchor='w')
+        ttk.Checkbutton(f, text=_t('ask.dont'), variable=dont).pack(anchor='w')
         b = ttk.Frame(f)
         b.pack(fill='x', pady=(10, 0))
 
         def close(go):
             res['go'] = go
             top.destroy()
-        ttk.Button(b, text='Ver novedades', command=lambda: close('notes')).pack(side='left')
-        ttk.Button(b, text='Ahora no', command=lambda: close(None)).pack(side='right')
-        ttk.Button(b, text='Actualizar', command=lambda: close('go')).pack(side='right', padx=(0, 6))
+        ttk.Button(b, text=_t('ask.notes'), command=lambda: close('notes')).pack(side='left')
+        ttk.Button(b, text=_t('ask.later'), command=lambda: close(None)).pack(side='right')
+        ttk.Button(b, text=_t('ask.go'), command=lambda: close('go')).pack(side='right', padx=(0, 6))
         top.protocol('WM_DELETE_WINDOW', lambda: close(None))
         top.grab_set()
         self.root.wait_window(top)
@@ -813,7 +888,7 @@ class _TkWindow(_Window):
         self._init_logic(ctl)
         u = self.u
         top = self.top = tk.Toplevel(ctl.ui.root)
-        top.title('%s - %s' % (TXT['title'], ctl.name))
+        top.title('%s - %s' % (TXT('title'), ctl.name))
         bg, fg, field = _tk_colors(top)
         if bg:
             top.configure(bg=bg)
@@ -821,26 +896,26 @@ class _TkWindow(_Window):
         f = ttk.Frame(top, padding=14)
         f.pack(fill='both', expand=True)
         # botones abajo (se colocan antes para que nunca se queden fuera al encoger)
-        foot = ttk.Label(f, text=TXT['footer'], font=('', 8))
+        foot = ttk.Label(f, text=TXT('footer'), font=('', 8))
         foot.pack(side='bottom', anchor='e', pady=(6, 0))
         if fg:
             foot.configure(foreground='#888888')
         b = self.buttons = ttk.Frame(f)
         b.pack(side='bottom', fill='x', pady=(10, 0))
-        self.b_check = ttk.Button(b, text=TXT['check'], command=self.start_check)
+        self.b_check = ttk.Button(b, text=TXT('check'), command=self.start_check)
         self.b_check.pack(side='left')
-        self.b_back = ttk.Button(b, text=TXT['back'], command=self.rollback)
+        self.b_back = ttk.Button(b, text=TXT('back'), command=self.rollback)
         self.b_back.pack(side='left', padx=6)
-        ttk.Button(b, text=TXT['close'], command=top.destroy).pack(side='right')
-        self.b_go = ttk.Button(b, text=TXT['go'], command=self.apply)
+        ttk.Button(b, text=TXT('close'), command=top.destroy).pack(side='right')
+        self.b_go = ttk.Button(b, text=TXT('go'), command=self.apply)
         self.b_go.pack(side='right', padx=6)
-        ttk.Label(f, text=TXT['title'], font=('', 13, 'bold')).pack(anchor='w')
+        ttk.Label(f, text=TXT('title'), font=('', 13, 'bold')).pack(anchor='w')
         ttk.Label(f, text=self.local_text()).pack(anchor='w', pady=(4, 0))
-        self.l_remote = ttk.Label(f, text=TXT['published'] % '—')
+        self.l_remote = ttk.Label(f, text=TXT('published', v='—'))
         self.l_remote.pack(anchor='w')
         self.status = ttk.Label(f, text='', wraplength=480, justify='left')
         self.status.pack(anchor='w', pady=(6, 6))
-        ttk.Label(f, text=TXT['notes']).pack(anchor='w')
+        ttk.Label(f, text=TXT('notes')).pack(anchor='w')
         nf = ttk.Frame(f)
         nf.pack(fill='both', expand=True, pady=(2, 6))
         self.notes = tk.Text(nf, height=8, wrap='word', relief='flat', borderwidth=0, padx=8, pady=6)
@@ -855,21 +930,21 @@ class _TkWindow(_Window):
         self.v = {'auto': tk.BooleanVar(value=st.get('auto', True) is not False),
                   'apply': tk.BooleanVar(value=bool(st.get('auto_apply'))),
                   'watch': tk.BooleanVar(value=bool(st.get('silent_watch')))}
-        ttk.Checkbutton(f, text=TXT['auto'], variable=self.v['auto'],
+        ttk.Checkbutton(f, text=TXT('auto'), variable=self.v['auto'],
                         command=lambda: self.toggled_auto(self.v['auto'].get())).pack(anchor='w')
-        ttk.Checkbutton(f, text=TXT['auto_apply'], variable=self.v['apply'],
+        ttk.Checkbutton(f, text=TXT('auto_apply'), variable=self.v['apply'],
                         command=lambda: self.toggled_apply(self.v['apply'].get())).pack(anchor='w')
         self.watch_box = ttk.Frame(f)
-        ttk.Checkbutton(self.watch_box, text=TXT['watch'], variable=self.v['watch'],
+        ttk.Checkbutton(self.watch_box, text=TXT('watch'), variable=self.v['watch'],
                         command=lambda: self.toggled_watch(self.v['watch'].get())).pack(anchor='w')
-        ttk.Label(self.watch_box, text=TXT['watch_help'], wraplength=480, justify='left',
+        ttk.Label(self.watch_box, text=TXT('watch_help'), wraplength=480, justify='left',
                   font=('', 8)).pack(anchor='w', padx=(22, 0))
         self._w_show_watch(self.v['watch'].get())
         self._w_enable('go', False)
         self._w_enable('back', u.backup_available())
         top.bind('<Escape>', lambda e: top.destroy())
         if not u.enabled:
-            self._w_status('Este programa no está instalado con su instalador: no puede actualizarse solo.')
+            self._w_status(_t('not_installed'))
             self._w_enable('check', False)
 
     def alive(self):
@@ -969,7 +1044,7 @@ class _QtUI:
             if t.is_alive():
                 self.after(150, poll)
             else:
-                done(box.get('r') or {'ok': False, 'error': 'sin respuesta'})
+                done(box.get('r') or {'ok': False, 'error': _t('no_answer')})
         self.after(150, poll)
 
     def ui_busy(self):
@@ -1007,14 +1082,13 @@ class _QtUI:
     def ask(self, info, name):
         W = self.QtWidgets
         box = W.QMessageBox(W.QMessageBox.Icon.Question, name,
-                            'Hay una versión nueva de %s (%s).\n\n¿Descargarla e instalarla ahora? Se guarda una '
-                            'copia de la versión actual y el programa se reinicia; tus datos no se tocan.'
-                            % (name, self.ctl.u.label(info)), parent=self.parent)
-        chk = W.QCheckBox('No preguntar más al abrir (prefiero actualizar a mano)')
+                            _t('ask.title', app=name, v=self.ctl.u.label(info)) + '\n\n' + _t('ask.text'),
+                            parent=self.parent)
+        chk = W.QCheckBox(_t('ask.dont'))
         box.setCheckBox(chk)
-        go = box.addButton('Actualizar', W.QMessageBox.ButtonRole.AcceptRole)
-        notes = box.addButton('Ver novedades', W.QMessageBox.ButtonRole.HelpRole)
-        box.addButton('Ahora no', W.QMessageBox.ButtonRole.RejectRole)
+        go = box.addButton(_t('ask.go'), W.QMessageBox.ButtonRole.AcceptRole)
+        notes = box.addButton(_t('ask.notes'), W.QMessageBox.ButtonRole.HelpRole)
+        box.addButton(_t('ask.later'), W.QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(go)
         box.exec()
         c = box.clickedButton()
@@ -1027,7 +1101,7 @@ class _QtWindow(_Window):
         self._init_logic(ctl)
         u = self.u
         d = self.top = W.QDialog(ctl.ui.parent)
-        d.setWindowTitle('%s - %s' % (TXT['title'], ctl.name))
+        d.setWindowTitle('%s - %s' % (TXT('title'), ctl.name))
         d.setAttribute(C.Qt.WidgetAttribute.WA_DeleteOnClose, True)
         d.setAttribute(C.Qt.WidgetAttribute.WA_QuitOnClose, False)
         d.setMinimumSize(560, 460)
@@ -1035,26 +1109,26 @@ class _QtWindow(_Window):
         d.destroyed.connect(lambda *a: setattr(self, '_closed', True))
         d.finished.connect(lambda *a: setattr(self, '_closed', True))
         lay = W.QVBoxLayout(d)
-        t = W.QLabel(TXT['title'])
+        t = W.QLabel(TXT('title'))
         fnt = t.font()
         fnt.setPointSizeF(fnt.pointSizeF() * 1.35)
         fnt.setBold(True)
         t.setFont(fnt)
         lay.addWidget(t)
         lay.addWidget(W.QLabel(self.local_text()))
-        self.l_remote = W.QLabel(TXT['published'] % '—')
+        self.l_remote = W.QLabel(TXT('published', v='—'))
         lay.addWidget(self.l_remote)
         self.status = W.QLabel('')
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
-        lay.addWidget(W.QLabel(TXT['notes']))
+        lay.addWidget(W.QLabel(TXT('notes')))
         self.notes = W.QPlainTextEdit()
         self.notes.setReadOnly(True)
         lay.addWidget(self.notes, 1)
         st = u.state()
         self.c = {}
-        for key, text, val, fn in (('auto', TXT['auto'], st.get('auto', True) is not False, self.toggled_auto),
-                                   ('apply', TXT['auto_apply'], bool(st.get('auto_apply')), self.toggled_apply)):
+        for key, text, val, fn in (('auto', TXT('auto'), st.get('auto', True) is not False, self.toggled_auto),
+                                   ('apply', TXT('auto_apply'), bool(st.get('auto_apply')), self.toggled_apply)):
             cb = self.c[key] = W.QCheckBox(text)
             cb.setChecked(val)
             cb.toggled.connect(fn)
@@ -1062,24 +1136,24 @@ class _QtWindow(_Window):
         self.watch_box = W.QWidget()
         wl = W.QVBoxLayout(self.watch_box)
         wl.setContentsMargins(0, 0, 0, 0)
-        cb = self.c['watch'] = W.QCheckBox(TXT['watch'])
+        cb = self.c['watch'] = W.QCheckBox(TXT('watch'))
         cb.setChecked(bool(st.get('silent_watch')))
         cb.toggled.connect(self.toggled_watch)
         wl.addWidget(cb)
-        h = W.QLabel(TXT['watch_help'])
+        h = W.QLabel(TXT('watch_help'))
         h.setWordWrap(True)
         h.setContentsMargins(22, 0, 0, 0)
         h.setEnabled(False)
         wl.addWidget(h)
         lay.addWidget(self.watch_box)
         bar = W.QHBoxLayout()
-        self.b_check = W.QPushButton(TXT['check'])
+        self.b_check = W.QPushButton(TXT('check'))
         self.b_check.clicked.connect(self.start_check)
-        self.b_back = W.QPushButton(TXT['back'])
+        self.b_back = W.QPushButton(TXT('back'))
         self.b_back.clicked.connect(self.rollback)
-        self.b_go = W.QPushButton(TXT['go'])
+        self.b_go = W.QPushButton(TXT('go'))
         self.b_go.clicked.connect(self.apply)
-        close = W.QPushButton(TXT['close'])
+        close = W.QPushButton(TXT('close'))
         close.clicked.connect(d.close)
         bar.addWidget(self.b_check)
         bar.addWidget(self.b_back)
@@ -1087,7 +1161,7 @@ class _QtWindow(_Window):
         bar.addWidget(self.b_go)
         bar.addWidget(close)
         lay.addLayout(bar)
-        foot = W.QLabel(TXT['footer'])
+        foot = W.QLabel(TXT('footer'))
         foot.setEnabled(False)
         foot.setAlignment(C.Qt.AlignmentFlag.AlignRight)
         lay.addWidget(foot)
@@ -1095,7 +1169,7 @@ class _QtWindow(_Window):
         self._w_enable('go', False)
         self._w_enable('back', u.backup_available())
         if not u.enabled:
-            self._w_status('Este programa no está instalado con su instalador: no puede actualizarse solo.')
+            self._w_status(_t('not_installed'))
             self._w_enable('check', False)
         d.show()
         self.lift()

@@ -3,6 +3,9 @@ contra un "winreg" simulado en memoria con la misma interfaz (este sandbox es Li
 winreg real, pero la lógica de camui.py es la misma que correría contra el registro de verdad;
 el "import winreg" está dentro de cada función, así que basta con poner el módulo falso en
 sys.modules antes de llamarlas)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import sys
 import os
 import types

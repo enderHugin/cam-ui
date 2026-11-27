@@ -4,6 +4,9 @@ cambiaba de forma a mitad (girar el móvil, otra resolución en su app), ffmpeg 
 tamaño del principio, deformada, y el mosaico no se recolocaba. Servidores HTTP de verdad, con
 las variantes que se ven por ahí: con y sin Content-Length, separador al estilo ESP32-CAM,
 usuario y contraseña en la dirección, y una dirección que no es MJPEG (entonces, ffmpeg)."""
+import os as _os_lang
+_os_lang.environ.setdefault("LANGKIT_LANG", "es")   # las pruebas comprueban los textos en espanol
+
 import io
 import os
 import sys
