@@ -1065,7 +1065,7 @@ def _offline_lavfi(w, h, fps, label):
     «essentials» de gyan.dev que usa el instalador)."""
     w, h = max(16, int(w)), max(16, int(h))
     fs = max(11, min(26, h // 11))
-    text = _dt_escape("Sin señal: {0}".format(label or "cámara"))
+    text = _dt_escape(_t('app.no_signal', label=label or _t("tile.camera")))
     font = "fontfile='{0}':".format(PLACEHOLDER_FONT.replace("\\", "/").replace(":", "\\:")) \
         if PLACEHOLDER_FONT else ""
     return ("color=c=0x303030:s={0}x{1}:r={2},"
@@ -1466,11 +1466,7 @@ VCAM_SIZES = (("1280×720  (recomendado)", (1280, 720)), ("1920×1080", (1920, 1
 # RGB es el de por defecto de pyvirtualcam y el que admite el backend de OBS; RGBA lo rechaza
 # con «Unsupported image format», así que va el último (Unity Capture sí lo admite).
 VCAM_FORMATS = (("RGB", "rgb24", 3), ("BGR", "bgr24", 3), ("RGBA", "rgba", 4))
-VCAM_INSTALL_HELP = ("Hace falta OBS Studio instalado (gratis, obsproject.com): CamWin32 usa su "
-                     "cámara virtual, no hay que abrir OBS. Si ya lo tienes y falla, cierra la "
-                     "cámara virtual de OBS si la tenías iniciada (solo puede usarla un programa) "
-                     "y, si no aparece, ejecuta como administrador "
-                     "«obs-studio\\data\\obs-plugins\\win-dshow\\virtualcam-install.bat».")
+VCAM_INSTALL_HELP = (_t('about.obs_studio_must_be'))
 
 
 def vcam_size_label(size):
@@ -1544,7 +1540,7 @@ class VirtualCam:
             self.pix, self.bpp = pix, bpp
             break
         if cam is None:
-            raise RuntimeError(str(first or "sin formato de imagen compatible"))
+            raise RuntimeError(str(first or _t('vcam.no_compatible_image_format')))
         self.cam, self.w, self.h, self.fps = cam, int(w), int(h), int(fps)
         self.device = str(getattr(cam, "device", "") or "")
         self.sent = self.dropped = self.received = self.errors = 0
@@ -3507,7 +3503,7 @@ def _run_probes(jobs, secs, ffmpeg, input_fn=None):
             err = p.communicate(timeout=secs + 25)[1].decode("utf-8", "ignore")
         except Exception:
             p.kill()
-            err = "tiempo agotado"
+            err = _t('diag.timed_out')
         out[key] = _parse_probe(kind, err, secs)
     return out
 
@@ -3537,7 +3533,7 @@ def _preflight_probe(jobs, ffmpeg, secs=None):
                 p.communicate(timeout=3.0)
             except Exception:
                 pass
-            err = "tiempo agotado"
+            err = _t('diag.timed_out')
         out[key] = _parse_probe(kind, err, secs)
     return out
 
@@ -3560,55 +3556,45 @@ def run_diagnostics(ffmpeg, cams, audios, input_fn=None, secs=6, solo_secs=4):
                 together[k] = solo[k]
     if len(jobs_all) == 1:
         together = solo
-    L = ["DIAGNÓSTICO  ·  cada dispositivo solo ({0} s) y todos a la vez ({1} s)".format(solo_secs, secs), ""]
+    L = [_t('diag.diagnostics_each_device_on', solo_secs=solo_secs, secs=secs), ""]
     verdict = []
     for i, c in enumerate(cams):
         k = ("v", i)
         s_, t_ = solo[k], together.get(k, solo[k])
-        fmt = "{0} {1}x{2}".format(s_.get("codec", "?"), *s_.get("size", (0, 0))) if s_.get("size") else "formato desconocido"
-        L.append("CÁMARA «{0}»  ({1}, anuncia {2:g} fps)".format(c[0], fmt, s_.get("nominal", 0)))
-        L.append("    sola: {0:5.1f} fps     a la vez: {1:5.1f} fps     avisos de búfer: {2}".format(
-            s_["fps"], t_["fps"], t_["warn"]))
+        fmt = "{0} {1}x{2}".format(s_.get("codec", "?"), *s_.get("size", (0, 0))) if s_.get("size") else _t('diag.unknown_format')
+        L.append(_t('diag.camera_announces_fps', v0=c[0], fmt=fmt, nominal=s_.get('nominal', 0)))
+        L.append(_t('diag.alone_fps_all_at', fps=s_['fps'], fps2=t_['fps'], warn=t_['warn']))
         if k in notes:
-            L.append("    (la cámara no admite el modo «{0}»: medida con el modo de fábrica del driver)".format(notes[k]))
-            verdict.append("«{0}» rechaza el modo «{1}»: ponla en «Auto» o pulsa «Probar modos».".format(
-                c[0], notes[k]))
+            L.append(_t('diag.camera_does_not_accept', notes=notes[k]))
+            verdict.append(_t('diag.rejects_mode_set_auto', v0=c[0], notes=notes[k]))
         if s_["err"]:
             L.append("    ERROR: " + s_["err"])
-            verdict.append("«{0}» no se pudo abrir ({1}).".format(c[0], s_["err"][:120]))
+            verdict.append(_t('diag.could_not_be_opened', v0=c[0], err=s_['err'][:120]))
             continue
         nom = s_.get("nominal") or 30.0
         if s_["fps"] < 0.75 * nom:
-            verdict.append("«{0}» solo da {1:.0f} fps incluso sola (anuncia {2:g}): la propia cámara "
-                           "(poca luz → exposición larga, o el modo elegido). Prueba más luz, desactivar "
-                           "la exposición automática en «Propiedades del driver» o elegir otro modo.".format(
-                               c[0], s_["fps"], nom))
+            verdict.append(_t('diag.only_gives_fps_even', v0=c[0], fps=s_['fps'], nom=nom))
         elif t_["fps"] < 0.75 * s_["fps"]:
-            verdict.append("«{0}» pasa de {1:.0f} a {2:.0f} fps cuando todo funciona a la vez: se comparte "
-                           "ancho de banda USB o CPU.".format(c[0], s_["fps"], t_["fps"]))
+            verdict.append(_t('diag.goes_from_fps_when', v0=c[0], fps=s_['fps'], fps2=t_['fps']))
     for i, a in enumerate(audios):
         k = ("a", i)
         s_, t_ = solo[k], together.get(k, solo[k])
-        L.append("AUDIO «{0}»".format(a[0]))
-        L.append("    solo: {0:.1f}% en silencio digital ({1} cortes)     a la vez: {2:.1f}% ({3} cortes)".format(
-            s_.get("pct", 0), s_.get("silences", 0), t_.get("pct", 0), t_.get("silences", 0)))
-        L.append("    recibido: {0:.1f} s de {1} s (solo) · {2:.1f} s de {3} s (a la vez)".format(
-            s_.get("got", 0), solo_secs, t_.get("got", 0), secs))
+        L.append(_t('diag.audio', v0=a[0]))
+        L.append(_t('diag.alone_in_digital_silence', pct=s_.get('pct', 0), silences=s_.get('silences', 0), pct2=t_.get('pct', 0), silences2=t_.get('silences', 0)))
+        L.append(_t('diag.received_alone_all_at', got=s_.get('got', 0), solo_secs=solo_secs, got2=t_.get('got', 0), secs=secs))
         if s_["err"]:
             L.append("    ERROR: " + s_["err"])
-            verdict.append("El audio «{0}» no se pudo abrir.".format(a[0]))
+            verdict.append(_t('diag.audio_could_not_be', v0=a[0]))
         elif s_.get("pct", 0) > 1.0:
-            verdict.append("El micro «{0}» ya pierde audio SOLO ({1:.0f}% en silencio): es el driver o el "
-                           "búfer; sube «Búfer de audio» o cambia de dispositivo/puerto.".format(a[0], s_["pct"]))
+            verdict.append(_t('diag.mic_already_loses_audio', v0=a[0], pct=s_['pct']))
         elif t_.get("pct", 0) > s_.get("pct", 0) + 1.0 or t_.get("got", 0) < 0.9 * secs:
-            verdict.append("El micro «{0}» solo falla cuando las cámaras trabajan a la vez ({1:.0f}% en "
-                           "silencio): el sistema no da abasto abriendo todo a la vez.".format(a[0], t_.get("pct", 0)))
+            verdict.append(_t('diag.mic_only_fails_when', v0=a[0], pct=t_.get('pct', 0)))
     L.append("")
-    L.append("CONCLUSIÓN")
+    L.append(_t("diag.conclusion"))
     if verdict:
         L.extend("  • " + v for v in verdict)
     else:
-        L.append("  • Nada anómalo en los dispositivos: el problema estaría en el proceso de mezcla/codificación.")
+        L.append(_t('diag.nothing_unusual_in_devices'))
     return "\n".join(L)
 
 
@@ -7022,8 +7008,8 @@ class _HubSession:
             ls.settimeout(0.5)
             d.update(ls=ls, port=ls.getsockname()[1], q=deque(), cv=threading.Condition(),
                      conn=None, rs=(None, None), maxq=maxq,
-                     ph_start=_hub_placeholder(d["w"], d["h"], "Iniciando {0}…".format(d["label"])),
-                     ph_off=_hub_placeholder(d["w"], d["h"], "Sin señal: {0}".format(d["label"])))
+                     ph_start=_hub_placeholder(d["w"], d["h"], _t('app.starting_2', label=d['label'])),
+                     ph_off=_hub_placeholder(d["w"], d["h"], _t('app.no_signal', label=d['label'])))
             src = d["src"]
             src.keep = max(0.2, self.delay + max(0.0, d["delay"]) + HUB_KEEP_EXTRA)
             self.slots.append(d)
@@ -8489,7 +8475,7 @@ def _pyi_update_module():
     if not os.path.exists(dest):
         def get(url, limit):
             if not url.startswith(UPDATE_BASE):
-                raise ValueError("dirección no permitida")
+                raise ValueError(_t('app.address_not_allowed'))
             try:
                 import certifi
                 ctx = ssl.create_default_context(cafile=certifi.where())
@@ -8498,18 +8484,18 @@ def _pyi_update_module():
             req = urllib.request.Request(url, headers={"User-Agent": "cam-ui", "Cache-Control": "no-cache"})
             with urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)).open(req, timeout=20) as r:
                 if not r.geturl().startswith(UPDATE_BASE):
-                    raise ValueError("redirección a otro sitio rechazada")
+                    raise ValueError(_t('app.redirect_another_site_rejected'))
                 data = r.read(limit + 1)
             if len(data) > limit:
-                raise ValueError("la respuesta es demasiado grande")
+                raise ValueError(_t('app.response_too_large'))
             return data
         info = json.loads(get(UPDATE_BASE + "update.json?t=%d" % int(time.time()), 262144).decode("utf-8"))
         meta = info.get("files", {}).get("pyi_update.py")
         if not meta:
-            raise ValueError("la web todavía no publica el actualizador nuevo; inténtalo más tarde")
+            raise ValueError(_t('app.website_does_not_publish'))
         data = get(UPDATE_BASE + "pyi_update.py?v=" + str(meta["sha256"])[:12], int(meta["size"]))
         if hashlib.sha256(data).hexdigest() != str(meta["sha256"]).lower():
-            raise ValueError("pyi_update.py: lo descargado no coincide con la huella publicada")
+            raise ValueError(_t('app.pyi_update_py_download'))
         compile(data, "pyi_update.py", "exec")
         with open(dest + ".nuevo", "wb") as f:
             f.write(data)
@@ -8663,17 +8649,15 @@ def sync_devs_text(d):
     k = sum(1 for r in rows if r.get("st") == "ok")
     ph = (d or {}).get("phase")
     if ph == "directo":
-        head = "Faltan {0} de {1}".format(n - k, n) if k < n else "Todas listas ✓ ({0})".format(n)
-        cap = "• = cuánto va cada una detrás de la primera, ahora mismo (el sonido se mide al final)"
+        head = _t("sync.devs_missing", n=n - k, total=n) if k < n else _t("sync.devs_all_ready", n=n)
+        cap = _t('sync.how_far_each_one')
     elif ph == "medido":
-        head = "Medidas {0} de {1}".format(k, n) + (" · sin medir: {0}".format(n - k) if k < n else "")
-        cap = ("○ = lo que tarda cada una de por sí, respecto al sonido · ● = ahora, con su "
-               "retardo: en la misma raya, a la vez. El punto azul (el sonido) se puede "
-               "arrastrar." if d.get("sound") is not None else
-               "○ = lo que tarda cada una de por sí, respecto a la primera · ● = ahora, con su "
-               "retardo")
+        head = (_t("sync.devs_measured_some", k=k, n=n, missing=n - k) if k < n else
+                _t("sync.devs_measured", k=k, n=n))
+        cap = (_t('sync.how_long_each_one') if d.get("sound") is not None else
+               _t('sync.how_long_each_one_2'))
     else:
-        head = "{0} cámara{1} por sincronizar".format(n, "" if n == 1 else "s")
+        head = _t("sync.devs_to_sync", n=n)
         cap = ""
     return head, cap
 
@@ -11446,26 +11430,23 @@ class CamApp:
         if self.sel == lab:
             self.w_mode.config(values=["Auto"] + cs.modes)
         pick = pick_auto_mode(cs.modes, self._fps(), ok=cs.ok_modes)
-        L = ["PRUEBA DE MODOS  ·  «{0}»".format(lab), ""]
+        L = [_t('modes.mode_test', lab=lab), ""]
         for r in results:
-            L.append("  {0:<34} {1}".format(r["mode"], "✓ {0:.1f} fps reales".format(r["fps"]) if r["fps"] > 0
-                                           else "✗ no funciona"))
-        L += ["", "RESULTADO"]
-        L.append("  • «Auto» usará: {0}".format(pick or "el modo de fábrica del driver"))
+            L.append("  {0:<34} {1}".format(r["mode"], _t('modes.real_fps', fps=r['fps']) if r["fps"] > 0
+                                           else _t('modes.does_not_work')))
+        L += ["", _t("modes.result")]
+        L.append(_t('modes.auto_will_use', driver=pick or _t("modes.driver_default")))
         if cs.bad_modes:
-            L.append("  • Descartados (la cámara los anuncia pero no los abre): {0}".format(
-                ", ".join(sorted({mode_key(m).replace('|', ' ') for m in cs.bad_modes}))))
+            L.append(_t('modes.discarded_camera_announces_them', bad_modes=', '.join(sorted({mode_key(m).replace('|', ' ') for m in cs.bad_modes}))))
         slow = [r for r in results if r["fps"] > 0 and r["fps"] < 0.75 * float(
             _MODE_PARSE.match(r["mode"]).group(2))]
         if slow:
-            L.append("  • Entregan menos fps de los que anuncian: {0}. Suele ser poca luz (exposición "
-                     "larga): prueba con más luz o con un modo de menos fps (se probaron los de 15/10 "
-                     "fps cuando hacía falta).".format(", ".join(r["mode"].split(" [")[0] for r in slow)))
+            L.append(_t('modes.they_deliver_fewer_fps', slow=', '.join((r['mode'].split(' [')[0] for r in slow))))
         if not results:
-            L.append("  • La cámara no informó de modos; se usará el modo de fábrica del driver.")
+            L.append(_t('modes.camera_reported_no_modes'))
         log.info("prueba de modos:\n%s", "\n".join(L))
-        self._set_status("Prueba de modos terminada: «Auto» usará {0}.".format(pick or "el modo de fábrica"))
-        self._show_report("\n".join(L), "Prueba de modos")
+        self._set_status(_t('modes.mode_test_finished_auto', brica=pick or _t("modes.default_short")))
+        self._show_report("\n".join(L), _t('modes.mode_test_2'))
 
     def _reset_cam(self):
         cs = self.cams.get(self.sel)
@@ -12031,25 +12012,26 @@ class CamApp:
                 src = it[2]
                 last = src._arr[-1] if src._arr else None
                 if src.state == "down" or (last is not None and now - last > HUB_HOLD_SECONDS):
-                    state = "sin señal"
+                    state = _t('app.no_signal_2')
                 elif src.state == "starting":
-                    state = "iniciando…"
+                    state = _t('app.starting')
                 fps = src.fps()
             elif c.get("_offline"):
-                state = "sin señal"
+                state = _t('app.no_signal_2')
             elif sid:
                 fps = self.phonecam.session_fps(sid)
                 if fps == 0.0:
-                    state = "sin señal"
+                    state = _t('app.no_signal_2')
             else:
                 fps, approx = self._tile_fps(i), True
-            parts = [kind] if kind else []
+            parts = [{"móvil (wifi)": _t("tile.phone_wifi"), "red": _t("tile.network"),
+                      "local": _t("tile.local")}.get(kind, kind)] if kind else []
             if state:
                 parts.append(state)
             else:
                 if fps is not None:
                     parts.append(("~{0:.0f} fps" if approx else "{0:.0f} fps").format(fps)
-                                 if fps >= 0.5 or not approx else "imagen fija")
+                                 if fps >= 0.5 or not approx else _t('app.still_image'))
                 sz = sizes.get(i)
                 if sz:
                     parts.append("{0}×{1}".format(sz[0], sz[1]))
@@ -14503,33 +14485,31 @@ class CamApp:
         st = b.state
         ready = b.phone_ready()
         if st == "preparando":
-            txt = "Preparando la grabación de prueba…"
+            txt = _t('sync.preparing_test_recording')
         elif st == "grabando":
             s = self._sync or {}
             live = s.get("live")
             if not s.get("t_started"):
-                txt = "Grabando la prueba: el móvil cuenta 3, 2, 1…"
+                txt = _t('sync.recording_test_phone_counts')
             elif live is None:
-                txt = ("Grabando la prueba (no se guarda): enseña el móvil a cada cámara, 3 o 4 "
-                       "segundos a cada una, y luego «Terminar»…")
+                txt = (_t('sync.recording_test_not_saved'))
             else:
                 miss = live.missing()
-                txt = "Grabando la prueba (no se guarda): listas {0} de {1} (✓ en el mosaico).".format(
-                    len(live.labels) - len(miss), len(live.labels))
-                txt += (" Falta enseñar el móvil a: " + ", ".join("«{0}»".format(l) for l in miss) +
-                        "." if miss else " Todas: termina sola.")
+                txt = _t("sync.rec_ready_count", k=len(live.labels) - len(miss), n=len(live.labels))
+                txt += " " + (_t("sync.rec_show_to", names=", ".join("«{0}»".format(l) for l in miss))
+                              if miss else _t("sync.rec_all_done"))
         elif st == "terminando":
-            txt = "Terminando…"
+            txt = _t('sync.finishing')
         elif st == "analizando":
-            txt = "Midiendo lo que tarda cada cámara…"
+            txt = _t('sync.measuring_how_long_each')
         elif st in ("hecho", "error"):
             txt = b.msg.split("\n", 1)[0]
         elif ready:
-            txt = "Móvil listo: toca «Empezar» (aquí o en el móvil)."
+            txt = _t('sync.phone_ready_tap_start')
         elif b.phone_seen():
-            txt = "Móvil conectado: toca «Empezar» en él (así puede pitar)."
+            txt = _t('sync.phone_connected_tap_start')
         else:
-            txt = "Esperando a que un móvil abra el código…"
+            txt = _t('sync.waiting_for_phone_open')
         devs = self._sync_devs()
         dlg.set_devices(devs)
         b.set_devs(devs)                               # el móvil lo pinta igual (drawDevs)
@@ -14538,7 +14518,7 @@ class CamApp:
         dlg.update(txt, self._sync_result,
                    can_start=rec or (ready and not busy and not self.recording),
                    can_undo=self._sync_prev is not None and not busy and not self.recording,
-                   start_text="Terminar" if rec else "Empezar")
+                   start_text=_t('sync.finish') if rec else _t('sync.start'))
 
     def _sync_devs(self):
         """El mapa de aparatos de «Sincronizar», para su ventana (SyncDialog.set_devices) y para
@@ -14624,9 +14604,9 @@ class CamApp:
                 self._redraw_overlay()                 # ✓ sobre las que ya están
                 miss = live.missing()
                 if b.state == "grabando":
-                    b.set("grabando", "Listas {0} de {1}.{2}".format(
-                        len(live.labels) - len(miss), len(live.labels),
-                        " Faltan: " + ", ".join(miss) if miss else ""))
+                    b.set("grabando", _t("sync.ready_count_missing", k=len(live.labels) - len(miss),
+                                         n=len(live.labels), names=", ".join(miss)) if miss else
+                          _t("sync.ready_count", k=len(live.labels), n=len(live.labels)))
                 if not miss and not s.get("all_t"):
                     s["all_t"] = now
                     log.info("sincronizar: todas listas en directo")
@@ -14645,8 +14625,7 @@ class CamApp:
                                     SYNC_BIT_S))
                 self._sync_finish()
             elif not s.get("t_started") and now - s["t_rec"] > SYNC_START_TIMEOUT_S:
-                self._sync_finish(cancel="El móvil no empezó a parpadear (¿se cerró su página?). "
-                                         "Vuelve a probar.")
+                self._sync_finish(cancel=_t('sync.phone_did_not_start'))
         self._sync_ui()
 
     def _sync_begin(self):
@@ -14657,14 +14636,14 @@ class CamApp:
             return
         why = None
         if self.recording:
-            why = "El PC está grabando: para la grabación y vuelve a probar."
+            why = _t('sync.pc_recording_stop_recording')
         elif self.editing:
-            why = "Termina el encuadre en el PC (Esc o «Listo») y vuelve a probar."
+            why = _t('sync.finish_framing_on_pc')
         elif self.busy:
-            why = "El PC estaba ocupado: vuelve a tocar «Empezar»."
+            why = _t('sync.pc_was_busy_tap')
         plan = None if why else self._plan()
         if why is None and plan is None:
-            why = "No hay cámaras en el mosaico: márcalas en el PC."
+            why = _t('sync.there_are_no_cameras')
         if why:
             b.set("error", why)
             self._sync_result = why
@@ -14686,7 +14665,7 @@ class CamApp:
         self._run_labels, self._run_color = list(plan["labels"]), dict(plan["run_color"])
         self._run_plan, self._tinfo_t = plan, 0.0
         self.previewing = False
-        self._set_status("Sincronizar: preparando la grabación de prueba…")
+        self._set_status(_t('sync.sync_preparing_test_recording'))
         log.info("sincronizar: prueba %d con %d cámaras %s; sonido: %s; %s fps; motor %s; "
                  "retardos %s; ajuste A/V %s ms; código de %d trozos de %.1f ms", run,
                  len(s["labels"]), s["labels"], "sí" if s["has_audio"] else "no", plan["fps"],
@@ -14718,16 +14697,16 @@ class CamApp:
                 live.start()
                 s["live_v"] = -1
                 b.set("grabando")
-                self._set_status("Sincronizar: enseña el móvil a cada cámara…")
+                self._set_status(_t('app.sync_show_phone_each'))
                 log.info("sincronizar: grabando la prueba (mosaico %dx%d, vista previa %dx%d)",
                          m["W"], m["H"], m["pw"], m["ph"])
             else:
                 self._sync = None
                 shutil.rmtree(tmpdir, ignore_errors=True)
-                why = "No se pudo grabar la prueba: {0}".format((err or "")[-200:])
+                why = _t('app.could_not_record_test', value=(err or '')[-200:])
                 b.set("error", why)
                 self._sync_result = why
-                self._set_idle("No se pudo grabar la prueba de sincronización.")
+                self._set_idle(_t('app.could_not_record_sync'))
                 self.root.after(500, lambda: self._start_preview(1))
             self._sync_ui(force=True)
             self._refresh_buttons()
@@ -14752,7 +14731,7 @@ class CamApp:
                      len(live.ok), len(live.labels), live.frames)
         b = self.phonecam.sync
         b.set("error" if cancel else "analizando", cancel or "")
-        self._set_status("Sincronizar: midiendo…" if not cancel else "Sincronizar: cancelado.")
+        self._set_status(_t('sync.sync_measuring') if not cancel else _t('sync.sync_cancelled'))
 
         def work():
             self.eng.stop()
@@ -14772,7 +14751,7 @@ class CamApp:
                 self._sync_result = cancel
             elif isinstance(res, Exception) or not isinstance(res, dict):
                 log.error("sincronizar: la medida falló: %r", res)
-                self._sync_result = "No se pudo medir la prueba ({0}).".format(res)
+                self._sync_result = _t('app.could_not_measure_test', res=res)
                 b.set("error", self._sync_result)
             else:
                 self._sync_result = self._sync_apply_result(s, res)
@@ -14789,9 +14768,7 @@ class CamApp:
         self._sync_map = {"phase": "medido", "sound": None,
                           "rows": [{"n": l, "st": "no", "ms": None} for l in s["labels"]]}
         if corr is None:
-            return ("No se vio la claqueta en ninguna cámara: no se ha cambiado nada. Enseña la "
-                    "pantalla del móvil a cada cámara, más cerca y unos segundos seguidos, mientras "
-                    "parpadea.")
+            return (_t('sync.clapperboard_was_not_seen'))
         new, av, late = corr
         self._sync_prev = (dict(s["delays"]), s["av"])
         self._sync_set(new, av)
@@ -14813,43 +14790,38 @@ class CamApp:
         slow = max(late, key=lambda l: late[l]) if heard else None
         lines = []
         if heard:
-            lines.append("Sincronizado: todo va ahora a la vez que «{0}», la que más tarda en "
-                         "llegar.".format(slow) if late[slow] > 15 else
-                         "Ya estaba sincronizado: apenas hacía falta cambiar nada.")
+            lines.append(_t('sync.synced_everything_now_goes', slow=slow) if late[slow] > 15 else
+                         _t('sync.was_already_synced_hardly'))
         else:
-            lines.append("Las cámaras van ahora a la vez entre sí, pero el micrófono no oyó los "
-                         "pitidos: el sonido sigue como estaba. (¿Hay micrófono elegido en "
-                         "«Audio»? ¿Volumen del móvil?)")
+            lines.append(_t('sync.cameras_now_go_at'))
         def seen(r):
             return "{0:.0f} s, ±{1:.0f} ms".format(r[1], max(1.0, r[2] * 1000))
         for lab in s["labels"]:
             r = res["cams"].get(lab)
             if lab in late:
-                if heard:
-                    what = "llegaba {0} ms {1} que el sonido".format(
-                        abs(late[lab]), "más tarde" if late[lab] >= 0 else "antes")
+                if not heard:
+                    lines.append(_t("sync.res_cam_measured", name=lab, seen=seen(r), delay=new[lab]))
+                elif late[lab] >= 0:
+                    lines.append(_t("sync.res_cam_later", name=lab, ms=abs(late[lab]), seen=seen(r),
+                                    delay=new[lab]))
                 else:
-                    what = "medida"
-                lines.append("• «{0}»: {1} (vista {2}) → Retardo {3} ms".format(
-                    lab, what, seen(r), new[lab]))
+                    lines.append(_t("sync.res_cam_earlier", name=lab, ms=abs(late[lab]), seen=seen(r),
+                                    delay=new[lab]))
             else:
-                lines.append("• «{0}»: no vio la claqueta (sigue como estaba respecto al "
-                             "sonido: Retardo {1} ms)".format(lab, new[lab]))
+                lines.append(_t('sync.did_not_see_clapperboard', lab=lab, lab2=new[lab]))
         if heard:
-            lines.append("• Sonido (oído {0}): Ajuste A/V {1} ms".format(seen(res["audio"]), av))
+            lines.append(_t('sync.sound_heard_v_offset', audio=seen(res['audio']), av=av))
         else:
-            lines.append("• Sonido: Ajuste A/V {0} ms".format(av))
+            lines.append(_t('sync.sound_v_offset_ms', av=av))
         if max(new.values()) > 400:
-            lines.append("La vista previa irá unos {0} s por detrás: es lo que tarda en llegar "
-                         "la más lenta.".format(("%.1f" % (max(new.values()) / 1000.0)).replace(".", ",")))
+            lines.append(_t('sync.preview_will_be_about', replace=('%.1f' % (max(new.values()) / 1000.0)).replace(".", _t("num.decimal"))))
         log.info("sincronizar: %s", " | ".join(lines))
         return "\n".join(lines)
 
     def _resync_note(self):
         """Aviso tras la vista previa mientras el «Ajuste A/V» esté por volver a medir (pack 58,
         ver _make_vars)."""
-        return (" Pulsa «Sincronizar» una vez: el sonido ahora se coloca de otra forma (más "
-                "fiable)." if getattr(self, "_av_reset", None) else "")
+        return (_t('sync.press_sync_once_sound') if getattr(self, "_av_reset", None) else "")
 
     def _sync_set(self, delays, av):
         """Pone esos «Retardo ms» y ese «Ajuste A/V» (sin reiniciar la vista previa por cada uno)."""
@@ -14869,7 +14841,7 @@ class CamApp:
         delays, av = self._sync_prev
         self._sync_prev = None
         self._sync_set(delays, av)
-        self._sync_result = "Deshecho: los retardos y el ajuste A/V vuelven a como estaban."
+        self._sync_result = _t('sync.undone_delays_v_offset')
         self.phonecam.sync.set("esperando")
         self._sync_ui(force=True)
         if self.previewing:
@@ -15056,9 +15028,7 @@ class CamApp:
             self._ph_visible = False
         self._redraw_overlay()
         m = self.eng.meta
-        info = "Vista previa {0}×{1}  ·  salida {2}×{3}  ·  {4} fps  ·  audio {5}".format(
-            w, h, m.get("W", 0), m.get("H", 0), self._fps(),
-            "L/R" if m.get("has_audio") else "sin audio")
+        info = _t('app.preview_output_fps_audio', v0=w, v1=h, v2=m.get('W', 0), v3=m.get('H', 0), _fps=self._fps(), audio='L/R' if m.get('has_audio') else _t("preview.no_audio"))
         if info != self._info_txt:
             self._info_txt = info
             self.lbl_info.config(text=info)

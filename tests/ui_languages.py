@@ -114,6 +114,15 @@ for k in ("info.final_size", "info.cameras", "info.layout_auto_cols", "mode.rece
     check(v is not None and (CODE == "es" or v != D["es"].get(k) or k == "info.final_size"),
           "%s sin traducir" % k)
 
+# 7. «Sincronizar»: cabecera del mapa (plural) y resultado por camara, en el idioma de ahora
+h1, _c = camui.sync_devs_text({"phase": "directo", "rows": [{"st": "ok"}, {"st": "falta"}, {"st": "falta"}]})
+check(h1 == camui._t("sync.devs_missing", n=2, total=3), "cabecera de sincronizar %r" % h1)
+h2, _c = camui.sync_devs_text({"rows": [{"st": "falta"}]})
+check(h2 == camui._t("sync.devs_to_sync", n=1) and h2 != camui._t("sync.devs_to_sync", n=2), "plural %r" % h2)
+es_only = [k for k in ("sync.res_cam_later", "sync.rec_ready_count", "diag.conclusion", "tile.phone_wifi")
+           if CODE != "es" and D[CODE].get(k) == D["es"].get(k)]
+check(not es_only, "sin traducir: %r" % es_only)
+
 try:
     app.on_close()
 except Exception:

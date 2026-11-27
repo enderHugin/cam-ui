@@ -13,7 +13,7 @@ Traducción de cam-ui al inglés y al catalán con [lang-kit](https://github.com
 ## Por partes
 1. Infraestructura: lang-kit, `_t`, menú Idioma y pruebas en español. **Hecho.**
 2. La ventana: pestañas, botones, menús (también el del clic derecho sobre una cámara y el de la bandeja), diálogos, «Acerca de» y diagnóstico. **Hecho** (prueba: `tests/ui_languages.py`, la ventana en los tres idiomas).
-3. Los mensajes de la barra de estado y los avisos.
+3. Los mensajes de la barra de estado y los avisos, «Sincronizar», los informes (diagnóstico, prueba de modos) y lo que se ve sobre cada cámara. **Hecho.** Quedan en castellano, como el registro, los motivos técnicos que solo van a `camui.log` (por qué no se midió una cámara, por qué se cortó una de red). Los mensajes de «Sincronizar» que se envían al móvil salen en el idioma del PC hasta el paso 4.
 4. Las páginas que se sirven al móvil y al navegador (cámara del móvil, emparejar con QR, claqueta de sincronizar, visor, certificado), en el idioma del navegador del móvil.
 
 ## Cuidado: textos que también son datos
@@ -26,11 +26,12 @@ Hay textos que se guardan en `config.json` o se comparan en el código. Si se tr
 | `NO_AUDIO` «(Silencio)» | `dev` del audio | igual |
 | `TILES` (formas de celda) | `tile` de cada cámara | **ya guardaba el valor** (`auto`, `4:3`…): se traduce sin más |
 | `QUALITIES` | `quality` (se guarda la etiqueta) | **hecho:** `quality_label()` reconoce la etiqueta de cualquier idioma instalado |
-| «Multivista» | nombre base por defecto de las grabaciones | se traduce solo el valor por defecto de un config nuevo |
+| «Multivista» | nombre base por defecto de las grabaciones | **hecho:** se traduce solo el valor por defecto de un config nuevo |
 | «Móvil» | nombre por defecto de las cámaras de móvil, con `^Móvil( #\d+)*$` | la expresión acepta el nombre en cualquier idioma |
-| `_mini_set` | compara el texto de estado (`startswith("Grabando")`…) | compara con el prefijo traducido de cada clave |
-| `_set_status` | `startswith("Grabado")` | igual |
+| `_mini_set` | compara el texto de estado (`startswith("Grabando")`…) | **hecho:** `_t_prefix(clave)`, el principio del texto en el idioma de ahora |
+| `_set_status` | `startswith("Grabado")` | **hecho**, igual |
 | `MODE_NAMES`, `COLOR_LABELS`, `CHANS`, `SYNCS` | se guarda el valor, no la etiqueta | se traducen sin más |
 | `FFmpegEngine._drain_err`, `driver_dialog_was_shown` | comparan la salida de ffmpeg (en inglés) | no se tocan |
 | Desfase del sonido `{ms} ms (más tarde/antes)`, botones `📹 Virtual ●` | diálogo Sincronizar, barra | **hecho:** una frase entera por caso, la marca dentro de la frase |
-| Frases montadas a trozos (`"{0} cámara{1}"`, `" · sin medir"`, `"(s)"`) | varios | se reescriben como frases enteras con plural |
+| Frases montadas a trozos (`"{0} cámara{1}"`, `" · sin medir"`, `"(s)"`) | varios | **hecho:** frases enteras con plural |
+| Tipo de cámara sobre cada una (`"móvil (wifi)"`, `"otro cam-ui"`, `"red"`) | `_tile_infos`, se compara | se sigue comparando en castellano; solo se traduce al mostrarlo |
